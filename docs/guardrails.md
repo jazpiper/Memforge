@@ -183,6 +183,9 @@ Good examples:
 
 Be suspicious of proliferating custom entity types too early.
 
+- Relation creation for agents is strictly limited to “suggested” status only (see schema.md 18.2)
+- Summary maintenance and promotion rules are non-negotiable guardrails — violations must be rejected in code review
+
 ## 7.3 UI must stay restrained
 Do not let the UI become crowded with:
 - too many modes

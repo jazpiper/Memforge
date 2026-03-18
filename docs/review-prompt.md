@@ -93,7 +93,7 @@ Pressure-test graph discipline.
 Questions to answer:
 - Are the relation rules conservative enough?
 - Will agent-generated links likely become noisy?
-- Should strength/confidence both exist in v1?
+- Is relation scoring deferred firmly enough for v1?
 - What should be simplified or tightened?
 
 ---

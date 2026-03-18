@@ -251,8 +251,6 @@ The `relations` table stores typed edges between nodes.
 - `to_node_id TEXT NOT NULL`
 - `relation_type TEXT NOT NULL`
 - `status TEXT NOT NULL DEFAULT 'active'`
-- `strength REAL`
-- `confidence REAL`
 - `created_by TEXT`
 - `source_type TEXT`
 - `source_label TEXT`
@@ -260,18 +258,12 @@ The `relations` table stores typed edges between nodes.
 - `metadata_json TEXT`
 
 ## 7.2 Semantics
+v1 keeps relations intentionally minimal:
+- `relation_type`
+- `status`
+- provenance fields
 
-### `strength`
-Represents how strong the relation is believed to be.
-Initial suggested range: `0.0` to `1.0`.
-This can be:
-- user-assigned
-- inferred
-- integration-provided
-
-### `confidence`
-Represents confidence in the relation claim, especially useful for agent suggestions.
-Initial suggested range: `0.0` to `1.0`.
+Quantitative relation scoring such as `strength` and `confidence` is deferred to v2 after real graph-usage evidence exists.
 
 ## 7.3 Constraints
 - `from_node_id != to_node_id`
@@ -585,6 +577,64 @@ Activities should be append-only after creation except for rare admin fixes.
 ### Rule 5
 Archived nodes remain addressable.
 
+## 18.1 Node vs Activity vs Artifact boundary heuristic (v1 decision guide)
+
+When an agent writes back, use these three questions to decide in <10 seconds.
+
+### Decision heuristic
+1. Will this knowledge be reused across tools and time?  
+2. Is it longer than 300 tokens and not a pure log?  
+3. Is it an external file?
+
+### Boundary table
+
+| Condition                              | Storage Type     | Reason & Examples |
+|----------------------------------------|------------------|-------------------|
+| Long-lived, reusable across tools      | **Node**         | Project, Decision, Idea, Question, Reference |
+| Timeline event or log                  | **Activity**     | Agent run summary, import log, review action |
+| External generated file                | **Artifact**     | Code patch, PDF report, generated image |
+| >300 tokens and not a log              | **Suggested Node** | Must go to review queue |
+
+### Real-world examples (agent write-back)
+
+1. **Claude Code generates a patch**  
+   → Artifact (patch file) + Activity (one-line summary)  
+   → Do not create node
+
+2. **Gemini CLI produces research summary (450 tokens)**  
+   → Suggested Note (reference type) → goes to review queue
+
+3. **OpenClaw session summary (150 tokens)**  
+   → Single Activity by default  
+   → Promote only if it contains reusable cross-tool knowledge or a decision
+
+4. **Codex discovers important technical decision**  
+   → Suggested Decision Node (must be reviewed)  
+   → Never store only as activity
+
+**Forbidden pattern**: pasting raw transcripts into canonical node body  
+**Strict rule**: “If creating a node feels scary, put it in activity or artifact instead.”
+
+## 18.2 Relation quality and graph-noise control (v1 rules)
+
+Agent-generated relations are the #1 source of graph noise.  
+Therefore v1 enforces very conservative defaults.
+
+### Strict v1 rules
+- Every agent-created relation defaults to `status = "suggested"` (no exceptions)
+- All suggested relations must go through review queue before becoming `active`
+- Human-created relations only may be created as `active` directly
+- `strength` and `confidence` columns are **deferred to v2** (keep only `relation_type` + `status` in v1)
+- Application-level uniqueness check: `(from_node_id, to_node_id, relation_type)` for active relations
+
+### Anti-spam limit
+- One agent run may propose maximum 5 relations unless user explicitly requests more
+- Duplicate detection: if identical relation already exists (even as suggested), reject silently with log
+
+**Forbidden in v1**: agents directly creating `active` relations or using strength/confidence values.
+
+This rule, combined with the promotion table, guarantees the graph stays trustworthy even when multiple tools write heavily.
+
 ---
 
 ## 19. Example record shapes
@@ -617,8 +667,6 @@ Archived nodes remain addressable.
   "to_node_id": "node_architecture",
   "relation_type": "depends_on",
   "status": "active",
-  "strength": 0.9,
-  "confidence": 1.0,
   "created_by": "human:juhwan",
   "source_type": "human",
   "source_label": "manual",

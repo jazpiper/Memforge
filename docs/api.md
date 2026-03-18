@@ -364,8 +364,6 @@ Return local graph neighborhood.
   "fromNodeId": "node_a",
   "toNodeId": "node_b",
   "relationType": "supports",
-  "strength": 0.8,
-  "confidence": 0.9,
   "status": "suggested",
   "source": {
     "actorType": "agent",

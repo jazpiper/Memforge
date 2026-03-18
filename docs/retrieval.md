@@ -379,7 +379,7 @@ Optional later signals:
 - semantic similarity
 - task-preset weighting
 - integration-specific preferences
-- relation strength
+- relation type specificity
 - previous user approvals or promotions
 
 ## 10.3 Rule of thumb
@@ -427,6 +427,35 @@ Unresolved or active questions.
 ## 11.4 Important caution
 Do not create a giant summary-generation subsystem too early.
 Start with simple summaries and improve only where they create clear speed wins.
+
+## 11.5 Summary ownership and lifecycle
+
+Summaries are the foundation of fast retrieval, but maintenance must never slow down the hot path.  
+Therefore v1 enforces a **low-cost, clearly owned** model.
+
+### Ownership rules (v1 default)
+- **Primary owner**: deterministic derivation from node body  
+- **Final responsibility**: human (manual override allowed)  
+- **Auto-generation**: runs immediately on node create/update (cheap rule-based)  
+- **LLM usage**: strictly forbidden in hot path and scout stage
+
+### Refresh triggers (only these three are allowed)
+1. Node body or title changes → immediate regeneration (synchronous, cheap)  
+2. Explicit user/CLI call (`pnw refresh-summaries <node-id>`)  
+3. Nightly background job (default off; cheap-model scout only)
+
+### Staleness policy
+- If summary is older than 30 days or missing, scout automatically falls back to:  
+  first 300 characters of body + title  
+- In UI, show gentle warning: “Summary is stale — regenerate?”
+
+### Maintenance cost ranking
+- `short_summary` → cheapest (always kept fresh)  
+- `working_summary` → medium  
+- `decision_digest` / `recent_activity_digest` → auto-generated from activities (cheapest)
+
+**Rule**: “Summary maintenance must never make the system feel slow.”  
+In v1, summaries never depend on LLM calls.
 
 ---
 
@@ -506,18 +535,20 @@ To prevent the workspace from becoming bloated, the retrieval layer should work 
 1. raw output
 2. activity summary
 3. suggested note
-4. reviewed durable node
-5. canonical project knowledge
+4. review queue decision
+5. approved canonical node
 
 ### Principle
 Not everything that enters the workspace deserves equal prominence.
 
 The retrieval layer should prefer:
 - canonical nodes
-- reviewed summaries
+- approved suggested content that has been promoted into canonical nodes
 - high-signal activity digests
 
 over raw uncurated material.
+
+`Reviewed` is a governance event, not a separate persisted node stage in v1.
 
 ---
 

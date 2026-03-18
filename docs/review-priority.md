@@ -133,7 +133,7 @@ If relations become too noisy:
 - Which relation types should be allowed in v1 without review?
 - Should agent-created relations default to `suggested` in almost all cases?
 - How much relation automation is actually justified early?
-- Should relation strength and confidence both exist in v1, or is that too much complexity?
+- Are we keeping quantitative relation scoring out of v1 strongly enough?
 - What anti-duplication or anti-spam logic is necessary for links?
 
 ### What a good answer looks like

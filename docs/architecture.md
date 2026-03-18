@@ -225,18 +225,15 @@ Relations connect nodes.
 - `from_node_id`
 - `to_node_id`
 - `relation_type`
-- `strength`
+- `status`
 - `created_at`
 - `created_by`
 - `source_type`
 - `source_label`
-- `status`
-- `confidence`
 
 ### Notes
-- `strength` can start simple, e.g. integer 1–5 or normalized float later
 - `status` can be active, suggested, rejected, archived
-- `confidence` is especially useful for agent-created links
+- quantitative relation scoring is intentionally deferred to v2
 
 ---
 
@@ -335,8 +332,6 @@ This is a pragmatic initial schema outline.
 - from_node_id TEXT NOT NULL
 - to_node_id TEXT NOT NULL
 - relation_type TEXT NOT NULL
-- strength REAL
-- confidence REAL
 - status TEXT NOT NULL
 - created_at TEXT NOT NULL
 - created_by TEXT
@@ -820,7 +815,7 @@ These do not need to block the first build, but they will matter soon:
 - should the graph be fully typed or lightly typed at first?
 - should tags be first-class entities later?
 - when should full revision history be added?
-- should relation strength be manual, inferred, or both?
+- when should quantitative relation scoring be introduced, if ever?
 - how should duplicate detection work?
 - should some node classes be immutable records, e.g. decisions?
 - how should per-tool permissions be configured in UI?

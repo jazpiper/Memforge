@@ -98,7 +98,7 @@ This is important because retrieval relies heavily on summaries.
 Exactly when should:
 - activity
 - suggested note
-- reviewed note
+- review queue decision
 - canonical node
 
 transition from one state to another?
