@@ -48,4 +48,38 @@ It is a **shared memory substrate** for:
 
 ## Current stage
 
-Documentation/design stage complete enough for external review before implementation scaffold begins.
+First implementation scaffold is now in place:
+
+- local Node/TypeScript service with SQLite-backed workspace storage
+- append-first governance rules and review queue behavior
+- loopback HTTP API under `/api/v1`
+- thin `pnw` / `memforge` CLI wrapper
+- React renderer with 3-pane layout and live API-first data access
+
+## Quick start
+
+```bash
+npm install
+npm run dev
+```
+
+Server only:
+
+```bash
+npm run build:server
+npm start
+```
+
+Key checks:
+
+```bash
+npm run check
+npm test
+npm run build
+```
+
+## Current implementation notes
+
+- The backend uses Node's built-in `node:sqlite` module, so Node 25+ is currently the easiest path.
+- The renderer prefers the local API and falls back to mock data if the API is unavailable.
+- The project is still an implementation-first scaffold, not yet a packaged desktop app.

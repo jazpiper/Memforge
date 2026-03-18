@@ -1,0 +1,45 @@
+{
+  "name": "memforge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "memforge": "./app/cli/bin/pnw.js",
+    "pnw": "./app/cli/bin/pnw.js"
+  },
+  "description": "Local-first personal knowledge layer for humans and agents.",
+  "scripts": {
+    "dev": "concurrently -n server,renderer -c blue,green \"npm:dev:server\" \"npm:dev:renderer\"",
+    "dev:server": "tsx watch app/server/index.ts",
+    "dev:renderer": "vite",
+    "build": "npm run build:server && npm run build:renderer",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:renderer": "vite build",
+    "start": "node dist/server/app/server/index.js",
+    "test": "vitest run",
+    "check": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "mime-types": "^2.1.35",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "vitest": "^3.0.8"
+  }
+}

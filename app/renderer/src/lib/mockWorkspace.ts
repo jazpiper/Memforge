@@ -1,0 +1,299 @@
+import type {
+  Activity,
+  Artifact,
+  Integration,
+  Node,
+  Relation,
+  ReviewQueueItem,
+  WorkspaceSeed,
+} from './types';
+
+const now = '2026-03-18T01:13:09.680Z';
+
+const nodes: Node[] = [
+  {
+    id: 'node_memforge',
+    type: 'project',
+    status: 'active',
+    canonicality: 'canonical',
+    visibility: 'normal',
+    title: 'Memforge',
+    body:
+      'Memforge is a local-first knowledge substrate for durable notes, projects, decisions, references, activities, and graph relationships shared across humans and tools.\n\nThe first implementation slice focuses on durable storage, fast retrieval, provenance, and a restrained review loop.',
+    summary: 'Shared local memory layer for humans and agents.',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'manual',
+    tags: ['workspace', 'memory', 'local-first'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      stage: 'build',
+      priority: 'core',
+    },
+  },
+  {
+    id: 'node_v1_governance',
+    type: 'decision',
+    status: 'active',
+    canonicality: 'canonical',
+    visibility: 'normal',
+    title: 'v1 governance rules',
+    body:
+      'Agent-created relations default to suggested. Reviewed is a review queue event, not a persisted node state. Summary maintenance should stay cheap and deterministic.',
+    summary: 'Keep agent writes additive and reviewable.',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'docs',
+    tags: ['governance', 'review', 'rules'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      doc: 'docs/promotion-rules.md',
+      scope: 'v1',
+    },
+  },
+  {
+    id: 'node_api_surface',
+    type: 'spec',
+    status: 'review',
+    canonicality: 'suggested',
+    visibility: 'normal',
+    title: 'Local API surface',
+    body:
+      'Expose /api/v1/nodes, /api/v1/relations, /api/v1/activities, and /api/v1/retrieval routes through a loopback-only service. Keep read operations simple and append-first writes attributable.',
+    summary: 'Thin loopback API for local tools and UI.',
+    createdBy: 'Codex',
+    sourceType: 'agent',
+    sourceLabel: 'docs synthesis',
+    tags: ['api', 'cli', 'integration'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      transport: 'http',
+      version: 'v1',
+    },
+  },
+  {
+    id: 'node_retrieval',
+    type: 'note',
+    status: 'active',
+    canonicality: 'appended',
+    visibility: 'normal',
+    title: 'Retrieval should be summary-first',
+    body:
+      'Fast context assembly should prefer summaries, recent activity digests, and a compact shortlist before reaching for full bodies or deeper traversal.',
+    summary: 'Search should return a working set, not the whole graph.',
+    createdBy: 'Codex',
+    sourceType: 'agent',
+    sourceLabel: 'retrieval notes',
+    tags: ['retrieval', 'scout', 'performance'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      bundle: 'compact',
+      hotPath: true,
+    },
+  },
+  {
+    id: 'node_review_queue',
+    type: 'question',
+    status: 'draft',
+    canonicality: 'generated',
+    visibility: 'normal',
+    title: 'How should review queue be prioritized?',
+    body:
+      'We need a simple way to surface relation suggestions and higher-risk agent output while keeping the queue short and action-oriented.',
+    summary: 'Open question about review triage.',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'planning',
+    tags: ['review', 'triage'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      status: 'pending',
+    },
+  },
+  {
+    id: 'node_openclaw',
+    type: 'reference',
+    status: 'active',
+    canonicality: 'imported',
+    visibility: 'normal',
+    title: 'OpenClaw session summary pattern',
+    body:
+      'Session summaries should land as activity by default unless they carry durable cross-tool knowledge or a decision. High-value outputs become suggested notes.',
+    summary: 'Imported integration guidance from docs.',
+    createdBy: 'system',
+    sourceType: 'import',
+    sourceLabel: 'docs import',
+    tags: ['integration', 'openclaw'],
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      importSource: 'docs/integrations.md',
+    },
+  },
+];
+
+const relations: Relation[] = [
+  {
+    id: 'rel_1',
+    fromNodeId: 'node_memforge',
+    toNodeId: 'node_v1_governance',
+    relationType: 'supports',
+    status: 'active',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'manual',
+    createdAt: now,
+    metadata: {},
+  },
+  {
+    id: 'rel_2',
+    fromNodeId: 'node_memforge',
+    toNodeId: 'node_api_surface',
+    relationType: 'related_to',
+    status: 'suggested',
+    createdBy: 'Codex',
+    sourceType: 'agent',
+    sourceLabel: 'docs synthesis',
+    createdAt: now,
+    metadata: {},
+  },
+  {
+    id: 'rel_3',
+    fromNodeId: 'node_retrieval',
+    toNodeId: 'node_api_surface',
+    relationType: 'supports',
+    status: 'active',
+    createdBy: 'Codex',
+    sourceType: 'agent',
+    sourceLabel: 'retrieval notes',
+    createdAt: now,
+    metadata: {},
+  },
+];
+
+const activities: Activity[] = [
+  {
+    id: 'act_1',
+    targetNodeId: 'node_memforge',
+    activityType: 'note_appended',
+    body: 'Created the project hub and aligned the workspace name to Memforge.',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'manual',
+    createdAt: now,
+    metadata: {},
+  },
+  {
+    id: 'act_2',
+    targetNodeId: 'node_api_surface',
+    activityType: 'agent_run_summary',
+    body: 'Codex documented the initial API contract and suggested a thin local HTTP surface.',
+    createdBy: 'Codex',
+    sourceType: 'agent',
+    sourceLabel: 'docs synthesis',
+    createdAt: now,
+    metadata: {
+      runId: 'run_123',
+    },
+  },
+  {
+    id: 'act_3',
+    targetNodeId: 'node_review_queue',
+    activityType: 'review_action',
+    body: 'Review queue triage still needs a clear priority rule for relation suggestions and suggested notes.',
+    createdBy: '고주환',
+    sourceType: 'human',
+    sourceLabel: 'planning',
+    createdAt: now,
+    metadata: {},
+  },
+];
+
+const artifacts: Artifact[] = [
+  {
+    id: 'art_1',
+    nodeId: 'node_api_surface',
+    path: 'artifacts/reports/api-contract.md',
+    mimeType: 'text/markdown',
+    sizeBytes: 4096,
+    checksum: 'sha256:memforge-api-contract',
+    createdBy: 'Codex',
+    sourceLabel: 'docs synthesis',
+    createdAt: now,
+    metadata: {
+      kind: 'report',
+    },
+  },
+];
+
+const reviewQueue: ReviewQueueItem[] = [
+  {
+    id: 'rq_1',
+    entityType: 'relation',
+    entityId: 'rel_2',
+    reviewType: 'relation_suggestion',
+    proposedBy: 'Codex',
+    createdAt: now,
+    status: 'pending',
+    notes: 'Suggested relation from project hub to API surface needs a human check.',
+    metadata: {
+      confidence: 'medium',
+    },
+  },
+  {
+    id: 'rq_2',
+    entityType: 'node',
+    entityId: 'node_api_surface',
+    reviewType: 'node_promotion',
+    proposedBy: 'Codex',
+    createdAt: now,
+    status: 'pending',
+    notes: 'Promote suggested API surface note to canonical after review.',
+    metadata: {
+      source: 'docs/api.md',
+    },
+  },
+];
+
+const integrations: Integration[] = [
+  {
+    id: 'int_1',
+    name: 'Claude Code',
+    kind: 'claude_code',
+    status: 'active',
+    capabilities: ['read_search', 'get_context_bundle', 'append_activity'],
+    updatedAt: now,
+  },
+  {
+    id: 'int_2',
+    name: 'Codex',
+    kind: 'codex',
+    status: 'active',
+    capabilities: ['read_search', 'get_context_bundle', 'create_node', 'create_relation'],
+    updatedAt: now,
+  },
+];
+
+export const mockWorkspace: WorkspaceSeed = {
+  workspace: {
+    name: 'Memforge',
+    rootPath: '/Users/kojuhwan/Documents/ideabank/Memforge',
+    schemaVersion: 1,
+    apiBind: '127.0.0.1:8787',
+    integrationModes: ['read-only', 'append-only'],
+    authMode: 'optional',
+  },
+  nodes,
+  relations,
+  activities,
+  artifacts,
+  reviewQueue,
+  integrations,
+  pinnedProjectIds: ['node_memforge'],
+  recentNodeIds: ['node_api_surface', 'node_v1_governance', 'node_retrieval'],
+};

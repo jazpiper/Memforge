@@ -1,0 +1,8 @@
+node_modules
+dist
+.vite
+.memforge-workspace
+.memforge-smoke
+*.log
+.DS_Store
+*.tsbuildinfo
