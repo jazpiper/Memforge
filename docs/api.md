@@ -1,8 +1,8 @@
-# Personal Neural Workspace — API Contract
+# Memforge — API Contract
 
 ## 1. Purpose
 
-This document defines the first concrete API contract for Personal Neural Workspace.
+This document defines the first concrete API contract for Memforge.
 
 The API exists to let:
 - the desktop UI
@@ -246,7 +246,7 @@ Fast search over nodes using keyword/FTS and structured filters.
       {
         "id": "node_1",
         "type": "project",
-        "title": "Personal Neural Workspace",
+        "title": "Memforge",
         "summary": "Shared memory layer for humans and agents.",
         "status": "active",
         "sourceLabel": "manual",
@@ -569,7 +569,7 @@ Context bundles are a core primitive.
       "target": {
         "type": "project",
         "id": "node_project_1",
-        "title": "Personal Neural Workspace"
+        "title": "Memforge"
       },
       "mode": "compact",
       "preset": "for-coding",
@@ -842,7 +842,7 @@ This keeps the API practical and aligned with the build plan.
 
 ## 24. Summary
 
-The right v1 API for Personal Neural Workspace is:
+The right v1 API for Memforge is:
 - local-only by default
 - small but expressive
 - retrieval-first

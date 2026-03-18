@@ -1,4 +1,4 @@
-# Personal Neural Workspace — MVP Spec
+# Memforge — MVP Spec
 
 ## 1. MVP goal
 

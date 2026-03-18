@@ -1,4 +1,4 @@
-# Personal Neural Workspace — Schema
+# Memforge — Schema
 
 ## 1. Schema goal
 
@@ -646,7 +646,7 @@ This rule, combined with the promotion table, guarantees the graph stays trustwo
   "type": "project",
   "status": "active",
   "canonicality": "canonical",
-  "title": "Personal Neural Workspace",
+  "title": "Memforge",
   "body": "A local-first knowledge layer for humans and agents.",
   "summary": "Shared personal knowledge substrate.",
   "created_by": "human:juhwan",

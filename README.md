@@ -1,6 +1,6 @@
-# Personal Neural Workspace
+# Memforge
 
-Personal Neural Workspace is a **local-first personal knowledge layer for humans and agents**.
+Memforge is a **local-first personal knowledge layer for humans and agents**.
 
 It is designed to let a human user and multiple external tools — such as Claude Code, Codex, Gemini CLI, OpenClaw, and future integrations — read from and write to one durable local workspace.
 

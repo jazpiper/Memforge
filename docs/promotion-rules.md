@@ -1,4 +1,4 @@
-# Personal Neural Workspace — Promotion Rules (v1)
+# Memforge — Promotion Rules (v1)
 
 ## Purpose
 Define a strict pipeline from activity → suggested → review queue decision → canonical to prevent workspace noise.

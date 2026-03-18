@@ -1,8 +1,8 @@
-# Personal Neural Workspace — Concept Document
+# Memforge — Concept Document
 
 ## 1. One-line definition
 
-**Personal Neural Workspace** is a local-first personal knowledge layer where humans and multiple AI agents can read, write, search, and connect ideas through a shared neural workspace.
+**Memforge** is a local-first personal knowledge layer where humans and multiple AI agents can read, write, search, and connect ideas through a shared neural workspace.
 
 It is not primarily an AI note-taking app.
 It is a **durable personal knowledge substrate** for notes, projects, questions, decisions, references, and relationships — designed to be usable by both people and tools such as Claude Code, Codex, Gemini CLI, OpenClaw, and other local or remote agents.
@@ -44,7 +44,7 @@ The opportunity is a **shared knowledge layer for people and agents**.
 - AI assistants each have separate memory
 - knowledge continuity is tool-specific
 
-### Personal Neural Workspace model
+### Memforge model
 - knowledge is stored locally in a durable graph-like structure
 - both humans and agents can access the same source of truth
 - ideas, projects, questions, and decisions persist across tools
@@ -256,15 +256,15 @@ The user should be able to see what came from which agent and decide what become
 
 ### vs Obsidian
 Obsidian is primarily a human-facing linked note system.
-Personal Neural Workspace should be a **human-and-agent shared knowledge layer**.
+Memforge should be a **human-and-agent shared knowledge layer**.
 
 ### vs NotebookLM
 NotebookLM reasons over a provided document set.
-Personal Neural Workspace should be a **persistent, evolving local memory substrate**.
+Memforge should be a **persistent, evolving local memory substrate**.
 
 ### vs internal AI memories
 Many AI tools have their own internal memory, but those memories are siloed.
-Personal Neural Workspace aims to be **tool-independent memory infrastructure**.
+Memforge aims to be **tool-independent memory infrastructure**.
 
 ### vs general AI note apps
 Most AI note apps try to add generation and summarization inside the product.
@@ -332,7 +332,7 @@ Silent agent edits to important knowledge will feel dangerous.
 
 ## 16. Strategic direction
 
-The strongest version of Personal Neural Workspace is not a smarter notebook.
+The strongest version of Memforge is not a smarter notebook.
 It is a **local personal memory infrastructure layer**.
 
 Over time, it can become:

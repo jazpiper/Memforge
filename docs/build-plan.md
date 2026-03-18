@@ -1,4 +1,4 @@
-# Personal Neural Workspace — Build Plan
+# Memforge — Build Plan
 
 ## 1. Purpose
 

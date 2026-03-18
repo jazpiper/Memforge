@@ -1,8 +1,8 @@
-# Personal Neural Workspace — Backup & Sync Strategy
+# Memforge — Backup & Sync Strategy
 
 ## 1. Purpose
 
-This document defines how Personal Neural Workspace should think about:
+This document defines how Memforge should think about:
 - backup
 - restore
 - multi-device use
@@ -24,7 +24,7 @@ It prioritizes safety and simplicity over early real-time sync ambition.
 ## 2. Core position
 
 ### Short version
-Yes, Personal Neural Workspace should support:
+Yes, Memforge should support:
 - reliable backup
 - restore
 - moving a workspace between machines
@@ -385,7 +385,7 @@ It adds significant complexity and could easily violate the project’s anti-blo
 The best current decision is:
 
 ### Official v1 position
-Personal Neural Workspace supports:
+Memforge supports:
 - strong local backups
 - export and restore
 - portable workspaces
@@ -419,7 +419,7 @@ If this design is externally reviewed, useful questions include:
 
 ## 17. Summary
 
-Personal Neural Workspace should absolutely support backup and practical multi-device use.
+Memforge should absolutely support backup and practical multi-device use.
 
 But the right early approach is not heavy sync.
 It is:

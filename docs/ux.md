@@ -1,8 +1,8 @@
-# Personal Neural Workspace — UX Design
+# Memforge — UX Design
 
 ## 1. Purpose
 
-This document defines the human-facing UX for Personal Neural Workspace.
+This document defines the human-facing UX for Memforge.
 
 The UI should make the product feel:
 - fast
@@ -630,7 +630,7 @@ A small number of strong surfaces is better than mode sprawl.
 
 ## 16. Summary
 
-The right human UI for Personal Neural Workspace is a restrained local desktop app built around:
+The right human UI for Memforge is a restrained local desktop app built around:
 - search
 - node/project reading
 - surrounding context

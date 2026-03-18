@@ -1,4 +1,4 @@
-# Personal Neural Workspace — External Review Prompt
+# Memforge — External Review Prompt
 
 Use the prompt below when asking another model to review the current documentation set.
 
@@ -6,7 +6,7 @@ Use the prompt below when asking another model to review the current documentati
 
 ## Review prompt
 
-You are reviewing a product/design document set for a software concept called **Personal Neural Workspace**.
+You are reviewing a product/design document set for a software concept called **Memforge**.
 
 Your job is **not** to brainstorm endless new features.
 Your job is to act like a rigorous product + architecture reviewer and pressure-test the design.

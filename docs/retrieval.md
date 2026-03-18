@@ -1,8 +1,8 @@
-# Personal Neural Workspace — Retrieval & Context Assembly
+# Memforge — Retrieval & Context Assembly
 
 ## 1. Document purpose
 
-This document defines how Personal Neural Workspace should retrieve, rank, compress, and hand off knowledge to external tools and agents.
+This document defines how Memforge should retrieve, rank, compress, and hand off knowledge to external tools and agents.
 
 This is not a generic search design.
 It is a **speed-critical retrieval design** for a local-first knowledge layer used by:
@@ -679,7 +679,7 @@ Start with the fastest stack that feels useful.
 
 ## 20. Strategic reminder
 
-Personal Neural Workspace should not become a massive intelligence engine that is impressive on paper but slow in daily use.
+Memforge should not become a massive intelligence engine that is impressive on paper but slow in daily use.
 
 The right shape is:
 - light retrieval core

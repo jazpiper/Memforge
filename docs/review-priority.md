@@ -1,10 +1,10 @@
-# Personal Neural Workspace — Review Priorities
+# Memforge — Review Priorities
 
 ## 1. Purpose
 
 This document defines the four highest-priority review questions for the current design.
 
-These are the areas most likely to determine whether Personal Neural Workspace becomes:
+These are the areas most likely to determine whether Memforge becomes:
 - fast and durable
 or
 - noisy, heavy, and hard to trust

@@ -1,8 +1,8 @@
-# Personal Neural Workspace — Integrations
+# Memforge — Integrations
 
 ## 1. Integration goal
 
-The purpose of integrations is not to make Personal Neural Workspace own every workflow.
+The purpose of integrations is not to make Memforge own every workflow.
 The goal is to let many external tools share one durable local knowledge layer.
 
 This document defines practical integration patterns for:
@@ -117,7 +117,7 @@ Most integrations should follow this sequence.
    - suggested relation
 5. user reviews high-impact changes if required
 
-This keeps Personal Neural Workspace as the durable memory layer rather than the execution engine.
+This keeps Memforge as the durable memory layer rather than the execution engine.
 
 ## 5.1 Scout/Main retrieval pattern
 
@@ -290,7 +290,7 @@ OpenClaw writes durable records when appropriate:
 - artifact references
 
 #### Pattern C — Hybrid memory model
-OpenClaw keeps its own working/session memory but promotes durable, cross-tool knowledge into Personal Neural Workspace.
+OpenClaw keeps its own working/session memory but promotes durable, cross-tool knowledge into Memforge.
 
 This may be the strongest long-term model.
 
@@ -514,7 +514,7 @@ Why this order:
 ## 17. Example end-to-end scenarios
 
 ## Scenario A — Coding task with Claude Code
-1. User selects a project in Personal Neural Workspace
+1. User selects a project in Memforge
 2. A fast scout stage fetches a compact task context bundle
 3. Claude Code consumes only the curated bundle
 4. Claude Code completes implementation externally
@@ -563,4 +563,4 @@ The right integration strategy is simple:
 - append-first write access
 - explicit provenance everywhere
 
-If done well, Personal Neural Workspace becomes the shared memory fabric across the user’s entire agent/tool ecosystem.
+If done well, Memforge becomes the shared memory fabric across the user’s entire agent/tool ecosystem.

@@ -1,4 +1,4 @@
-# Personal Neural Workspace — Review Brief
+# Memforge — Review Brief
 
 ## 1. Purpose of this document
 
@@ -10,7 +10,7 @@ It is intentionally shorter than the full document set.
 
 ## 2. Product in one paragraph
 
-Personal Neural Workspace is a **local-first personal knowledge layer for humans and agents**.
+Memforge is a **local-first personal knowledge layer for humans and agents**.
 It is meant to store durable knowledge — notes, projects, ideas, questions, decisions, references, activities, and relations — in one local workspace that can be used by both a human-facing desktop app and multiple external tools such as Claude Code, Codex, Gemini CLI, and OpenClaw.
 
 The product is not primarily an AI note app. It is a **shared memory substrate** with fast retrieval, compact context handoff, provenance-aware append-first writes, and careful anti-bloat constraints.

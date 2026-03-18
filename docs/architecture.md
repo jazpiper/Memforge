@@ -1,4 +1,4 @@
-# Personal Neural Workspace — Architecture
+# Memforge — Architecture
 
 ## 1. Architecture goal
 
@@ -825,7 +825,7 @@ These do not need to block the first build, but they will matter soon:
 
 ## 22. Summary
 
-The right architecture for Personal Neural Workspace is not a cloud AI note app.
+The right architecture for Memforge is not a cloud AI note app.
 It is a **desktop-local knowledge system with an embedded local integration layer**.
 
 Its core value comes from:
