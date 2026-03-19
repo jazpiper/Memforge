@@ -1,5 +1,9 @@
 # Memforge — Architecture
 
+> Historical v1 design reference.
+> Some sections in this document no longer reflect the shipped v2 surface.
+> For current behavior, see `README.md`, `docs/api.md`, `docs/mcp.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
+
 ## 1. Architecture goal
 
 Design a local-first knowledge system that works as a durable memory layer for both:
@@ -26,7 +30,7 @@ This document focuses on the initial architecture for a practical v0/v1 build, n
 The product should be structured as four layers:
 
 ### Layer A — Human desktop app
-A local desktop application for browsing, editing, linking, searching, and reviewing knowledge.
+A local desktop application for browsing, editing, linking, searching, and inspecting knowledge.
 
 ### Layer B — Local application service
 A local process exposing a stable interface for:

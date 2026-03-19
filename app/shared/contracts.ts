@@ -11,7 +11,7 @@ export const nodeTypes = [
   "conversation"
 ] as const;
 
-export const nodeStatuses = ["active", "draft", "review", "archived"] as const;
+export const nodeStatuses = ["active", "draft", "contested", "archived"] as const;
 export const canonicalities = [
   "canonical",
   "appended",
@@ -41,6 +41,17 @@ export const relationUsageEventTypes = [
   "retrieval_muted",
   "manual_hide"
 ] as const;
+export const searchFeedbackResultTypes = ["node", "activity"] as const;
+export const searchFeedbackVerdicts = ["useful", "not_useful", "uncertain"] as const;
+export const governanceEntityTypes = ["node", "relation"] as const;
+export const governanceStates = ["healthy", "low_confidence", "contested"] as const;
+export const governanceEventTypes = [
+  "evaluated",
+  "promoted",
+  "contested",
+  "demoted",
+  "migrated"
+] as const;
 export const activityTypes = [
   "note_appended",
   "agent_run_summary",
@@ -51,14 +62,6 @@ export const activityTypes = [
   "context_bundle_generated"
 ] as const;
 export const sourceTypes = ["human", "agent", "import", "system", "integration"] as const;
-export const reviewTypes = [
-  "relation_suggestion",
-  "node_promotion",
-  "canonical_edit",
-  "merge_proposal",
-  "archive_proposal"
-] as const;
-export const reviewStatuses = ["pending", "approved", "rejected", "dismissed"] as const;
 export const bundleModes = ["micro", "compact", "standard", "deep"] as const;
 export const bundlePresets = [
   "for-coding",
@@ -88,6 +91,43 @@ export const nodeSearchSchema = z.object({
   limit: z.number().int().min(1).max(100).default(10),
   offset: z.number().int().min(0).default(0),
   sort: z.enum(["relevance", "updated_at"]).default("relevance")
+});
+
+export const activitySearchSchema = z.object({
+  query: z.string().default(""),
+  filters: z
+    .object({
+      targetNodeIds: z.array(z.string()).optional(),
+      activityTypes: z.array(z.enum(activityTypes)).optional(),
+      sourceLabels: z.array(z.string()).optional(),
+      createdAfter: z.string().optional(),
+      createdBefore: z.string().optional()
+    })
+    .default({}),
+  limit: z.number().int().min(1).max(100).default(10),
+  offset: z.number().int().min(0).default(0),
+  sort: z.enum(["relevance", "updated_at"]).default("relevance")
+});
+
+export const workspaceSearchSchema = z.object({
+  query: z.string().default(""),
+  scopes: z.array(z.enum(["nodes", "activities"])).min(1).default(["nodes", "activities"]),
+  nodeFilters: nodeSearchSchema.shape.filters.optional(),
+  activityFilters: activitySearchSchema.shape.filters.optional(),
+  limit: z.number().int().min(1).max(100).default(10),
+  offset: z.number().int().min(0).default(0),
+  sort: z.enum(["relevance", "updated_at"]).default("relevance")
+});
+
+export const governanceIssuesQuerySchema = z.object({
+  states: z.array(z.enum(governanceStates)).optional(),
+  limit: z.number().int().min(1).max(100).default(20)
+});
+
+export const recomputeGovernanceSchema = z.object({
+  entityType: z.enum(governanceEntityTypes).optional(),
+  entityIds: z.array(z.string().min(1)).max(200).optional(),
+  limit: z.number().int().min(1).max(500).default(100)
 });
 
 export const createNodeSchema = z.object({
@@ -160,6 +200,18 @@ export const appendRelationUsageEventSchema = z.object({
   metadata: z.record(z.any()).default({})
 });
 
+export const appendSearchFeedbackSchema = z.object({
+  resultType: z.enum(searchFeedbackResultTypes),
+  resultId: z.string().min(1),
+  verdict: z.enum(searchFeedbackVerdicts),
+  query: z.string().optional(),
+  sessionId: z.string().optional(),
+  runId: z.string().optional(),
+  source: sourceSchema.optional(),
+  confidence: z.number().min(0).max(1).default(1),
+  metadata: z.record(z.any()).default({})
+});
+
 export const recomputeInferredRelationsSchema = z.object({
   relationIds: z.array(z.string().min(1)).max(200).optional(),
   generator: z.string().min(1).optional(),
@@ -180,7 +232,6 @@ export const attachArtifactSchema = z.object({
 
 export const buildContextBundleSchema = z.object({
   target: z.object({
-    type: z.string().default("node"),
     id: z.string().min(1)
   }),
   mode: z.enum(bundleModes).default("compact"),
@@ -196,20 +247,6 @@ export const buildContextBundleSchema = z.object({
       maxItems: z.number().int().min(1).max(30).default(10)
     })
     .default({})
-});
-
-export const reviewActionSchema = z.object({
-  source: sourceSchema,
-  notes: z.string().optional(),
-  patch: z
-    .object({
-      title: z.string().optional(),
-      body: z.string().optional(),
-      summary: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      metadata: z.record(z.any()).optional()
-    })
-    .optional()
 });
 
 export const registerIntegrationSchema = z.object({
@@ -247,13 +284,19 @@ export type RelationStatus = (typeof relationStatuses)[number];
 export type InferredRelationStatus = (typeof inferredRelationStatuses)[number];
 export type RelationSource = (typeof relationSources)[number];
 export type RelationUsageEventType = (typeof relationUsageEventTypes)[number];
+export type SearchFeedbackResultType = (typeof searchFeedbackResultTypes)[number];
+export type SearchFeedbackVerdict = (typeof searchFeedbackVerdicts)[number];
+export type GovernanceEntityType = (typeof governanceEntityTypes)[number];
+export type GovernanceState = (typeof governanceStates)[number];
+export type GovernanceEventType = (typeof governanceEventTypes)[number];
 export type ActivityType = (typeof activityTypes)[number];
-export type ReviewType = (typeof reviewTypes)[number];
-export type ReviewStatus = (typeof reviewStatuses)[number];
 export type BundleMode = (typeof bundleModes)[number];
 export type BundlePreset = (typeof bundlePresets)[number];
 export type Source = z.infer<typeof sourceSchema>;
 export type NodeSearchInput = z.infer<typeof nodeSearchSchema>;
+export type ActivitySearchInput = z.infer<typeof activitySearchSchema>;
+export type WorkspaceSearchInput = z.infer<typeof workspaceSearchSchema>;
+export type GovernanceIssuesQueryInput = z.infer<typeof governanceIssuesQuerySchema>;
 export type CreateNodeInput = z.infer<typeof createNodeSchema>;
 export type UpdateNodeInput = z.infer<typeof updateNodeSchema>;
 export type CreateRelationInput = z.infer<typeof createRelationSchema>;
@@ -261,11 +304,12 @@ export type UpdateRelationInput = z.infer<typeof updateRelationSchema>;
 export type AppendActivityInput = z.infer<typeof appendActivitySchema>;
 export type UpsertInferredRelationInput = z.infer<typeof upsertInferredRelationSchema>;
 export type AppendRelationUsageEventInput = z.infer<typeof appendRelationUsageEventSchema>;
+export type AppendSearchFeedbackInput = z.infer<typeof appendSearchFeedbackSchema>;
+export type RecomputeGovernanceInput = z.infer<typeof recomputeGovernanceSchema>;
 export type RecomputeInferredRelationsInput = z.infer<typeof recomputeInferredRelationsSchema>;
 export type ReindexInferredRelationsInput = z.infer<typeof reindexInferredRelationsSchema>;
 export type AttachArtifactInput = z.infer<typeof attachArtifactSchema>;
 export type BuildContextBundleInput = z.infer<typeof buildContextBundleSchema>;
-export type ReviewActionInput = z.infer<typeof reviewActionSchema>;
 export type RegisterIntegrationInput = z.infer<typeof registerIntegrationSchema>;
 export type UpdateIntegrationInput = z.infer<typeof updateIntegrationSchema>;
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceSchema>;

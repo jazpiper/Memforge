@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMemforgeApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
 import { openDatabase } from "../app/server/db.js";
-import { applyReviewDecision } from "../app/server/governance.js";
 import { MemforgeRepository } from "../app/server/repositories.js";
 import { embedSemanticQueryText } from "../app/server/semantic/provider.js";
 import { isPathWithinRoot } from "../app/server/utils.js";
@@ -160,47 +159,70 @@ describe("search punctuation handling", () => {
     expect(results.total).toBe(1);
     expect(results.items[0]?.title).toBe("Graph retrieval note");
   });
-});
 
-describe("review provenance", () => {
-  it("records provenance on the node when a review approval mutates it", () => {
-    const repository = createRepository();
+  it("backfills legacy activities into the activity FTS index", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspace = ensureWorkspace(root);
+    const db = openDatabase(workspace);
+    const repository = new MemforgeRepository(db, root);
+    repository.upsertBaseSettings({
+      "workspace.name": "Memforge Test",
+      "search.activityFts.version": 0
+    });
+
     const node = repository.createNode({
       type: "note",
-      title: "Suggested memory note",
-      body: "Original suggested content",
-      tags: ["memory"],
-      source: {
-        actorType: "agent",
-        actorLabel: "Codex",
-        toolName: "codex"
-      },
-      metadata: {},
-      resolvedCanonicality: "suggested",
-      resolvedStatus: "review"
-    });
-    const review = repository.createReviewItem({
-      entityType: "node",
-      entityId: node.id,
-      reviewType: "node_promotion",
-      proposedBy: "Codex",
-      notes: "Needs approval"
-    });
-
-    applyReviewDecision(repository, review.id, "edit-and-approve", {
+      title: "Search target",
+      body: "Node for activity backfill test.",
+      tags: [],
       source: {
         actorType: "human",
         actorLabel: "juhwan",
         toolName: "memforge-test"
       },
-      patch: {
-        body: "Edited canonical content"
-      }
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    repository.appendActivity({
+      targetNodeId: node.id,
+      activityType: "agent_run_summary",
+      body: "Historical cleanup note for activity FTS backfill.",
+      source: {
+        actorType: "agent",
+        actorLabel: "Codex",
+        toolName: "codex"
+      },
+      metadata: {}
     });
 
-    const provenance = repository.listProvenance("node", node.id).map((item) => item.operationType);
-    expect(provenance).toContain("update");
-    expect(provenance).toContain("promote");
+    db.prepare(`INSERT INTO activities_fts(activities_fts) VALUES ('delete-all')`).run();
+    repository.setSetting("search.activityFts.version", 0);
+
+    expect(
+      repository.searchActivities({
+        query: "cleanup",
+        filters: {},
+        limit: 10,
+        offset: 0,
+        sort: "relevance"
+      }).total
+    ).toBe(0);
+
+    repository.ensureActivitySearchIndex();
+
+    const results = repository.searchActivities({
+      query: "cleanup",
+      filters: {},
+      limit: 10,
+      offset: 0,
+      sort: "relevance"
+    });
+
+    expect(results.total).toBe(1);
+    expect(results.items[0]?.body).toContain("cleanup");
+    db.close();
   });
 });
 
@@ -256,6 +278,12 @@ describe("node update behavior", () => {
       expect(response.status).toBe(200);
       expect(body.data.node.summary).toBe("Hand-written retrieval summary");
       expect(body.data.node.tags).toEqual(["updated"]);
+      expect(body.data.governance).toEqual(
+        expect.objectContaining({
+          state: expect.any(Object),
+          events: expect.any(Array)
+        })
+      );
       expect(provenance.some((item) => item.operationType === "update")).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -343,17 +371,17 @@ describe("node update behavior", () => {
   });
 });
 
-describe("review queue filtering", () => {
-  it("filters review items by review type", () => {
+describe("legacy review queue migration helpers", () => {
+  it("keeps migration-only legacy review items filterable by type", () => {
     const repository = createRepository();
-    repository.createReviewItem({
+    repository.createLegacyReviewItem({
       entityType: "node",
       entityId: "node_one",
       reviewType: "node_promotion",
       proposedBy: "Codex",
       notes: "Promote note"
     });
-    repository.createReviewItem({
+    repository.createLegacyReviewItem({
       entityType: "relation",
       entityId: "rel_one",
       reviewType: "relation_suggestion",
@@ -361,7 +389,9 @@ describe("review queue filtering", () => {
       notes: "Review relation"
     });
 
-    const filtered = repository.listReviewItems("pending", 20, "node_promotion");
+    const filtered = repository
+      .listLegacyReviewItems(20)
+      .filter((item) => item.status === "pending" && item.reviewType === "node_promotion");
 
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.reviewType).toBe("node_promotion");
@@ -1071,6 +1101,114 @@ describe("relation usage events", () => {
     expect(listed[0]?.toolName).toBe("memforge-test");
   });
 
+  it("appends and lists search feedback events in reverse chronological order", async () => {
+    const repository = createRepository();
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const first = repository.appendSearchFeedbackEvent({
+      resultType: "node",
+      resultId: "node_demo",
+      verdict: "useful",
+      query: "cleanup notes",
+      sessionId: "session-1",
+      runId: "run-1",
+      source,
+      confidence: 0.8,
+      metadata: {}
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const second = repository.appendSearchFeedbackEvent({
+      resultType: "node",
+      resultId: "node_demo",
+      verdict: "not_useful",
+      query: "cleanup notes",
+      sessionId: "session-1",
+      runId: "run-2",
+      source,
+      confidence: 0.4,
+      metadata: {}
+    });
+
+    const listed = repository.listSearchFeedbackEvents("node", "node_demo");
+    const summaries = repository.getSearchFeedbackSummaries("node", ["node_demo"]);
+
+    expect(listed).toHaveLength(2);
+    expect(listed[0]?.id).toBe(second.id);
+    expect(listed[1]?.id).toBe(first.id);
+    expect(listed[0]?.verdict).toBe("not_useful");
+    expect(summaries.get("node_demo")).toMatchObject({
+      totalDelta: 0.4,
+      eventCount: 2,
+      usefulCount: 1,
+      notUsefulCount: 1,
+      uncertainCount: 0
+    });
+  });
+
+  it("uses search feedback to reorder node search results", async () => {
+    const repository = createRepository();
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const preferredNode = repository.createNode({
+      type: "note",
+      title: "Cleanup candidate preferred",
+      body: "Shared cleanup query target",
+      tags: [],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    repository.createNode({
+      type: "note",
+      title: "Cleanup candidate newer",
+      body: "Shared cleanup query target",
+      tags: [],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    const baseline = repository.searchNodes({
+      query: "cleanup candidate",
+      filters: {},
+      limit: 10,
+      offset: 0,
+      sort: "relevance"
+    });
+    expect(baseline.items[0]?.id).not.toBe(preferredNode.id);
+
+    repository.appendSearchFeedbackEvent({
+      resultType: "node",
+      resultId: preferredNode.id,
+      verdict: "useful",
+      query: "cleanup candidate",
+      confidence: 1,
+      source,
+      metadata: {}
+    });
+
+    const reranked = repository.searchNodes({
+      query: "cleanup candidate",
+      filters: {},
+      limit: 10,
+      offset: 0,
+      sort: "relevance"
+    });
+
+    expect(reranked.items[0]?.id).toBe(preferredNode.id);
+  });
+
   it("backfills relation usage rollups from existing raw events on startup", () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
@@ -1239,6 +1377,77 @@ describe("inferred relation maintenance", () => {
 
     expect(result.expiredCount).toBe(1);
     expect(result.items[0]?.status).toBe("expired");
+  });
+
+  it("does not resurrect expired inferred relations during manual full recompute", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const fromNode = repository.createNode({
+      type: "project",
+      title: "Manual recompute target",
+      body: "Target body",
+      tags: [],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const toNode = repository.createNode({
+      type: "note",
+      title: "Expired edge node",
+      body: "Expired edge body",
+      tags: [],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const relation = repository.upsertInferredRelation({
+      fromNodeId: fromNode.id,
+      toNodeId: toNode.id,
+      relationType: "supports",
+      baseScore: 0.5,
+      usageScore: 0,
+      finalScore: 0.5,
+      status: "expired",
+      generator: "deterministic-linker",
+      evidence: {},
+      metadata: {}
+    });
+
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null
+    });
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/inferred-relations/recompute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json();
+      const refreshed = repository.getInferredRelation(relation.id);
+
+      expect(response.status).toBe(200);
+      expect(payload.data.updatedCount).toBe(0);
+      expect(refreshed.status).toBe("expired");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   it("auto-recomputes after enough usage events and a short debounce", async () => {
@@ -2168,13 +2377,16 @@ describe("inferred relation API integration", () => {
         `${baseUrl}/nodes/${targetNode.id}/neighborhood?include_inferred=1&max_inferred=4`
       );
       const neighborhoodBody = await neighborhoodResponse.json();
+      const relatedAliasResponse = await fetch(
+        `${baseUrl}/nodes/${targetNode.id}/related?include_inferred=1&max_inferred=4`
+      );
+      const relatedAliasBody = await relatedAliasResponse.json();
 
       const bundleResponse = await fetch(`${baseUrl}/context/bundles`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           target: {
-            type: "node",
             id: targetNode.id,
           },
           mode: "compact",
@@ -2193,6 +2405,8 @@ describe("inferred relation API integration", () => {
       const bundleBody = await bundleResponse.json();
 
       expect(neighborhoodResponse.status).toBe(200);
+      expect(relatedAliasResponse.status).toBe(200);
+      expect(relatedAliasBody.data.items).toEqual(neighborhoodBody.data.items);
       expect(neighborhoodBody.data.items).toHaveLength(1);
       expect(neighborhoodBody.data.items[0]?.edge.relationSource).toBe("inferred");
       expect(neighborhoodBody.data.items[0]?.edge.relationScore).toBe(0.76);
@@ -2208,6 +2422,116 @@ describe("inferred relation API integration", () => {
             retrievalRank: expect.any(Number),
           }),
         ])
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("includes contested decisions and open questions in target-related retrieval and context bundles", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    const targetNode = repository.createNode({
+      type: "project",
+      title: "Governance target",
+      body: "Target body",
+      source,
+      tags: [],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const contestedDecision = repository.createNode({
+      type: "decision",
+      title: "Contested decision",
+      body: "Decision under dispute",
+      source,
+      tags: [],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "contested",
+    });
+    const contestedQuestion = repository.createNode({
+      type: "question",
+      title: "Contested question",
+      body: "Open question under dispute",
+      source,
+      tags: [],
+      metadata: {},
+      resolvedCanonicality: "appended",
+      resolvedStatus: "contested",
+    });
+    repository.createRelation({
+      fromNodeId: targetNode.id,
+      toNodeId: contestedDecision.id,
+      relationType: "supports",
+      metadata: {},
+      source,
+      resolvedStatus: "active",
+    });
+    repository.createRelation({
+      fromNodeId: targetNode.id,
+      toNodeId: contestedQuestion.id,
+      relationType: "elaborates",
+      metadata: {},
+      source,
+      resolvedStatus: "active",
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const [decisionsResponse, questionsResponse, bundleResponse] = await Promise.all([
+        fetch(`${baseUrl}/retrieval/decisions/${targetNode.id}`),
+        fetch(`${baseUrl}/retrieval/open-questions/${targetNode.id}`),
+        fetch(`${baseUrl}/context/bundles`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            target: { id: targetNode.id },
+            mode: "compact",
+            preset: "for-assistant",
+            options: {
+              includeRelated: false,
+              includeInferred: false,
+              includeRecentActivities: false,
+              includeDecisions: true,
+              includeOpenQuestions: true,
+              maxInferred: 0,
+              maxItems: 8
+            }
+          }),
+        }),
+      ]);
+      const decisionsBody = await decisionsResponse.json();
+      const questionsBody = await questionsResponse.json();
+      const bundleBody = await bundleResponse.json();
+
+      expect(decisionsResponse.status).toBe(200);
+      expect(questionsResponse.status).toBe(200);
+      expect(bundleResponse.status).toBe(200);
+      expect(decisionsBody.data.items.some((item: { id: string }) => item.id === contestedDecision.id)).toBe(true);
+      expect(questionsBody.data.items.some((item: { id: string }) => item.id === contestedQuestion.id)).toBe(true);
+      expect(bundleBody.data.bundle.decisions.some((item: { id: string }) => item.id === contestedDecision.id)).toBe(true);
+      expect(bundleBody.data.bundle.openQuestions.some((item: { id: string }) => item.id === contestedQuestion.id)).toBe(
+        true
       );
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -2280,7 +2604,6 @@ describe("inferred relation API integration", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           target: {
-            type: "node",
             id: targetNode.id,
           },
           mode: "compact",
@@ -2353,6 +2676,183 @@ describe("inferred relation API integration", () => {
       expect(payload.data.event.relationId).toBe("irel_demo");
       expect(payload.data.event.eventType).toBe("bundle_used_in_output");
       expect(payload.data.event.delta).toBe(0.2);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("accepts search feedback events through the HTTP API", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+
+      const response = await fetch(`${baseUrl}/search-feedback-events`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          resultType: "node",
+          resultId: "node_demo",
+          verdict: "useful",
+          query: "cleanup notes",
+          confidence: 0.8,
+          source: {
+            actorType: "agent",
+            actorLabel: "Codex",
+            toolName: "codex",
+          },
+          metadata: {
+            phase: "ranking",
+          },
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(payload.data.event.resultType).toBe("node");
+      expect(payload.data.event.resultId).toBe("node_demo");
+      expect(payload.data.event.verdict).toBe("useful");
+      expect(payload.data.event.delta).toBe(0.8);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("searches activities through the HTTP API", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    const node = repository.createNode({
+      type: "project",
+      title: "Cleanup Project",
+      body: "Project for activity search",
+      source,
+      tags: [],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    repository.appendActivity({
+      targetNodeId: node.id,
+      activityType: "agent_run_summary",
+      body: "Completed cleanup optimization pass.",
+      source,
+      metadata: {},
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+
+      const response = await fetch(`${baseUrl}/activities/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: "cleanup optimization",
+          filters: {
+            activityTypes: ["agent_run_summary"],
+          },
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.total).toBe(1);
+      expect(payload.data.items[0].targetNodeId).toBe(node.id);
+      expect(payload.data.items[0].activityType).toBe("agent_run_summary");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("searches nodes and activities through the unified workspace endpoint", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    const node = repository.createNode({
+      type: "note",
+      title: "Cleanup plan",
+      body: "Durable cleanup guidance",
+      source,
+      tags: ["cleanup"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    repository.appendActivity({
+      targetNodeId: node.id,
+      activityType: "agent_run_summary",
+      body: "Cleanup execution summary",
+      source,
+      metadata: {},
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+
+      const response = await fetch(`${baseUrl}/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: "cleanup",
+          scopes: ["nodes", "activities"],
+          limit: 5,
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.total).toBeGreaterThanOrEqual(2);
+      expect(payload.data.items.some((item: { resultType: string }) => item.resultType === "node")).toBe(true);
+      expect(payload.data.items.some((item: { resultType: string }) => item.resultType === "activity")).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
@@ -2864,7 +3364,7 @@ describe("inferred relation API integration", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          target: { type: "node", id: target.id },
+          target: { id: target.id },
           mode: "compact",
           preset: "for-assistant",
           options: {
@@ -3513,7 +4013,7 @@ describe("node governance behavior", () => {
         body: JSON.stringify({
           type: "note",
           title: "Agent-authored implementation note",
-          body: "This is a longer note body that should land as append-only active content rather than review because it is low-risk project context. ".repeat(30),
+          body: "This is a longer note body that should land as append-only active content under automatic governance because it is low-risk project context. ".repeat(30),
           source: {
             actorType: "agent",
             actorLabel: "Codex",
@@ -3528,13 +4028,14 @@ describe("node governance behavior", () => {
       expect(response.status).toBe(201);
       expect(payload.data.node.canonicality).toBe("appended");
       expect(payload.data.node.status).toBe("active");
-      expect(payload.data.reviewItem).toBeNull();
+      expect(payload.data.reviewItem).toBeUndefined();
+      expect(payload.data.governance.state.state).toBe("healthy");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
-  it("keeps durable agent notes in the review flow", async () => {
+  it("keeps durable agent notes suggested for automatic governance", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
@@ -3559,7 +4060,7 @@ describe("node governance behavior", () => {
         body: JSON.stringify({
           type: "note",
           title: "Durable agent architecture note",
-          body: "This is a longer durable note body that should remain in review because it is intended for reuse across future sessions and tools. ".repeat(30),
+          body: "This is a longer durable note body that should remain suggested because it is intended for reuse across future sessions and tools. ".repeat(30),
           source: {
             actorType: "agent",
             actorLabel: "Codex",
@@ -3575,14 +4076,15 @@ describe("node governance behavior", () => {
 
       expect(response.status).toBe(201);
       expect(payload.data.node.canonicality).toBe("suggested");
-      expect(payload.data.node.status).toBe("review");
-      expect(payload.data.reviewItem.reviewType).toBe("node_promotion");
+      expect(payload.data.node.status).toBe("active");
+      expect(payload.data.reviewItem).toBeUndefined();
+      expect(payload.data.governance.state.state).toBe("low_confidence");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
-  it("lets trusted source tool names bypass review for durable notes and relations", async () => {
+  it("keeps trusted source tool names within automatic governance for durable notes and relations", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
@@ -3617,7 +4119,7 @@ describe("node governance behavior", () => {
         body: JSON.stringify({
           type: "note",
           title: "Trusted durable note",
-          body: "This durable note should skip review because its toolName is in the trusted source list. ".repeat(30),
+          body: "This durable note should stay inside automatic governance even when its toolName is trusted. ".repeat(30),
           source: {
             actorType: "agent",
             actorLabel: "Codex",
@@ -3649,19 +4151,21 @@ describe("node governance behavior", () => {
       const relationPayload = await relationResponse.json();
 
       expect(nodeResponse.status).toBe(201);
-      expect(nodePayload.data.node.canonicality).toBe("appended");
+      expect(nodePayload.data.node.canonicality).toBe("suggested");
       expect(nodePayload.data.node.status).toBe("active");
-      expect(nodePayload.data.reviewItem).toBeNull();
+      expect(nodePayload.data.reviewItem).toBeUndefined();
+      expect(nodePayload.data.governance.state.state).toBe("low_confidence");
 
       expect(relationResponse.status).toBe(201);
-      expect(relationPayload.data.relation.status).toBe("active");
-      expect(relationPayload.data.reviewItem).toBeNull();
+      expect(relationPayload.data.relation.status).toBe("suggested");
+      expect(relationPayload.data.reviewItem).toBeUndefined();
+      expect(relationPayload.data.governance.state.state).toBe("low_confidence");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
-  it("lets trusted source tool names bypass review for decisions", async () => {
+  it("keeps trusted source tool names within automatic governance for decisions", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
@@ -3696,7 +4200,7 @@ describe("node governance behavior", () => {
         body: JSON.stringify({
           type: "decision",
           title: "Use event stream for recent refresh",
-          body: "Trusted source decisions should bypass review under the workspace trusted-source policy.",
+          body: "Trusted source decisions should still enter automatic governance under the workspace trusted-source policy.",
           source: {
             actorType: "agent",
             actorLabel: "Codex",
@@ -3709,9 +4213,10 @@ describe("node governance behavior", () => {
       const payload = await response.json();
 
       expect(response.status).toBe(201);
-      expect(payload.data.node.canonicality).toBe("appended");
+      expect(payload.data.node.canonicality).toBe("suggested");
       expect(payload.data.node.status).toBe("active");
-      expect(payload.data.reviewItem).toBeNull();
+      expect(payload.data.reviewItem).toBeUndefined();
+      expect(payload.data.governance.state.state).toBe("low_confidence");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
@@ -3764,7 +4269,7 @@ describe("node governance behavior", () => {
       const settingsPayload = await settingsResponse.json();
 
       expect(settingsResponse.status).toBe(200);
-      expect(settingsPayload.data.values["review.autoApproveLowRisk"]).toBe(true);
+      expect(settingsPayload.data.values["review.autoApproveLowRisk"]).toBeUndefined();
       expect(settingsPayload.data.values["review.trustedSourceToolNames"]).toEqual(["codex"]);
     } finally {
       await new Promise<void>((resolve, reject) => second.server.close((error) => (error ? reject(error) : resolve())));

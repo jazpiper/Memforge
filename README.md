@@ -46,17 +46,17 @@ It is a **shared memory substrate** for:
 - `docs/api.md` — local HTTP + CLI contract
 - `docs/mcp.md` — stdio MCP bridge design and tool mapping
 - `docs/workflows.md` — validated external-tool workflows
-- `docs/review-brief.md` — concise reviewer guide and open questions
+- `docs/review-brief.md` — historical v1 review notes kept for reference
 
 ## Current stage
 
 First implementation scaffold is now in place:
 
 - local Node/TypeScript service with SQLite-backed workspace storage
-- append-first governance rules and review queue behavior
+- append-first governance rules and automatic governance behavior
 - loopback HTTP API under `/api/v1`
 - thin `pnw` / `memforge` CLI wrapper
-- React renderer with 3-pane layout, provenance-aware review/detail flows, and user-driven graph focus
+- React renderer with 3-pane layout, provenance-aware governance/detail flows, and user-driven graph focus
 - runtime workspace create/open switching without restarting the local service
 
 ## Latest update
@@ -84,11 +84,11 @@ Repository guidance was also tightened so coding agents treat Memforge as the pr
 ## Progress snapshot
 
 - Phase 0 foundation is scaffolded locally with workspace boot, SQLite schema, migrations, and runtime workspace switching.
-- Phase 1 UI is in first-pass shape with home, search, review, and settings flows backed by the live local API when available, plus provenance-aware detail views and an explicit graph focus picker.
-- Phase 2 retrieval is wired through local search, related-node lookup, decisions/open questions helpers, and compact context bundles.
+- Phase 1 UI now exposes home, mixed search, governance, graph, and settings flows backed by the live local API when available, plus provenance-aware detail views and an explicit graph focus picker.
+- Phase 2 retrieval is wired through local search, neighborhood lookup, decisions/open questions helpers, and compact context bundles.
 - Phase 3 external access is live through the loopback HTTP API, the thin `pnw` CLI, and the new service index for self-discovery.
-- Phase 4 append-first write-back is live through durable node creation, relation creation, activities, artifacts, provenance, and review-aware governance.
-- Phase 5 curation is in place through review queue endpoints, renderer review actions, provenance-friendly detail flows, and summary refresh/staleness visibility.
+- Phase 4 append-first write-back is live through durable node creation, relation creation, activities, artifacts, provenance, search feedback, and automatic governance.
+- Phase 5 curation is now automatic through governance state/events, governance issue surfaces, provenance-friendly detail flows, and summary refresh/staleness visibility.
 - Phase 6 real cross-tool adoption now includes documented terminal-native `pnw`, raw HTTP bootstrap, and stdio MCP workflows in addition to the local coding-agent path.
 - Phase 7 selective retrieval enhancement now includes deterministic inferred-relation generation from tag/body/activity, project-membership, and shared-artifact signals, plus inferred-relation storage, usage feedback events, explicit/automatic score recompute, and relation-aware ranking; semantic retrieval is still deferred.
 
@@ -156,64 +156,21 @@ Recommended instruction to another agent:
 ```text
 Use my running local Memforge service at http://127.0.0.1:8787/api/v1.
 Start by calling GET /api/v1, then GET /health and GET /workspace.
-Use the returned endpoint list and request examples to search nodes, create notes, inspect review items, build context bundles, and switch workspaces.
+Use the returned endpoint list and request examples to search nodes and activities, inspect governance state, build context bundles, and switch workspaces.
 Reuse the existing local service instead of starting a new one.
 ```
 
 ## MCP bridge
 
-Memforge now also ships a stdio MCP adapter for coding agents that prefer tool discovery over raw HTTP calls.
+Memforge ships a stdio MCP adapter for coding agents that prefer tool discovery over raw HTTP calls.
 
-Start it against the running local service:
+Use one of these entrypoints:
 
 ```bash
 npm run mcp
-```
-
-Or point it at a specific local API:
-
-```bash
 node dist/server/app/mcp/index.js --api http://127.0.0.1:8787/api/v1
-```
-
-Packaged desktop builds also support stdio MCP directly:
-
-```bash
 Memforge --mcp-stdio
 ```
 
-If you want to bypass the PATH shim, the packaged binary also works directly:
-
-```bash
-./Memforge.app/Contents/MacOS/Memforge --mcp-stdio
-```
-
-When the packaged app is launched once, it also writes:
-
-- a PATH-friendly desktop shim at `~/.local/bin/Memforge`
-- a reusable MCP launcher script at `~/.memforge/bin/memforge-mcp`
-
-For JetBrains AI Assistant / IntelliJ MCP settings, prefer the launcher path and wrap it under `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "memforge": {
-      "command": "/Users/yourname/.memforge/bin/memforge-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-Using `Memforge --mcp-stdio` directly can fail in GUI apps when `~/.local/bin` is not present in the inherited `PATH`.
-
-Important environment variables:
-
-- `MEMFORGE_API_URL` — local Memforge API base URL
-- `MEMFORGE_API_TOKEN` — bearer token when local auth is enabled
-- `MEMFORGE_MCP_SOURCE_LABEL` — default provenance label for writes
-- `MEMFORGE_MCP_TOOL_NAME` — default provenance tool name
-
-See `docs/mcp.md` for the first-pass tool list and HTTP-to-MCP mapping.
+For setup details, launcher paths, environment variables, and editor-specific examples, use `docs/mcp.md` as the source of truth.
 See `docs/workflows.md` for the non-agent workflows that are already validated in the current implementation.

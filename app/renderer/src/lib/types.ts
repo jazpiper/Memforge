@@ -11,7 +11,7 @@ export type NodeType =
   | 'conversation'
   | 'spec';
 
-export type NodeStatus = 'active' | 'draft' | 'review' | 'archived';
+export type NodeStatus = 'active' | 'draft' | 'contested' | 'archived';
 export type Canonicality = 'canonical' | 'appended' | 'suggested' | 'imported' | 'generated';
 export type RelationType =
   | 'related_to'
@@ -31,13 +31,7 @@ export type ActivityType =
   | 'decision_recorded'
   | 'review_action'
   | 'context_bundle_generated';
-export type ReviewType =
-  | 'relation_suggestion'
-  | 'node_promotion'
-  | 'canonical_edit'
-  | 'merge_proposal'
-  | 'archive_proposal';
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'dismissed';
+export type GovernanceState = 'healthy' | 'low_confidence' | 'contested';
 
 export interface Workspace {
   name: string;
@@ -96,9 +90,48 @@ export interface ContextBundlePreviewItem {
   generator?: string | null;
 }
 
-export interface ReviewSettings {
-  autoApproveLowRisk: boolean;
-  trustedSourceToolNames: string[];
+export interface GovernanceStateRecord {
+  entityType: 'node' | 'relation';
+  entityId: string;
+  state: GovernanceState;
+  confidence: number;
+  reasons: string[];
+  lastEvaluatedAt: string;
+  lastTransitionAt: string;
+  metadata: Record<string, string | number | boolean>;
+}
+
+export interface GovernanceIssueItem extends GovernanceStateRecord {
+  title: string;
+  subtitle: string;
+}
+
+export interface GovernanceEventRecord {
+  id: string;
+  entityType: 'node' | 'relation';
+  entityId: string;
+  eventType: 'evaluated' | 'promoted' | 'contested' | 'demoted' | 'migrated';
+  previousState: GovernanceState | null;
+  nextState: GovernanceState;
+  confidence: number;
+  reason: string;
+  createdAt: string;
+  metadata: Record<string, string | number | boolean>;
+}
+
+export interface GovernancePayload {
+  state: GovernanceStateRecord | null;
+  events: GovernanceEventRecord[];
+}
+
+export interface SearchResultItem {
+  resultType: 'node' | 'activity';
+  node?: Node;
+  activity?: Activity & {
+    targetNodeTitle?: string;
+    targetNodeType?: NodeType;
+    targetNodeStatus?: NodeStatus;
+  };
 }
 
 export interface Node {
@@ -166,18 +199,6 @@ export interface Artifact {
   metadata: Record<string, string | number | boolean>;
 }
 
-export interface ReviewQueueItem {
-  id: string;
-  entityType: 'node' | 'relation' | 'activity' | 'artifact' | 'review_queue_item';
-  entityId: string;
-  reviewType: ReviewType;
-  proposedBy: string;
-  createdAt: string;
-  status: ReviewStatus;
-  notes: string;
-  metadata: Record<string, string | number | boolean>;
-}
-
 export interface Integration {
   id: string;
   name: string;
@@ -187,7 +208,7 @@ export interface Integration {
   updatedAt: string;
 }
 
-export type NavView = 'home' | 'search' | 'projects' | 'recent' | 'review' | 'graph' | 'settings';
+export type NavView = 'home' | 'search' | 'projects' | 'recent' | 'governance' | 'graph' | 'settings';
 
 export interface WorkspaceSeed {
   workspace: Workspace;
@@ -195,8 +216,15 @@ export interface WorkspaceSeed {
   relations: Relation[];
   activities: Activity[];
   artifacts: Artifact[];
-  reviewQueue: ReviewQueueItem[];
   integrations: Integration[];
   pinnedProjectIds: string[];
   recentNodeIds: string[];
+}
+
+export interface NodeDetail {
+  node: Node | null;
+  related: Node[];
+  activities: Activity[];
+  artifacts: Artifact[];
+  governance: GovernancePayload;
 }

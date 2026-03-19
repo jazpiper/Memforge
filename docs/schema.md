@@ -18,6 +18,10 @@ The schema is designed for:
 
 It is intentionally pragmatic for v0/v1 rather than fully abstract.
 
+Current runtime note:
+- the shipped v2 runtime actively uses `governance_state`, `governance_events`, `inferred_relations`, `relation_usage_events`, and `search_feedback_events`
+- references to review-era storage in this document are historical or migration-only unless explicitly marked as part of the current runtime surface
+
 ---
 
 ## 2. Design principles
@@ -51,11 +55,15 @@ There are five primary durable entities:
 
 There are also supporting entities:
 
-6. **review_queue_item** — pending approvals or suggestions
-7. **integration** — registered local tool/client metadata
-8. **setting** — workspace configuration
-9. **inferred_relation** — rebuildable weighted links used for retrieval support
-10. **relation_usage_event** — append-only usage signals that feed inferred-link maintenance
+6. **governance_state** — derived confidence and health state for nodes or relations
+7. **governance_event** — append-only governance audit history
+8. **integration** — registered local tool/client metadata
+9. **setting** — workspace configuration
+10. **inferred_relation** — rebuildable weighted links used for retrieval support
+11. **relation_usage_event** — append-only usage signals that feed inferred-link maintenance
+
+Legacy note:
+- the old `review_queue` table may still exist in upgraded workspaces as migration-only storage, but it is not part of the shipped v2 runtime surface
 
 ---
 
@@ -104,7 +112,7 @@ Optional later values:
 ## 5.2 NodeStatus
 - `active`
 - `draft`
-- `review`
+- `contested`
 - `archived`
 
 ## 5.3 Canonicality
@@ -179,18 +187,17 @@ Optional later values:
 - `system`
 - `integration`
 
-## 5.8 ReviewType
-- `relation_suggestion`
-- `node_promotion`
-- `canonical_edit`
-- `merge_proposal`
-- `archive_proposal`
+## 5.8 GovernanceState
+- `healthy`
+- `low_confidence`
+- `contested`
 
-## 5.9 ReviewStatus
-- `pending`
-- `approved`
-- `rejected`
-- `dismissed`
+## 5.9 GovernanceEventType
+- `evaluated`
+- `promoted`
+- `contested`
+- `demoted`
+- `migrated`
 
 ---
 
@@ -454,7 +461,8 @@ It records durable change history.
 - `relation`
 - `activity`
 - `artifact`
-- `review_queue_item`
+- `governance_state`
+- `governance_event`
 
 ## 10.3 Example `operation_type`
 - `create`
@@ -462,10 +470,10 @@ It records durable change history.
 - `append`
 - `import`
 - `attach`
-- `approve`
-- `reject`
 - `archive`
 - `promote`
+- `contest`
+- `demote`
 
 ## 10.4 Why separate from activities?
 Activities are domain timeline events.
@@ -481,33 +489,48 @@ They should stay separate even if some operations create both.
 
 ---
 
-## 11. Review queue table
+## 11. Governance tables
 
-The `review_queue` table supports human governance over high-impact suggestions.
+Memforge v2 uses automatic governance instead of a user-facing review queue.
 
-## 11.1 Columns
+## 11.1 `governance_state`
+- `entity_type TEXT NOT NULL`
+- `entity_id TEXT NOT NULL`
+- `state TEXT NOT NULL`
+- `confidence REAL NOT NULL`
+- `reasons_json TEXT NOT NULL`
+- `last_evaluated_at TEXT NOT NULL`
+- `last_transition_at TEXT NOT NULL`
+- `metadata_json TEXT`
+
+Purpose:
+- expose current health for nodes and relations
+- surface low-confidence or contested entities
+- keep retrieval ranking aware of confidence without mixing it into canonical data
+
+Suggested indexes:
+- unique index on `(entity_type, entity_id)`
+- index on `state`
+- index on `last_evaluated_at`
+
+## 11.2 `governance_events`
 - `id TEXT PRIMARY KEY`
 - `entity_type TEXT NOT NULL`
 - `entity_id TEXT NOT NULL`
-- `review_type TEXT NOT NULL`
-- `proposed_by TEXT`
+- `event_type TEXT NOT NULL`
+- `state TEXT NOT NULL`
+- `confidence REAL NOT NULL`
+- `reasons_json TEXT NOT NULL`
 - `created_at TEXT NOT NULL`
-- `status TEXT NOT NULL DEFAULT 'pending'`
-- `notes TEXT`
 - `metadata_json TEXT`
 
-## 11.2 Purpose
-Use review queue items for:
-- relation suggestions
-- merge proposals
-- canonical body replacements
-- archive requests
-- promotions from generated/suggested to canonical
+Purpose:
+- append-only governance audit history
+- provenance for promotion, contest, demotion, migration, and recompute passes
 
-## 11.3 Suggested indexes
-- index on `status`
-- index on `review_type`
-- index on `created_at`
+Suggested indexes:
+- index on `(entity_type, entity_id, created_at)`
+- index on `event_type`
 
 ---
 
@@ -538,7 +561,7 @@ The `integrations` table stores local client registrations.
 - append_activity
 - create_node
 - create_relation
-- submit_review_item
+- append_search_feedback
 
 ---
 
@@ -556,8 +579,8 @@ The `settings` table stores workspace-level configuration.
 - `api.bind`
 - `api.auth.mode`
 - `search.semantic.enabled`
-- `review.autoApproveLowRisk`
-- `review.trustedSourceToolNames`
+- `review.autoApproveLowRisk` (legacy compatibility only)
+- `review.trustedSourceToolNames` (legacy compatibility only)
 - `relations.autoRecompute.enabled`
 - `relations.autoRecompute.eventThreshold`
 - `relations.autoRecompute.debounceMs`
@@ -583,18 +606,21 @@ Even if some early imports temporarily relax constraints, the conceptual foreign
 
 ## 15. FTS strategy
 
-For search, create a full-text index over nodes.
+For search, create full-text indexes over nodes and activities.
 
-## Suggested FTS source fields
+## Suggested node FTS source fields
 - `title`
 - `body`
 - `summary`
 
+## Suggested activity FTS source fields
+- `body`
+
 ### Recommended approach
-Use SQLite FTS5 virtual table synced from `nodes`.
+Use SQLite FTS5 virtual tables synced from `nodes` and `activities`.
 
 This gives:
-- fast local keyword search
+- fast local keyword search across durable notes and operational history
 - no separate search server
 - easier packaging
 
@@ -688,7 +714,8 @@ JSON export should preserve the full schema fidelity including:
 - activities
 - artifacts metadata
 - provenance
-- review queue
+- governance state
+- governance events
 
 ---
 
@@ -703,7 +730,7 @@ External agents should not hard-delete canonical nodes in v1.
 Agent-created or agent-modified canonical content should generate provenance.
 
 ### Rule 3
-High-impact generated content should enter review or be marked non-canonical.
+High-impact generated content should land as suggested, appended, or contested content under automatic governance.
 
 ### Rule 4
 Activities should be append-only after creation except for rare admin fixes.
@@ -725,9 +752,9 @@ When an agent writes back, use these three questions to decide in <10 seconds.
 | Condition                              | Storage Type     | Reason & Examples |
 |----------------------------------------|------------------|-------------------|
 | Long-lived, reusable across tools      | **Node**         | Project, Decision, Idea, Question, Reference |
-| Timeline event or log                  | **Activity**     | Agent run summary, import log, review action |
+| Timeline event or log                  | **Activity**     | Agent run summary, import log, governance event |
 | External generated file                | **Artifact**     | Code patch, PDF report, generated image |
-| >300 tokens and not a log              | **Suggested Node** | Must go to review queue |
+| >300 tokens and reusable               | **Suggested Node** | Must flow through automatic governance |
 
 ### Real-world examples (agent write-back)
 
@@ -736,14 +763,14 @@ When an agent writes back, use these three questions to decide in <10 seconds.
    → Do not create node
 
 2. **Gemini CLI produces research summary (450 tokens)**  
-   → Suggested Note (reference type) → goes to review queue
+   → Suggested Note (reference type) → goes through automatic governance
 
 3. **OpenClaw session summary (150 tokens)**  
    → Single Activity by default  
    → Promote only if it contains reusable cross-tool knowledge or a decision
 
 4. **Codex discovers important technical decision**  
-   → Suggested Decision Node (must be reviewed)  
+   → Suggested Decision Node (auto-promote or contest)  
    → Never store only as activity
 
 **Forbidden pattern**: pasting raw transcripts into canonical node body  
@@ -752,11 +779,11 @@ When an agent writes back, use these three questions to decide in <10 seconds.
 ## 18.2 Relation quality and graph-noise control (v1 rules)
 
 Agent-generated relations are the #1 source of graph noise.  
-Therefore v1 enforces very conservative defaults.
+Therefore v2 keeps conservative defaults even without a manual review queue.
 
-### Strict v1 rules
+### Strict rules
 - Every agent-created relation defaults to `status = "suggested"` (no exceptions)
-- All suggested relations must go through review queue before becoming `active`
+- Suggested relations become `active` only through automatic governance
 - Human-created relations only may be created as `active` directly
 - `strength` and `confidence` columns are **deferred to v2** (keep only `relation_type` + `status` in v1)
 - Application-level uniqueness check: `(from_node_id, to_node_id, relation_type)` for active relations
@@ -765,7 +792,7 @@ Therefore v1 enforces very conservative defaults.
 - One agent run may propose maximum 5 relations unless user explicitly requests more
 - Duplicate detection: if identical relation already exists (even as suggested), reject silently with log
 
-**Forbidden in v1**: agents directly creating `active` relations or using strength/confidence values.
+**Forbidden by default**: agents directly creating `active` relations or using strength/confidence values.
 
 This rule, combined with the promotion table, guarantees the graph stays trustworthy even when multiple tools write heavily.
 

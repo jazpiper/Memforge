@@ -21,7 +21,7 @@ const neighborhoodRetrievalRankWeights: RetrievalRankWeights = {
   inferredUsageMultiplier: 1
 };
 
-const candidateRelationBonusWeights: RetrievalRankWeights = {
+const boostedRelationRankWeights: RetrievalRankWeights = {
   canonicalBase: 70,
   canonicalSpecificityMultiplier: 100,
   canonicalUsageMultiplier: 60,
@@ -75,6 +75,50 @@ function prioritizeItems(
   });
 
   return weighted.slice(0, maxItems);
+}
+
+function matchesSearchResultFilters(
+  item: SearchResultItem,
+  filters: {
+    types?: string[];
+    status?: string[];
+  }
+) {
+  const typeMatches = !filters.types?.length || filters.types.includes(item.type);
+  const statusMatches = !filters.status?.length || filters.status.includes(item.status);
+  return typeMatches && statusMatches;
+}
+
+function rankNeighborhoodItems(
+  items: NeighborhoodItem[],
+  usageSummaries: Map<string, RelationUsageSummary>,
+  weights: RetrievalRankWeights,
+  maxItems?: number
+): NeighborhoodItem[] {
+  const ranked = items
+    .map((item) => {
+      const summary = usageSummaries.get(item.edge.relationId);
+      const rank = computeRelationRetrievalRank(item.edge, summary, weights);
+      return {
+        item: {
+          ...item,
+          edge: {
+            ...item.edge,
+            reason: formatRelationReason(item.edge.reason, summary)
+          }
+        },
+        rank
+      };
+    })
+    .sort((left, right) => right.rank - left.rank);
+
+  return (typeof maxItems === "number" ? ranked.slice(0, maxItems) : ranked).map((entry) => ({
+    ...entry.item,
+    edge: {
+      ...entry.item.edge,
+      retrievalRank: entry.rank
+    }
+  }));
 }
 
 function scoreItem(item: SearchResultItem, preset: BuildContextBundleInput["preset"]): number {
@@ -180,16 +224,6 @@ export function buildSemanticCandidateBonusMap(
 }
 
 function computeBundleRelationBoost(item: NeighborhoodItem, summary?: RelationUsageSummary): number {
-  if (item.edge.relationSource === "canonical") {
-    return computeRelationRetrievalRank(item.edge, summary, {
-      canonicalBase: 120,
-      canonicalSpecificityMultiplier: 100,
-      canonicalUsageMultiplier: 80,
-      inferredBaseMultiplier: 40,
-      inferredSpecificityMultiplier: 40,
-      inferredUsageMultiplier: 40
-    });
-  }
   return computeRelationRetrievalRank(item.edge, summary, {
     canonicalBase: 120,
     canonicalSpecificityMultiplier: 100,
@@ -270,47 +304,11 @@ export function buildNeighborhoodItems(
   const usageSummaries = repository.getRelationUsageSummaries(
     [...canonicalItems, ...inferredItems].map((item) => item.edge.relationId)
   );
-
-  const rankedCanonical = canonicalItems
-    .map((item) => ({
-      item: {
-        ...item,
-        edge: {
-          ...item.edge,
-          reason: formatRelationReason(item.edge.reason, usageSummaries.get(item.edge.relationId))
-        }
-      },
-      rank: computeRelationRetrievalRank(item.edge, usageSummaries.get(item.edge.relationId))
-    }))
-    .sort((left, right) => right.rank - left.rank)
-    .map((entry) => ({
-      ...entry.item,
-      edge: {
-        ...entry.item.edge,
-        retrievalRank: entry.rank
-      }
-    }));
-
-  const rankedInferred = inferredItems
-    .map((item) => ({
-      item: {
-        ...item,
-        edge: {
-          ...item.edge,
-          reason: formatRelationReason(item.edge.reason, usageSummaries.get(item.edge.relationId))
-        }
-      },
-      rank: computeRelationRetrievalRank(item.edge, usageSummaries.get(item.edge.relationId))
-    }))
-    .sort((left, right) => right.rank - left.rank)
-    .slice(0, options?.maxInferred ?? 0)
-    .map((entry) => ({
-      ...entry.item,
-      edge: {
-        ...entry.item.edge,
-        retrievalRank: entry.rank
-      }
-    }));
+  const rankedCanonical = rankNeighborhoodItems(canonicalItems, usageSummaries, neighborhoodRetrievalRankWeights);
+  const rankedInferred =
+    options?.includeInferred && options.maxInferred
+      ? rankNeighborhoodItems(inferredItems, usageSummaries, neighborhoodRetrievalRankWeights, options.maxInferred)
+      : [];
 
   return [...rankedCanonical, ...rankedInferred];
 }
@@ -335,7 +333,7 @@ export function buildCandidateRelationBonusMap(
           retrievalRank: computeRelationRetrievalRank(
             item.edge,
             usageSummaries.get(item.edge.relationId),
-            candidateRelationBonusWeights
+            boostedRelationRankWeights
           ),
           relationSource: item.edge.relationSource,
           relationType: item.edge.relationType,
@@ -344,6 +342,40 @@ export function buildCandidateRelationBonusMap(
         }
       ] as const)
   );
+}
+
+export function buildTargetRelatedRetrievalItems(
+  repository: MemforgeRepository,
+  targetId: string,
+  filters: {
+    types?: string[];
+    status?: string[];
+  }
+): SearchResultItem[] {
+  const target = repository.getNode(targetId);
+  const candidateItems = new Map<string, SearchResultItem>();
+
+  const addCandidate = (nodeId: string) => {
+    const node = repository.getNode(nodeId);
+    candidateItems.set(node.id, {
+      id: node.id,
+      type: node.type,
+      title: node.title,
+      summary: node.summary,
+      status: node.status,
+      canonicality: node.canonicality,
+      sourceLabel: node.sourceLabel,
+      updatedAt: node.updatedAt,
+      tags: node.tags
+    });
+  };
+
+  addCandidate(target.id);
+  for (const item of buildNeighborhoodItems(repository, target.id, { includeInferred: true, maxInferred: 4 })) {
+    addCandidate(item.node.id);
+  }
+
+  return Array.from(candidateItems.values()).filter((item) => matchesSearchResultFilters(item, filters));
 }
 
 export async function buildContextBundle(
@@ -373,27 +405,17 @@ export async function buildContextBundle(
   }));
 
   const decisions = input.options.includeDecisions
-    ? repository
-        .searchNodes({
-          query: "",
-          filters: { types: ["decision"], status: ["active", "review"] },
-          limit: Math.min(input.options.maxItems, 10),
-          offset: 0,
-          sort: "updated_at"
-        })
-        .items.filter((item) => item.id === target.id || neighborhood.some((relatedItem) => relatedItem.node.id === item.id))
+    ? buildTargetRelatedRetrievalItems(repository, target.id, {
+        types: ["decision"],
+        status: ["active", "contested"]
+      })
     : [];
 
   const openQuestions = input.options.includeOpenQuestions
-    ? repository
-        .searchNodes({
-          query: "",
-          filters: { types: ["question"], status: ["active", "draft", "review"] },
-          limit: Math.min(input.options.maxItems, 10),
-          offset: 0,
-          sort: "updated_at"
-        })
-        .items.filter((item) => item.id === target.id || neighborhood.some((relatedItem) => relatedItem.node.id === item.id))
+    ? buildTargetRelatedRetrievalItems(repository, target.id, {
+        types: ["question"],
+        status: ["active", "draft", "contested"]
+      })
     : [];
 
   const targetItem: SearchResultItem = {
@@ -456,7 +478,7 @@ export async function buildContextBundle(
 
   return {
     target: {
-      type: input.target.type,
+      type: target.type,
       id: target.id,
       title: target.title
     },

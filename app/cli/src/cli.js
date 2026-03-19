@@ -1,14 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { getApiBase, getAuthToken, requestJson } from "./http.js";
 import {
-  renderBundleMarkdown,
+  renderActivitySearchResults,
   renderBundleText,
+  renderGovernanceIssues,
   renderJson,
   renderNode,
   renderRelated,
-  renderReviewItems,
   renderSearchResults,
   renderText,
+  renderWorkspaceSearchResults,
   renderWorkspaces,
 } from "./format.js";
 
@@ -38,6 +39,7 @@ export async function runCli(argv) {
     case "get":
       return runGet(apiBase, token, format, args, positionals);
     case "related":
+    case "neighborhood":
       return runRelated(apiBase, token, format, args, positionals);
     case "context":
       return runContext(apiBase, token, format, args, positionals);
@@ -49,8 +51,10 @@ export async function runCli(argv) {
       return runLink(apiBase, token, format, args, positionals);
     case "attach":
       return runAttach(apiBase, token, format, args, positionals);
-    case "review":
-      return runReview(apiBase, token, format, args, positionals);
+    case "feedback":
+      return runFeedback(apiBase, token, format, args, positionals);
+    case "governance":
+      return runGovernance(apiBase, token, format, args, positionals);
     case "workspace":
       return runWorkspace(apiBase, token, format, args, positionals);
     default:
@@ -64,6 +68,14 @@ async function runHealth(apiBase, token, format) {
 }
 
 async function runSearch(apiBase, token, format, args, positionals) {
+  const mode = args.mode || positionals[0];
+  if (mode === "activities" || mode === "activity") {
+    return runActivitySearch(apiBase, token, format, args, positionals.slice(1));
+  }
+  if (mode === "workspace" || mode === "all") {
+    return runWorkspaceSearch(apiBase, token, format, args, positionals.slice(1));
+  }
+
   const query = args.query || positionals.join(" ");
   const filters = {};
 
@@ -88,6 +100,83 @@ async function runSearch(apiBase, token, format, args, positionals) {
   outputData(data, format, "search");
 }
 
+async function runActivitySearch(apiBase, token, format, args, positionals) {
+  const filters = {};
+  const query = args.query || positionals.join(" ");
+
+  if (args["target-node-id"] || args.targetNodeId) {
+    filters.targetNodeIds = splitList(args["target-node-id"] || args.targetNodeId);
+  }
+  if (args.type || args["activity-type"] || args.activityType) {
+    filters.activityTypes = splitList(args.type || args["activity-type"] || args.activityType);
+  }
+  if (args["source-label"]) {
+    filters.sourceLabels = splitList(args["source-label"]);
+  }
+  if (args["created-after"] || args.createdAfter) {
+    filters.createdAfter = args["created-after"] || args.createdAfter;
+  }
+  if (args["created-before"] || args.createdBefore) {
+    filters.createdBefore = args["created-before"] || args.createdBefore;
+  }
+
+  const data = await requestJson(apiBase, "/activities/search", {
+    method: "POST",
+    token,
+    body: compactObject({
+      query,
+      filters: Object.keys(filters).length > 0 ? filters : undefined,
+      limit: numberOption(args.limit, 10),
+      offset: numberOption(args.offset, 0),
+      sort: args.sort || "relevance",
+    }),
+  });
+  outputData(data, format, "search-activities");
+}
+
+async function runWorkspaceSearch(apiBase, token, format, args, positionals) {
+  const nodeFilters = {};
+  const activityFilters = {};
+  const query = args.query || positionals.join(" ");
+  const scopes = args.scopes ? splitList(args.scopes) : ["nodes", "activities"];
+
+  if (args["node-type"]) nodeFilters.types = splitList(args["node-type"]);
+  if (args.status) nodeFilters.status = splitList(args.status);
+  if (args.tag || args.tags) nodeFilters.tags = splitList(args.tag || args.tags);
+  if (args["node-source-label"]) nodeFilters.sourceLabels = splitList(args["node-source-label"]);
+
+  if (args["target-node-id"] || args.targetNodeId) {
+    activityFilters.targetNodeIds = splitList(args["target-node-id"] || args.targetNodeId);
+  }
+  if (args["activity-type"] || args.activityType) {
+    activityFilters.activityTypes = splitList(args["activity-type"] || args.activityType);
+  }
+  if (args["activity-source-label"]) {
+    activityFilters.sourceLabels = splitList(args["activity-source-label"]);
+  }
+  if (args["created-after"] || args.createdAfter) {
+    activityFilters.createdAfter = args["created-after"] || args.createdAfter;
+  }
+  if (args["created-before"] || args.createdBefore) {
+    activityFilters.createdBefore = args["created-before"] || args.createdBefore;
+  }
+
+  const data = await requestJson(apiBase, "/search", {
+    method: "POST",
+    token,
+    body: compactObject({
+      query,
+      scopes,
+      nodeFilters: Object.keys(nodeFilters).length > 0 ? nodeFilters : undefined,
+      activityFilters: Object.keys(activityFilters).length > 0 ? activityFilters : undefined,
+      limit: numberOption(args.limit, 10),
+      offset: numberOption(args.offset, 0),
+      sort: args.sort || "relevance",
+    }),
+  });
+  outputData(data, format, "search-workspace");
+}
+
 async function runGet(apiBase, token, format, args, positionals) {
   const id = args.id || positionals[0];
   if (!id) {
@@ -101,16 +190,26 @@ async function runGet(apiBase, token, format, args, positionals) {
 async function runRelated(apiBase, token, format, args, positionals) {
   const id = args.id || positionals[0];
   if (!id) {
-    throw new Error("related requires a node id");
+    throw new Error("neighborhood requires a node id");
   }
 
   const query = new URLSearchParams();
   if (args.depth) query.set("depth", String(numberOption(args.depth, 1)));
   if (args.type) query.set("types", splitList(args.type).join(","));
+  if (args["include-inferred"] !== undefined) {
+    query.set("include_inferred", parseBooleanFlag(args["include-inferred"], true) ? "1" : "0");
+  }
+  if (args["max-inferred"] !== undefined) {
+    query.set("max_inferred", String(numberOption(args["max-inferred"], 4)));
+  }
 
-  const data = await requestJson(apiBase, `/nodes/${encodeURIComponent(id)}/related${query.toString() ? `?${query}` : ""}`, {
-    token,
-  });
+  const data = await requestJson(
+    apiBase,
+    `/nodes/${encodeURIComponent(id)}/neighborhood${query.toString() ? `?${query}` : ""}`,
+    {
+      token,
+    },
+  );
   outputData(data, format, "related");
 }
 
@@ -120,10 +219,8 @@ async function runContext(apiBase, token, format, args, positionals) {
     throw new Error("context requires a target id");
   }
 
-  const targetType = args["target-type"] || args.targetType || guessTargetType(targetId);
   const payload = {
     target: {
-      type: targetType,
       id: targetId,
     },
     mode: args.mode || "compact",
@@ -242,123 +339,102 @@ async function runAttach(apiBase, token, format, args, positionals) {
   outputData(data, format, "attach");
 }
 
-async function runReview(apiBase, token, format, args, positionals) {
+async function runFeedback(apiBase, token, format, args, positionals) {
+  const resultType = args["result-type"] || args.resultType || positionals[0];
+  const resultId = args["result-id"] || args.resultId || positionals[1];
+  const verdict = args.verdict || positionals[2];
+
+  validateRequired(resultType, "feedback requires --result-type");
+  validateRequired(resultId, "feedback requires --result-id");
+  validateRequired(verdict, "feedback requires --verdict");
+
+  return runPostCommand(apiBase, token, format, "/search-feedback-events", "feedback", {
+    resultType,
+    resultId,
+    verdict,
+    query: args.query,
+    sessionId: args["session-id"] || args.sessionId,
+    runId: args["run-id"] || args.runId,
+    confidence: numberOption(args.confidence, 1),
+    source: buildSource(args),
+    metadata: parseJsonOption(args.metadata),
+  });
+}
+
+async function runGovernance(apiBase, token, format, args, positionals) {
   const action = positionals[0] || args.action || "list";
 
-  if (action === "list") {
-    const query = new URLSearchParams();
-    if (args.status) query.set("status", args.status);
-    if (args.type) query.set("review_type", args.type);
-    if (args.limit) query.set("limit", String(numberOption(args.limit, 20)));
-    const data = await requestJson(apiBase, `/review-queue${query.toString() ? `?${query}` : ""}`, {
-      token,
-    });
-    outputData(data, format, "review-list");
-    return;
-  }
-
-  const id = positionals[1] || args.id;
-  validateRequired(id, `review ${action} requires an id`);
-
-  if (action === "approve") {
-    const data = await requestJson(apiBase, `/review-queue/${encodeURIComponent(id)}/approve`, {
-      method: "POST",
-      token,
-      body: compactObject({
-        source: buildSource(args),
-        notes: args.notes,
-      }),
-    });
-    outputData(data, format, "review-approve");
-    return;
-  }
-
-  if (action === "reject") {
-    const data = await requestJson(apiBase, `/review-queue/${encodeURIComponent(id)}/reject`, {
-      method: "POST",
-      token,
-      body: compactObject({
-        source: buildSource(args),
-        notes: args.notes,
-      }),
-    });
-    outputData(data, format, "review-reject");
-    return;
-  }
-
-  if (action === "show") {
-    const data = await requestJson(apiBase, `/review-queue/${encodeURIComponent(id)}`, {
-      token,
-    });
-    outputData(data, format, "review-show");
-    return;
-  }
-
-  if (action === "edit-and-approve") {
-    const data = await requestJson(apiBase, `/review-queue/${encodeURIComponent(id)}/edit-and-approve`, {
-      method: "POST",
-      token,
-      body: compactObject({
-        patch: compactObject({
-          title: args.title,
-          body: args.body,
-          summary: args.summary,
-          tags: collectTags(args),
-          metadata: parseJsonOption(args.metadata),
+  switch (action) {
+    case "list":
+    case "issues": {
+      const query = new URLSearchParams();
+      if (args.states) query.set("states", splitList(args.states).join(","));
+      if (args.limit) query.set("limit", String(numberOption(args.limit, 20)));
+      const data = await requestJson(apiBase, `/governance/issues${query.toString() ? `?${query}` : ""}`, {
+        token,
+      });
+      outputData(data, format, "governance-issues");
+      return;
+    }
+    case "show": {
+      const entityType = args["entity-type"] || args.entityType || positionals[1];
+      const entityId = args["entity-id"] || args.entityId || positionals[2];
+      validateRequired(entityType, "governance show requires --entity-type");
+      validateRequired(entityId, "governance show requires --entity-id");
+      const data = await requestJson(
+        apiBase,
+        `/governance/state/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+        {
+          token,
+        }
+      );
+      outputData(data, format, "governance-show");
+      return;
+    }
+    case "recompute": {
+      const data = await requestJson(apiBase, "/governance/recompute", {
+        method: "POST",
+        token,
+        body: compactObject({
+          entityType: args["entity-type"] || args.entityType,
+          entityIds: args["entity-ids"] || args.entityIds ? splitList(args["entity-ids"] || args.entityIds) : undefined,
+          limit: numberOption(args.limit, 100),
         }),
-        notes: args.notes,
-        source: buildSource(args),
-      }),
-    });
-    outputData(data, format, "review-edit-and-approve");
-    return;
+      });
+      outputData(data, format, "governance-recompute");
+      return;
+    }
   }
 
-  throw new Error(`Unknown review action: ${action}`);
+  throw new Error(`Unknown governance action: ${action}`);
 }
 
 async function runWorkspace(apiBase, token, format, args, positionals) {
   const action = positionals[0] || args.action || "current";
 
-  if (action === "current") {
-    const data = await requestJson(apiBase, "/workspace", { token });
-    outputData(data, format, "workspace-current");
-    return;
-  }
-
-  if (action === "list") {
-    const data = await requestJson(apiBase, "/workspaces", { token });
-    outputData(data, format, "workspace-list");
-    return;
-  }
-
-  if (action === "create") {
-    const rootPath = args.root || args.path || positionals[1];
-    validateRequired(rootPath, "workspace create requires --root");
-    const data = await requestJson(apiBase, "/workspaces", {
-      method: "POST",
-      token,
-      body: compactObject({
-        rootPath,
+  switch (action) {
+    case "current": {
+      const data = await requestJson(apiBase, "/workspace", { token });
+      outputData(data, format, "workspace-current");
+      return;
+    }
+    case "list": {
+      const data = await requestJson(apiBase, "/workspaces", { token });
+      outputData(data, format, "workspace-list");
+      return;
+    }
+    case "create":
+      return runWorkspaceMutation(apiBase, token, format, {
+        action: "create",
+        rootPath: args.root || args.path || positionals[1],
         workspaceName: args.name || args.title,
-      }),
-    });
-    outputData(data, format, "workspace-create");
-    return;
-  }
-
-  if (action === "open" || action === "switch") {
-    const rootPath = args.root || args.path || positionals[1];
-    validateRequired(rootPath, `workspace ${action} requires --root`);
-    const data = await requestJson(apiBase, "/workspaces/open", {
-      method: "POST",
-      token,
-      body: {
-        rootPath,
-      },
-    });
-    outputData(data, format, "workspace-open");
-    return;
+      });
+    case "open":
+    case "switch":
+      return runWorkspaceMutation(apiBase, token, format, {
+        action,
+        rootPath: args.root || args.path || positionals[1],
+      });
   }
 
   throw new Error(`Unknown workspace action: ${action}`);
@@ -373,6 +449,34 @@ function buildSource(args) {
   };
 }
 
+async function runWorkspaceMutation(apiBase, token, format, { action, rootPath, workspaceName }) {
+  validateRequired(rootPath, `workspace ${action} requires --root`);
+  return runPostCommand(
+    apiBase,
+    token,
+    format,
+    action === "create" ? "/workspaces" : "/workspaces/open",
+    action === "create" ? "workspace-create" : "workspace-open",
+    action === "create"
+      ? {
+          rootPath,
+          workspaceName,
+        }
+      : {
+          rootPath,
+        },
+  );
+}
+
+async function runPostCommand(apiBase, token, format, path, command, body) {
+  const data = await requestJson(apiBase, path, {
+    method: "POST",
+    token,
+    body: compactObject(body),
+  });
+  outputData(data, format, command);
+}
+
 function outputData(data, format, command) {
   const payload = data?.data ?? data;
 
@@ -381,14 +485,15 @@ function outputData(data, format, command) {
     return;
   }
 
-  if (format === "markdown" && command === "context") {
-    writeStdout(renderBundleMarkdown(payload));
-    return;
-  }
-
   switch (command) {
     case "search":
       writeStdout(renderSearchResults(payload));
+      return;
+    case "search-activities":
+      writeStdout(renderActivitySearchResults(payload));
+      return;
+    case "search-workspace":
+      writeStdout(renderWorkspaceSearchResults(payload));
       return;
     case "get":
       writeStdout(renderNode(payload.node || payload));
@@ -396,8 +501,8 @@ function outputData(data, format, command) {
     case "related":
       writeStdout(renderRelated(payload));
       return;
-    case "review-list":
-      writeStdout(renderReviewItems(payload));
+    case "governance-issues":
+      writeStdout(renderGovernanceIssues(payload));
       return;
     case "workspace-list":
       writeStdout(renderWorkspaces(payload));
@@ -406,9 +511,9 @@ function outputData(data, format, command) {
     case "create":
     case "link":
     case "attach":
-    case "review-approve":
-    case "review-reject":
-    case "review-show":
+    case "feedback":
+    case "governance-show":
+    case "governance-recompute":
     case "workspace-current":
     case "workspace-create":
     case "workspace-open":
@@ -495,7 +600,7 @@ function parseArgv(argv) {
   }
 
   return {
-    command: command === "review" ? "review" : command,
+    command,
     args: options,
     options,
     positionals,
@@ -508,17 +613,20 @@ function renderHelp() {
 Usage:
   pnw health
   pnw search "agent memory" [--type project] [--limit 5]
+  pnw search activities "what changed" [--activity-type agent_run_summary]
+  pnw search workspace "cleanup" [--scopes nodes,activities]
   pnw get <node-id>
-  pnw related <node-id> [--depth 1]
+  pnw neighborhood <node-id> [--depth 1] [--include-inferred true] [--max-inferred 4]
+  pnw related <node-id> [--depth 1]  # legacy compatibility alias
   pnw context <target-id> [--mode compact] [--preset for-coding]
   pnw create --type note --title "..." [--body "..." | --file path.md]
   pnw append --target <node-id> --type agent_run_summary --text "..."
   pnw link <from-id> <to-id> <relation-type>
   pnw attach --node <node-id> --path artifacts/file.md
-  pnw review list [--status pending]
-  pnw review approve <id>
-  pnw review reject <id>
-  pnw review edit-and-approve <id> [--title "…"] [--body "…"]
+  pnw feedback --result-type node --result-id <id> --verdict useful [--query "..."]
+  pnw governance issues [--states contested,low_confidence]
+  pnw governance show --entity-type node --entity-id <id>
+  pnw governance recompute [--entity-type node] [--entity-ids id1,id2]
   pnw workspace current
   pnw workspace list
   pnw workspace create --root /path/to/workspace [--name "Personal"]
@@ -603,13 +711,6 @@ function parseBooleanFlag(value, fallback = false) {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
-}
-
-function guessTargetType(targetId) {
-  if (targetId.startsWith("node_")) {
-    return "node";
-  }
-  return "node";
 }
 
 function toOptionKey(value) {

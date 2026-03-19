@@ -1,5 +1,9 @@
 # Memforge — Scalable Retrieval, DB, And Relation Architecture
 
+> Historical v1 architecture reference.
+> Some sections in this document no longer reflect the shipped v2 surface.
+> For current behavior, see `README.md`, `docs/api.md`, `docs/mcp.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
+
 ## 1. Purpose
 
 This document defines a retrieval and storage architecture that should remain robust as Memforge grows from small workspaces to very large local memory sets.

@@ -5,6 +5,7 @@ import type { ServerConfig } from "./config.js";
 import { workspaceInfo } from "./config.js";
 import { openDatabase } from "./db.js";
 import { AppError } from "./errors.js";
+import { bootstrapAutomaticGovernance } from "./governance.js";
 import { MemforgeRepository } from "./repositories.js";
 import { defaultWorkspaceName, ensureWorkspace, type WorkspacePaths } from "./workspace.js";
 import type { WorkspaceCatalogItem, WorkspaceInfo } from "../shared/types.js";
@@ -119,8 +120,7 @@ export class WorkspaceSessionManager {
       "search.semantic.autoIndex.batchLimit": 20,
       "search.semantic.autoIndex.lastRunAt": null,
       "search.tagIndex.version": 0,
-      "review.autoApproveLowRisk": true,
-      "review.trustedSourceToolNames": [],
+      "search.activityFts.version": 0,
       "relations.autoRefresh.enabled": true,
       "relations.autoRefresh.debounceMs": 150,
       "relations.autoRefresh.maxStalenessMs": 2_000,
@@ -134,6 +134,8 @@ export class WorkspaceSessionManager {
       "export.defaultFormat": "markdown",
     });
     repository.ensureSearchTagIndex();
+    repository.ensureActivitySearchIndex();
+    bootstrapAutomaticGovernance(repository);
 
     return {
       db,

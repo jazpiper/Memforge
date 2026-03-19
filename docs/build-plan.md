@@ -1,5 +1,9 @@
 # Memforge — Build Plan
 
+> Historical v1 design reference.
+> Some sections in this document no longer reflect the shipped v2 surface.
+> For current behavior, see `README.md`, `docs/api.md`, `docs/mcp.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
+
 ## 1. Purpose
 
 This document turns the concept into a practical build sequence.
@@ -24,11 +28,11 @@ This plan follows the project guardrails:
 ## 1.1 Progress snapshot (2026-03-19)
 
 - Phase 0 foundation is implemented as a local Node/TypeScript service with SQLite-backed workspaces, migrations, and runtime workspace switching.
-- Phase 1 human-readable workspace is in first-pass shape through the renderer home/search/review/settings flows, provenance-aware node detail surfaces, and an explicit graph focus picker.
+- Phase 1 human-readable workspace originally shipped through renderer home/search/review/settings flows before the v2 governance transition replaced review with governance.
 - Phase 2 fast retrieval is present through local search, related lookups, decision/open-question helpers, and compact context bundle assembly.
 - Phase 3 local API and CLI bridge is live through the loopback API, the `pnw` wrapper, service index discovery at `GET /api/v1`, and runtime workspace catalog operations.
-- Phase 4 append-first write-back is live through node, relation, activity, and artifact writes with provenance and governance-aware review creation.
-- Phase 5 review and curation is in place through review queue endpoints, renderer review actions, and provenance-friendly detail flows.
+- Phase 4 append-first write-back originally landed with provenance plus review-aware curation hooks; shipped v2 now uses automatic governance instead.
+- Phase 5 review and curation was implemented in v1 through review queue endpoints and renderer review actions before the v2 governance replacement removed that surface.
 - Phase 6 real integrations now include documented `pnw`, raw HTTP bootstrap, and stdio MCP workflows in addition to the coding-agent path.
 - Phase 7 retrieval enhancement has started selectively through inferred-relation storage, deterministic inferred-link generation from tag/body/activity, project-membership, and shared-artifact signals, usage feedback capture, maintenance recompute, and relation-aware ranking. Semantic retrieval still remains deferred until real usage proves deterministic retrieval is insufficient.
 

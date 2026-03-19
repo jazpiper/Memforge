@@ -4,7 +4,6 @@ import type {
   Integration,
   Node,
   Relation,
-  ReviewQueueItem,
   WorkspaceSeed,
 } from './types';
 
@@ -19,7 +18,7 @@ const nodes: Node[] = [
     visibility: 'normal',
     title: 'Memforge',
     body:
-      'Memforge is a local-first knowledge substrate for durable notes, projects, decisions, references, activities, and graph relationships shared across humans and tools.\n\nThe first implementation slice focuses on durable storage, fast retrieval, provenance, and a restrained review loop.',
+      'Memforge is a local-first knowledge substrate for durable notes, projects, decisions, references, activities, and graph relationships shared across humans and tools.\n\nThe current slice focuses on durable storage, fast retrieval, provenance, and automatic governance.',
     summary: 'Shared local memory layer for humans and agents.',
     createdBy: '고주환',
     sourceType: 'human',
@@ -40,12 +39,12 @@ const nodes: Node[] = [
     visibility: 'normal',
     title: 'v1 governance rules',
     body:
-      'Agent-created relations default to suggested. Reviewed is a review queue event, not a persisted node state. Summary maintenance should stay cheap and deterministic.',
-    summary: 'Keep agent writes additive and reviewable.',
+      'Agent-created relations default to suggested. Automatic governance promotes, contests, or demotes content using deterministic local signals. Summary maintenance should stay cheap and deterministic.',
+    summary: 'Keep agent writes additive and automatically governed.',
     createdBy: '고주환',
     sourceType: 'human',
     sourceLabel: 'docs',
-    tags: ['governance', 'review', 'rules'],
+    tags: ['governance', 'automation', 'rules'],
     createdAt: now,
     updatedAt: now,
     metadata: {
@@ -56,7 +55,7 @@ const nodes: Node[] = [
   {
     id: 'node_api_surface',
     type: 'spec',
-    status: 'review',
+    status: 'active',
     canonicality: 'suggested',
     visibility: 'normal',
     title: 'Local API surface',
@@ -96,19 +95,19 @@ const nodes: Node[] = [
     },
   },
   {
-    id: 'node_review_queue',
+    id: 'node_governance_policy',
     type: 'question',
     status: 'draft',
     canonicality: 'generated',
     visibility: 'normal',
-    title: 'How should review queue be prioritized?',
+    title: 'How should governance issues be surfaced?',
     body:
-      'We need a simple way to surface relation suggestions and higher-risk agent output while keeping the queue short and action-oriented.',
-    summary: 'Open question about review triage.',
+      'We need a simple way to surface contested and low-confidence entities while keeping the governance surface compact and operational.',
+    summary: 'Open question about governance surfacing.',
     createdBy: '고주환',
     sourceType: 'human',
     sourceLabel: 'planning',
-    tags: ['review', 'triage'],
+    tags: ['governance', 'triage'],
     createdAt: now,
     updatedAt: now,
     metadata: {
@@ -203,9 +202,9 @@ const activities: Activity[] = [
   },
   {
     id: 'act_3',
-    targetNodeId: 'node_review_queue',
+    targetNodeId: 'node_governance_policy',
     activityType: 'review_action',
-    body: 'Review queue triage still needs a clear priority rule for relation suggestions and suggested notes.',
+    body: 'Governance issue triage still needs a clear priority rule for contested entities and suggested notes.',
     createdBy: '고주환',
     sourceType: 'human',
     sourceLabel: 'planning',
@@ -227,35 +226,6 @@ const artifacts: Artifact[] = [
     createdAt: now,
     metadata: {
       kind: 'report',
-    },
-  },
-];
-
-const reviewQueue: ReviewQueueItem[] = [
-  {
-    id: 'rq_1',
-    entityType: 'relation',
-    entityId: 'rel_2',
-    reviewType: 'relation_suggestion',
-    proposedBy: 'Codex',
-    createdAt: now,
-    status: 'pending',
-    notes: 'Suggested relation from project hub to API surface needs a human check.',
-    metadata: {
-      confidence: 'medium',
-    },
-  },
-  {
-    id: 'rq_2',
-    entityType: 'node',
-    entityId: 'node_api_surface',
-    reviewType: 'node_promotion',
-    proposedBy: 'Codex',
-    createdAt: now,
-    status: 'pending',
-    notes: 'Promote suggested API surface note to canonical after review.',
-    metadata: {
-      source: 'docs/api.md',
     },
   },
 ];
@@ -292,7 +262,6 @@ export const mockWorkspace: WorkspaceSeed = {
   relations,
   activities,
   artifacts,
-  reviewQueue,
   integrations,
   pinnedProjectIds: ['node_memforge'],
   recentNodeIds: ['node_api_surface', 'node_v1_governance', 'node_retrieval'],

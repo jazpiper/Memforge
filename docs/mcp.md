@@ -75,18 +75,21 @@ Rules:
 | `memforge_workspace_open` | Switch to existing workspace | `POST /workspaces/open` |
 | `memforge_semantic_status` | Read semantic index status and queue counts | `GET /semantic/status` |
 | `memforge_semantic_issues` | Read semantic issue details with optional status filters and cursor pagination | `GET /semantic/issues` |
-| `memforge_search_nodes` | Search nodes with filters | `POST /nodes/search` |
+| `memforge_search_nodes` | Search durable nodes with filters | `POST /nodes/search` |
+| `memforge_search_activities` | Search activity timeline events | `POST /activities/search` |
+| `memforge_search_workspace` | Search nodes and activities together | `POST /search` |
 | `memforge_get_node` | Read node detail bundle | `GET /nodes/:id` |
 | `memforge_get_related` | Read canonical plus inferred neighborhood items | `GET /nodes/:id/neighborhood` |
 | `memforge_upsert_inferred_relation` | Upsert inferred relation | `POST /inferred-relations` |
 | `memforge_append_relation_usage_event` | Append relation usage signal | `POST /relation-usage-events` |
+| `memforge_append_search_feedback` | Append usefulness feedback for search results | `POST /search-feedback-events` |
 | `memforge_recompute_inferred_relations` | Recompute inferred relation scores | `POST /inferred-relations/recompute` |
 | `memforge_append_activity` | Append node activity | `POST /activities` |
 | `memforge_create_node` | Create durable node | `POST /nodes` |
 | `memforge_create_relation` | Create relation | `POST /relations` |
-| `memforge_review_list` | Read review queue | `GET /review-queue` |
-| `memforge_review_get` | Read one review item | `GET /review-queue/:id` |
-| `memforge_review_decide` | Approve / reject / edit-and-approve | `POST /review-queue/:id/:action` |
+| `memforge_list_governance_issues` | Read surfaced contested or low-confidence entities | `GET /governance/issues` |
+| `memforge_get_governance_state` | Read governance state for one entity | `GET /governance/state/:entityType/:id` |
+| `memforge_recompute_governance` | Recompute bounded governance state | `POST /governance/recompute` |
 | `memforge_context_bundle` | Build compact agent context | `POST /context/bundles` |
 | `memforge_rank_candidates` | Rank candidate nodes with relation and semantic request-time signals | `POST /retrieval/rank-candidates` |
 | `memforge_semantic_reindex` | Queue workspace semantic reindex | `POST /semantic/reindex` |
@@ -133,17 +136,16 @@ The MCP tool simplifies the HTTP payload:
 }
 ```
 
-The bridge expands that to the API's `target: { type, id }` shape.
+The bridge expands that to the API's node-centric `target: { id }` shape.
 
-### Review decisions
+### Governance reads
 
-`memforge_review_decide` accepts:
-- `action`: `approve` | `reject` | `edit-and-approve`
-- `notes`
-- optional `patch`
-- optional `source`
+`memforge_recompute_governance` accepts:
+- optional `entityType`
+- optional bounded `entityIds`
+- optional `limit`
 
-This collapses three HTTP endpoints into one MCP tool because the action is part of the natural agent intent.
+This keeps governance maintenance explicit without reintroducing a human review queue.
 
 ---
 
@@ -154,13 +156,13 @@ Resources and prompts are useful, but tools are the highest-value first step bec
 - inspect
 - create
 - relate
-- review
+- inspect governance
 - bundle
 
 Future additions can include:
 - `memforge://service-index`
 - `memforge://workspace/current`
-- reusable prompts for "capture note", "triage review queue", and "build coding context"
+- reusable prompts for "capture note", "inspect governance issues", and "build coding context"
 
 ---
 
@@ -182,7 +184,7 @@ MEMFORGE_API_TOKEN=<optional>
 Operational expectation:
 - reuse the existing running Memforge service
 - do not start a second API instance unless the configured one is unavailable
-- prefer `memforge_workspace_current` and `memforge_search_nodes` before creating new data
+- prefer `memforge_workspace_current` and `memforge_search_workspace` before creating new data
 - pass `MEMFORGE_API_TOKEN` directly to the MCP process when bearer auth is enabled; do not rely on renderer/browser token storage
 
 JetBrains AI Assistant / IntelliJ MCP JSON example:

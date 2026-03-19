@@ -65,6 +65,42 @@ export function renderSearchResults(data) {
     .join("\n\n")}\n`;
 }
 
+export function renderActivitySearchResults(data) {
+  const items = data?.items || [];
+  if (!items.length) {
+    return "No activity results.\n";
+  }
+
+  return `${items
+    .map((item, index) => {
+      const headline = item.targetNodeTitle || item.targetNodeId;
+      const body = item.body ? `\n  ${item.body}` : "";
+      return `${index + 1}. ${headline} (${item.activityType})\n  id: ${item.id}\n  target: ${item.targetNodeId}\n  created: ${item.createdAt}${body}`;
+    })
+    .join("\n\n")}\n`;
+}
+
+export function renderWorkspaceSearchResults(data) {
+  const items = data?.items || [];
+  if (!items.length) {
+    return "No workspace results.\n";
+  }
+
+  return `${items
+    .map((item, index) => {
+      if (item.resultType === "activity" && item.activity) {
+        const headline = item.activity.targetNodeTitle || item.activity.targetNodeId;
+        const body = item.activity.body ? `\n  ${item.activity.body}` : "";
+        return `${index + 1}. [activity] ${headline} (${item.activity.activityType})\n  id: ${item.activity.id}\n  target: ${item.activity.targetNodeId}\n  created: ${item.activity.createdAt}${body}`;
+      }
+
+      const node = item.node || {};
+      const summary = node.summary ? `\n  ${node.summary}` : "";
+      return `${index + 1}. [node] ${node.title || node.id} (${node.type || "node"})\n  id: ${node.id}\n  status: ${node.status || ""}${summary}`;
+    })
+    .join("\n\n")}\n`;
+}
+
 export function renderRelated(data) {
   const items = data?.items || data?.related || [];
   if (!items.length) {
@@ -91,16 +127,16 @@ export function renderActivities(data) {
     .join("\n")}\n`;
 }
 
-export function renderReviewItems(data) {
+export function renderGovernanceIssues(data) {
   const items = data?.items || [];
   if (!items.length) {
-    return "No review items.\n";
+    return "No governance issues.\n";
   }
 
   return `${items
     .map(
       (item, index) =>
-        `${index + 1}. ${item.id} (${item.reviewType || item.type || ""})\n  entity: ${item.entityType || ""}:${item.entityId || ""}\n  status: ${item.status || ""}`,
+        `${index + 1}. ${item.title || item.entityId}\n  entity: ${item.entityType || ""}:${item.entityId || ""}\n  state: ${item.state || ""}\n  confidence: ${item.confidence ?? ""}\n  reasons: ${Array.isArray(item.reasons) ? item.reasons.join(", ") : ""}`,
     )
     .join("\n\n")}\n`;
 }

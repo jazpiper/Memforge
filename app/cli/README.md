@@ -14,9 +14,11 @@ pnw create --type note --title "Idea" --body "..."
 pnw append --target node_project_1 --type agent_run_summary --text "Implemented draft"
 pnw link node_a node_b supports --status suggested
 pnw attach --node node_project_1 --path artifacts/report.md
-pnw review list --status pending
-pnw review approve review_123
-pnw review reject review_123
+pnw search activities "implemented draft"
+pnw search workspace "what changed"
+pnw governance issues --states contested,low_confidence
+pnw governance show --entity-type node --entity-id node_123
+pnw governance recompute --entity-type node --entity-ids node_123
 pnw workspace current
 pnw workspace list
 pnw workspace create --root /Users/name/Documents/Memforge-Test --name "Test Workspace"

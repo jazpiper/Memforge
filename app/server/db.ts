@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { WorkspacePaths } from "./workspace.js";
 
-const schemaVersion = 5;
+const schemaVersion = 7;
 
 function execMigration(db: DatabaseSync): void {
   db.exec(`
@@ -154,6 +154,61 @@ function execMigration(db: DatabaseSync): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS search_feedback_events (
+      id TEXT PRIMARY KEY,
+      result_type TEXT NOT NULL,
+      result_id TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      query TEXT,
+      session_id TEXT,
+      run_id TEXT,
+      actor_type TEXT,
+      actor_label TEXT,
+      tool_name TEXT,
+      confidence REAL NOT NULL,
+      delta REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS search_feedback_rollups (
+      result_type TEXT NOT NULL,
+      result_id TEXT NOT NULL,
+      total_delta REAL NOT NULL DEFAULT 0,
+      event_count INTEGER NOT NULL DEFAULT 0,
+      useful_count INTEGER NOT NULL DEFAULT 0,
+      not_useful_count INTEGER NOT NULL DEFAULT 0,
+      uncertain_count INTEGER NOT NULL DEFAULT 0,
+      last_event_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (result_type, result_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS governance_events (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      previous_state TEXT,
+      next_state TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS governance_state (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      reasons_json TEXT NOT NULL,
+      last_evaluated_at TEXT NOT NULL,
+      last_transition_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      PRIMARY KEY (entity_type, entity_id)
+    );
+
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
       node_id TEXT NOT NULL,
@@ -182,18 +237,6 @@ function execMigration(db: DatabaseSync): void {
       metadata_json TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS review_queue (
-      id TEXT PRIMARY KEY,
-      entity_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      review_type TEXT NOT NULL,
-      proposed_by TEXT,
-      created_at TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      notes TEXT,
-      metadata_json TEXT
-    );
-
     CREATE TABLE IF NOT EXISTS integrations (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -213,6 +256,12 @@ function execMigration(db: DatabaseSync): void {
       content=''
     );
 
+    CREATE VIRTUAL TABLE IF NOT EXISTS activities_fts USING fts5(
+      id UNINDEXED,
+      body,
+      content=''
+    );
+
     CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
       INSERT INTO nodes_fts(rowid, id, title, body, summary)
       VALUES (new.rowid, new.id, coalesce(new.title, ''), coalesce(new.body, ''), coalesce(new.summary, ''));
@@ -228,6 +277,23 @@ function execMigration(db: DatabaseSync): void {
       VALUES ('delete', old.rowid, old.id, old.title, old.body, old.summary);
       INSERT INTO nodes_fts(rowid, id, title, body, summary)
       VALUES (new.rowid, new.id, coalesce(new.title, ''), coalesce(new.body, ''), coalesce(new.summary, ''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_ai AFTER INSERT ON activities BEGIN
+      INSERT INTO activities_fts(rowid, id, body)
+      VALUES (new.rowid, new.id, coalesce(new.body, ''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_ad AFTER DELETE ON activities BEGIN
+      INSERT INTO activities_fts(activities_fts, rowid, id, body)
+      VALUES ('delete', old.rowid, old.id, old.body);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_au AFTER UPDATE ON activities BEGIN
+      INSERT INTO activities_fts(activities_fts, rowid, id, body)
+      VALUES ('delete', old.rowid, old.id, old.body);
+      INSERT INTO activities_fts(rowid, id, body)
+      VALUES (new.rowid, new.id, coalesce(new.body, ''));
     END;
 
     CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
@@ -263,6 +329,16 @@ function execMigration(db: DatabaseSync): void {
       ON relation_usage_events(created_at);
     CREATE INDEX IF NOT EXISTS idx_relation_usage_rollups_last_event_at
       ON relation_usage_rollups(last_event_at);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_result
+      ON search_feedback_events(result_type, result_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_created_at
+      ON search_feedback_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_rollups_result
+      ON search_feedback_rollups(result_type, total_delta DESC, last_event_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_governance_events_entity
+      ON governance_events(entity_type, entity_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_governance_state_state
+      ON governance_state(state, confidence ASC, last_transition_at DESC);
     CREATE INDEX IF NOT EXISTS idx_activities_target ON activities(target_node_id);
     CREATE INDEX IF NOT EXISTS idx_activities_target_created_at
       ON activities(target_node_id, created_at DESC);
@@ -271,9 +347,6 @@ function execMigration(db: DatabaseSync): void {
       ON artifacts(node_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_artifacts_path_created_at
       ON artifacts(path, created_at DESC, node_id);
-    CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status);
-    CREATE INDEX IF NOT EXISTS idx_review_queue_status_type_created_at
-      ON review_queue(status, review_type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_provenance_entity ON provenance_events(entity_type, entity_id);
     CREATE INDEX IF NOT EXISTS idx_provenance_entity_timestamp
       ON provenance_events(entity_type, entity_id, timestamp DESC);

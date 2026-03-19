@@ -17,10 +17,10 @@ describe("resolveNodeGovernance", () => {
     });
 
     expect(decision.canonicality).toBe("canonical");
-    expect(decision.createReview).toBe(false);
+    expect(decision.status).toBe("active");
   });
 
-  it("forces agent decisions into review", () => {
+  it("starts agent decisions as suggested active content", () => {
     const decision = resolveNodeGovernance({
       type: "decision",
       title: "Use SQLite",
@@ -35,10 +35,10 @@ describe("resolveNodeGovernance", () => {
     });
 
     expect(decision.canonicality).toBe("suggested");
-    expect(decision.createReview).toBe(true);
+    expect(decision.status).toBe("active");
   });
 
-  it("lets trusted agent decisions bypass review", () => {
+  it("keeps trusted agent decisions suggested until automatic promotion", () => {
     const decision = resolveNodeGovernance(
       {
         type: "decision",
@@ -57,9 +57,8 @@ describe("resolveNodeGovernance", () => {
       })
     );
 
-    expect(decision.canonicality).toBe("appended");
+    expect(decision.canonicality).toBe("suggested");
     expect(decision.status).toBe("active");
-    expect(decision.createReview).toBe(false);
   });
 
   it("lets low-risk agent notes land as appended active nodes", () => {
@@ -78,14 +77,13 @@ describe("resolveNodeGovernance", () => {
 
     expect(decision.canonicality).toBe("appended");
     expect(decision.status).toBe("active");
-    expect(decision.createReview).toBe(false);
   });
 
-  it("keeps durable agent notes in review", () => {
+  it("starts durable agent notes as suggested active nodes", () => {
     const decision = resolveNodeGovernance({
       type: "note",
       title: "Durable agent note",
-      body: "This note captures reusable durable knowledge that should stay in the review flow until a human promotes it. ".repeat(30),
+      body: "This note captures reusable durable knowledge that should stay suggested until automatic governance promotes it. ".repeat(30),
       tags: [],
       source: {
         actorType: "agent",
@@ -98,11 +96,10 @@ describe("resolveNodeGovernance", () => {
     });
 
     expect(decision.canonicality).toBe("suggested");
-    expect(decision.status).toBe("review");
-    expect(decision.createReview).toBe(true);
+    expect(decision.status).toBe("active");
   });
 
-  it("lets trusted agent tools bypass review for durable notes", () => {
+  it("keeps trusted agent durable notes suggested for automatic governance", () => {
     const decision = resolveNodeGovernance(
       {
         type: "note",
@@ -123,9 +120,8 @@ describe("resolveNodeGovernance", () => {
       })
     );
 
-    expect(decision.canonicality).toBe("appended");
+    expect(decision.canonicality).toBe("suggested");
     expect(decision.status).toBe("active");
-    expect(decision.createReview).toBe(false);
   });
 });
 
@@ -144,10 +140,9 @@ describe("resolveRelationStatus", () => {
     });
 
     expect(status.status).toBe("suggested");
-    expect(status.createReview).toBe(true);
   });
 
-  it("lets trusted agent relations become active by default", () => {
+  it("keeps trusted agent relations suggested until automatic promotion", () => {
     const status = resolveRelationStatus(
       {
         fromNodeId: "node_a",
@@ -165,7 +160,6 @@ describe("resolveRelationStatus", () => {
       })
     );
 
-    expect(status.status).toBe("active");
-    expect(status.createReview).toBe(false);
+    expect(status.status).toBe("suggested");
   });
 });

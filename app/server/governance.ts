@@ -1,19 +1,18 @@
+import type { AppendActivityInput, CreateNodeInput, CreateRelationInput, RecomputeGovernanceInput } from "../shared/contracts.js";
 import type {
-  AppendActivityInput,
-  CreateNodeInput,
-  CreateRelationInput,
-  ReviewActionInput
+  GovernanceEntityType,
+  GovernanceEventType,
+  GovernanceState,
+  NodeStatus
 } from "../shared/contracts.js";
-import type { JsonMap } from "../shared/types.js";
+import type { GovernanceStateRecord, NodeRecord, RelationRecord, SearchFeedbackSummary } from "../shared/types.js";
 import type { MemforgeRepository } from "./repositories.js";
 import { AppError } from "./errors.js";
-import { countTokensApprox } from "./utils.js";
+import { countTokensApprox, nowIso } from "./utils.js";
 
 export interface GovernanceDecision {
   canonicality: string;
   status: string;
-  createReview: boolean;
-  reviewType?: string;
   reason: string;
 }
 
@@ -22,26 +21,138 @@ export interface GovernancePolicy {
   trustedSourceToolNames: string[];
 }
 
-export function resolveGovernancePolicy(settings?: Record<string, unknown>): GovernancePolicy {
-  const autoApproveLowRisk =
-    typeof settings?.["review.autoApproveLowRisk"] === "boolean" ? Boolean(settings["review.autoApproveLowRisk"]) : true;
-  const trustedSourceToolNames = Array.isArray(settings?.["review.trustedSourceToolNames"])
-    ? settings?.["review.trustedSourceToolNames"].filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    : typeof settings?.["review.trustedSourceToolNames"] === "string"
-      ? settings["review.trustedSourceToolNames"]
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : [];
+export interface GovernanceRecomputeResult {
+  updatedCount: number;
+  promotedCount: number;
+  contestedCount: number;
+  items: GovernanceStateRecord[];
+}
 
-  return {
-    autoApproveLowRisk,
-    trustedSourceToolNames
-  };
+type GovernanceEvaluation = {
+  entityType: GovernanceEntityType;
+  entityId: string;
+  state: GovernanceState;
+  confidence: number;
+  reasons: string[];
+  eventType: GovernanceEventType;
+  nextNodeStatus?: NodeStatus;
+  nextCanonicality?: NodeRecord["canonicality"];
+  nextRelationStatus?: RelationRecord["status"];
+  metadata?: Record<string, unknown>;
+};
+
+function clampConfidence(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function readTrustedSourceToolNames(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function isTrustedAgentSource(toolName: string, policy: GovernancePolicy): boolean {
   return policy.trustedSourceToolNames.includes(toolName);
+}
+
+function feedbackConfidenceBonus(summary: SearchFeedbackSummary | undefined): number {
+  if (!summary) {
+    return 0;
+  }
+  return Math.min(Math.max(summary.totalDelta, -2), 2) * 0.12;
+}
+
+function stabilityBonus(timestamp: string): number {
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  if (ageMs >= 24 * 60 * 60 * 1000) return 0.06;
+  if (ageMs >= 60 * 60 * 1000) return 0.03;
+  return 0;
+}
+
+function chooseNodeHealthyThreshold(node: NodeRecord): number {
+  if (node.canonicality === "suggested") {
+    return node.type === "decision" ? 0.78 : 0.72;
+  }
+  if (node.canonicality === "canonical") {
+    return 0.55;
+  }
+  return 0.35;
+}
+
+function chooseRelationActiveThreshold(_relation: RelationRecord): number {
+  return 0.72;
+}
+
+function chooseNodeBaseConfidence(node: NodeRecord, policy: GovernancePolicy): number {
+  switch (node.sourceType) {
+    case "human":
+      return 0.95;
+    case "import":
+      return 0.84;
+    case "integration":
+      return 0.72;
+    case "system":
+      return 0.7;
+    case "agent":
+      return isTrustedAgentSource(node.sourceLabel ?? "", policy) ? 0.62 : 0.48;
+    default:
+      return 0.45;
+  }
+}
+
+function chooseRelationBaseConfidence(relation: RelationRecord, policy: GovernancePolicy): number {
+  switch (relation.sourceType) {
+    case "human":
+      return 0.78;
+    case "import":
+    case "integration":
+    case "system":
+      return 0.68;
+    case "agent":
+      return isTrustedAgentSource(relation.sourceLabel ?? "", policy) ? 0.62 : 0.42;
+    default:
+      return 0.4;
+  }
+}
+
+function buildEventType(
+  previousState: GovernanceStateRecord | null,
+  nextState: GovernanceState,
+  changedToCanonical: boolean,
+  changedToRejected: boolean
+): GovernanceEventType {
+  if (!previousState) {
+    return "evaluated";
+  }
+  if (changedToCanonical) {
+    return "promoted";
+  }
+  if (nextState === "contested" && previousState.state !== "contested") {
+    return "contested";
+  }
+  if (changedToRejected) {
+    return "demoted";
+  }
+  return "evaluated";
+}
+
+export function resolveGovernancePolicy(settings?: Record<string, unknown>): GovernancePolicy {
+  return {
+    autoApproveLowRisk:
+      typeof settings?.["review.autoApproveLowRisk"] === "boolean"
+        ? Boolean(settings["review.autoApproveLowRisk"])
+        : true,
+    trustedSourceToolNames: readTrustedSourceToolNames(settings?.["review.trustedSourceToolNames"])
+  };
 }
 
 export function resolveNodeGovernance(input: CreateNodeInput, policy: GovernancePolicy = resolveGovernancePolicy()): GovernanceDecision {
@@ -49,8 +160,7 @@ export function resolveNodeGovernance(input: CreateNodeInput, policy: Governance
     return {
       canonicality: input.canonicality ?? "canonical",
       status: input.status ?? "active",
-      createReview: false,
-      reason: "Human-authored nodes land as canonical by default."
+      reason: "Human-authored nodes land canonical by default."
     };
   }
 
@@ -58,7 +168,6 @@ export function resolveNodeGovernance(input: CreateNodeInput, policy: Governance
     return {
       canonicality: "imported",
       status: input.status ?? "active",
-      createReview: false,
       reason: "Imported material stays imported."
     };
   }
@@ -68,26 +177,7 @@ export function resolveNodeGovernance(input: CreateNodeInput, policy: Governance
   const trustedAgentSource =
     input.source.actorType === "agent" ? isTrustedAgentSource(input.source.toolName, policy) : false;
 
-  if (input.type === "decision" && trustedAgentSource) {
-    return {
-      canonicality: "appended",
-      status: "active",
-      createReview: false,
-      reason: "Trusted agent-authored decisions land as append-only active content."
-    };
-  }
-
-  if (input.type === "decision") {
-    return {
-      canonicality: "suggested",
-      status: "review",
-      createReview: true,
-      reviewType: "node_promotion",
-      reason: "Agent-authored decisions always require human approval."
-    };
-  }
-
-  if (input.source.actorType === "agent" && tokenCount <= 300 && !reusable) {
+  if (input.source.actorType === "agent" && input.type !== "decision" && tokenCount <= 300 && !reusable) {
     throw new AppError(
       403,
       "FORBIDDEN",
@@ -96,56 +186,41 @@ export function resolveNodeGovernance(input: CreateNodeInput, policy: Governance
     );
   }
 
-  if (input.source.actorType === "agent") {
-    if (trustedAgentSource) {
-      return {
-        canonicality: "appended",
-        status: "active",
-        createReview: false,
-        reason: "Trusted agent-authored nodes land as append-only active content."
-      };
-    }
-
-    if (!reusable && policy.autoApproveLowRisk) {
-      return {
-        canonicality: "appended",
-        status: "active",
-        createReview: false,
-        reason: "Low-risk agent-authored nodes land as append-only active content."
-      };
-    }
-
+  if (input.type === "decision") {
     return {
       canonicality: "suggested",
-      status: "review",
-      createReview: true,
-      reviewType: "node_promotion",
-      reason: "Reusable agent-authored knowledge lands as suggested and enters review."
+      status: "active",
+      reason: trustedAgentSource
+        ? "Trusted agent-authored decisions start suggested and can auto-promote."
+        : "Agent-authored decisions start suggested and await automatic confidence promotion."
+    };
+  }
+
+  if (input.source.actorType === "agent" && reusable) {
+    return {
+      canonicality: "suggested",
+      status: "active",
+      reason: "Reusable agent-authored knowledge starts suggested and active."
     };
   }
 
   return {
-    canonicality: input.canonicality ?? "appended",
-    status: input.status ?? "active",
-    createReview: false,
-    reason: "Fallback append-first behavior."
+    canonicality: "appended",
+    status: "active",
+    reason: trustedAgentSource
+      ? "Trusted or low-risk agent-authored nodes land append-first."
+      : "Low-risk agent-authored nodes land append-first."
   };
 }
 
 export function resolveRelationStatus(
   input: CreateRelationInput,
-  policy: GovernancePolicy = resolveGovernancePolicy()
-): { status: string; createReview: boolean } {
+  _policy: GovernancePolicy = resolveGovernancePolicy()
+): { status: string } {
   if (input.source.actorType === "agent") {
-    if (isTrustedAgentSource(input.source.toolName, policy)) {
-      const status = input.status ?? "active";
-      return { status, createReview: status === "suggested" };
-    }
-
-    return { status: "suggested", createReview: true };
+    return { status: "suggested" };
   }
-
-  return { status: input.status ?? "active", createReview: input.status === "suggested" };
+  return { status: input.status ?? "active" };
 }
 
 export function shouldPromoteActivitySummary(input: AppendActivityInput): boolean {
@@ -157,7 +232,7 @@ export function shouldPromoteActivitySummary(input: AppendActivityInput): boolea
 export function maybeCreatePromotionCandidate(
   repository: MemforgeRepository,
   input: AppendActivityInput
-): { suggestedNodeId?: string; reviewId?: string } {
+): { suggestedNodeId?: string } {
   if (!shouldPromoteActivitySummary(input)) {
     return {};
   }
@@ -170,9 +245,9 @@ export function maybeCreatePromotionCandidate(
     summary: typeof input.metadata.summary === "string" ? input.metadata.summary : undefined,
     tags: Array.isArray(input.metadata.tags) ? (input.metadata.tags as string[]) : target.tags,
     canonicality: "suggested",
-    status: "review",
+    status: "active",
     resolvedCanonicality: "suggested",
-    resolvedStatus: "review",
+    resolvedStatus: "active",
     source: input.source,
     metadata: {
       ...input.metadata,
@@ -189,120 +264,277 @@ export function maybeCreatePromotionCandidate(
       rule: "activity_to_suggested_promotion"
     }
   });
-  const review = repository.createReviewItem({
-    entityType: "node",
-    entityId: suggested.id,
-    reviewType: "node_promotion",
-    proposedBy: input.source.actorLabel,
-    notes: "Promotion candidate created from durable agent activity.",
-    metadata: {
-      sourceActivityType: input.activityType,
-      targetNodeId: input.targetNodeId
-    }
-  });
 
-  return { suggestedNodeId: suggested.id, reviewId: review.id };
+  return { suggestedNodeId: suggested.id };
 }
 
-export function applyReviewDecision(
+function evaluateNodeGovernance(
   repository: MemforgeRepository,
-  reviewId: string,
-  action: "approve" | "reject" | "edit-and-approve",
-  input: ReviewActionInput
-): { review: unknown; effectedEntity: JsonMap } {
-  const review = repository.getReviewItem(reviewId);
+  node: NodeRecord,
+  policy: GovernancePolicy
+): GovernanceEvaluation {
+  const feedback = repository.getSearchFeedbackSummaries("node", [node.id]).get(node.id);
+  const contradictionCount = repository.countContradictionRelations(node.id);
+  const reusable = Boolean(node.metadata.reusable || node.metadata.durable || node.metadata.promoteCandidate);
+  let confidence = chooseNodeBaseConfidence(node, policy);
+  const reasons = [`source:${node.sourceType ?? "unknown"}`];
 
-  if (review.status !== "pending") {
-    throw new AppError(409, "CONFLICT", `Review item ${reviewId} has already been resolved.`);
+  if (node.canonicality === "canonical") confidence += 0.12;
+  if (node.canonicality === "appended") confidence += 0.05;
+  if (node.canonicality === "suggested") confidence += 0.02;
+  if (reusable) {
+    confidence += 0.08;
+    reasons.push("durable");
+  }
+  if (node.type === "decision") {
+    confidence += 0.06;
+    reasons.push("decision");
   }
 
-  let effectedEntity: JsonMap = {};
+  confidence += stabilityBonus(node.updatedAt);
+  confidence += feedbackConfidenceBonus(feedback);
 
-  if (review.entityType === "relation") {
-    const relationStatus = action === "reject" ? "rejected" : "active";
-    const relation = repository.updateRelationStatus(review.entityId, relationStatus);
-    repository.recordProvenance({
-      entityType: "relation",
-      entityId: relation.id,
-      operationType: action === "reject" ? "reject" : "approve",
-      source: input.source,
-      metadata: {
-        reviewId,
-        reviewType: review.reviewType
-      }
-    });
-    effectedEntity = { relation };
+  if (feedback?.eventCount) {
+    reasons.push(`feedback:${feedback.totalDelta.toFixed(2)}`);
+  }
+  if (contradictionCount) {
+    confidence -= Math.min(0.5, contradictionCount * 0.35);
+    reasons.push(`contradictions:${contradictionCount}`);
   }
 
-  if (review.entityType === "node") {
-    const patch = input.patch ?? {};
-    if (action === "reject") {
-      const node = repository.updateNode(review.entityId, {
-        status: "archived",
-        metadata: {
-          ...repository.getNode(review.entityId).metadata,
-          rejectedAt: new Date().toISOString()
-        }
-      });
-      repository.recordProvenance({
-        entityType: "node",
-        entityId: node.id,
-        operationType: "reject",
-        source: input.source,
-        metadata: {
-          reviewId,
-          reviewType: review.reviewType
-        }
-      });
-      effectedEntity = { node };
-    } else {
-      const existing = repository.getNode(review.entityId);
-      repository.updateNode(review.entityId, {
-        ...patch,
-        status: "active",
-        metadata: patch.metadata ?? existing.metadata
-      });
-      const node = repository.setNodeCanonicality(review.entityId, "canonical");
-      if (Object.keys(patch).length > 0) {
-        repository.recordProvenance({
-          entityType: "node",
-          entityId: node.id,
-          operationType: "update",
-          source: input.source,
-          metadata: {
-            reviewId,
-            reviewType: review.reviewType,
-            patchKeys: Object.keys(patch)
-          }
-        });
-      }
-      repository.recordProvenance({
-        entityType: "node",
-        entityId: node.id,
-        operationType: "promote",
-        source: input.source,
-        metadata: {
-          reviewId,
-          reviewType: review.reviewType
-        }
-      });
-      effectedEntity = { node };
+  const contested =
+    contradictionCount > 0 ||
+    (feedback?.notUsefulCount ?? 0) >= 2 ||
+    (feedback?.totalDelta ?? 0) <= -1;
+  const healthyThreshold = chooseNodeHealthyThreshold(node);
+  const canPromote = node.canonicality === "suggested" && !contested && confidence >= healthyThreshold;
+  const nextCanonicality = canPromote ? "canonical" : node.canonicality;
+  const nextStatus: NodeStatus =
+    contested ? "contested" : node.status === "contested" ? "active" : node.status === "archived" ? "archived" : "active";
+  const nextState: GovernanceState = contested ? "contested" : confidence >= healthyThreshold ? "healthy" : "low_confidence";
+  const previousState = repository.getGovernanceStateNullable("node", node.id);
+
+  return {
+    entityType: "node",
+    entityId: node.id,
+    state: nextState,
+    confidence: clampConfidence(confidence),
+    reasons,
+    eventType: buildEventType(previousState, nextState, canPromote, false),
+    nextNodeStatus: nextStatus,
+    nextCanonicality,
+    metadata: {
+      contradictionCount,
+      feedbackDelta: feedback?.totalDelta ?? 0,
+      feedbackCount: feedback?.eventCount ?? 0
+    }
+  };
+}
+
+function evaluateRelationGovernance(
+  repository: MemforgeRepository,
+  relation: RelationRecord,
+  policy: GovernancePolicy
+): GovernanceEvaluation {
+  const usage = repository.getRelationUsageSummaries([relation.id]).get(relation.id);
+  let confidence = chooseRelationBaseConfidence(relation, policy);
+  const reasons = [`source:${relation.sourceType ?? "unknown"}`];
+
+  if (relation.status === "active") {
+    confidence += 0.08;
+  }
+  if (usage) {
+    confidence += Math.min(Math.max(usage.totalDelta, -2), 2) * 0.15;
+    reasons.push(`usage:${usage.totalDelta.toFixed(2)}`);
+  }
+  confidence = clampConfidence(confidence);
+
+  const hardReject = (usage?.eventCount ?? 0) >= 2 && (usage?.totalDelta ?? 0) <= -1.25;
+  const contested = (usage?.totalDelta ?? 0) <= -0.75;
+  const activeThreshold = chooseRelationActiveThreshold(relation);
+  const nextRelationStatus: RelationRecord["status"] = hardReject
+    ? "rejected"
+    : confidence >= activeThreshold
+      ? "active"
+      : "suggested";
+  const nextState: GovernanceState = contested ? "contested" : confidence >= activeThreshold ? "healthy" : "low_confidence";
+  const previousState = repository.getGovernanceStateNullable("relation", relation.id);
+
+  return {
+    entityType: "relation",
+    entityId: relation.id,
+    state: nextState,
+    confidence,
+    reasons,
+    eventType: buildEventType(previousState, nextState, false, nextRelationStatus === "rejected"),
+    nextRelationStatus,
+    metadata: {
+      usageDelta: usage?.totalDelta ?? 0,
+      usageCount: usage?.eventCount ?? 0
+    }
+  };
+}
+
+function persistGovernanceEvaluation(repository: MemforgeRepository, evaluation: GovernanceEvaluation): GovernanceStateRecord {
+  const currentState = repository.getGovernanceStateNullable(evaluation.entityType, evaluation.entityId);
+  const beforeNode = evaluation.entityType === "node" ? repository.getNode(evaluation.entityId) : null;
+  const beforeRelation = evaluation.entityType === "relation" ? repository.getRelation(evaluation.entityId) : null;
+
+  if (evaluation.entityType === "node") {
+    if (evaluation.nextCanonicality && beforeNode && beforeNode.canonicality !== evaluation.nextCanonicality) {
+      repository.setNodeCanonicality(evaluation.entityId, evaluation.nextCanonicality);
+    }
+    if (evaluation.nextNodeStatus && beforeNode && beforeNode.status !== evaluation.nextNodeStatus) {
+      repository.updateNode(evaluation.entityId, { status: evaluation.nextNodeStatus });
     }
   }
 
-  const nextStatus = action === "reject" ? "rejected" : "approved";
-  const updatedReview = repository.updateReviewItemStatus(reviewId, nextStatus, input.notes ?? review.notes);
-  repository.recordProvenance({
-    entityType: "review_queue_item",
-    entityId: reviewId,
-    operationType: action === "reject" ? "reject" : "approve",
-    source: input.source,
+  if (evaluation.entityType === "relation" && evaluation.nextRelationStatus && beforeRelation && beforeRelation.status !== evaluation.nextRelationStatus) {
+    repository.updateRelationStatus(evaluation.entityId, evaluation.nextRelationStatus);
+  }
+
+  const state = repository.upsertGovernanceState({
+    entityType: evaluation.entityType,
+    entityId: evaluation.entityId,
+    state: evaluation.state,
+    confidence: evaluation.confidence,
+    reasons: evaluation.reasons,
+    lastEvaluatedAt: nowIso(),
+    metadata: evaluation.metadata
+  });
+  repository.appendGovernanceEvent({
+    entityType: evaluation.entityType,
+    entityId: evaluation.entityId,
+    eventType: evaluation.eventType,
+    previousState: currentState?.state ?? null,
+    nextState: evaluation.state,
+    confidence: evaluation.confidence,
+    reason: evaluation.reasons.join(", "),
     metadata: {
-      reviewType: review.reviewType,
-      entityType: review.entityType,
-      entityId: review.entityId
+      ...evaluation.metadata,
+      nextCanonicality: evaluation.nextCanonicality ?? null,
+      nextNodeStatus: evaluation.nextNodeStatus ?? null,
+      nextRelationStatus: evaluation.nextRelationStatus ?? null
     }
   });
 
-  return { review: updatedReview, effectedEntity };
+  return state;
+}
+
+export function recomputeAutomaticGovernance(
+  repository: MemforgeRepository,
+  input: RecomputeGovernanceInput,
+  policy: GovernancePolicy = resolveGovernancePolicy(
+    repository.getSettings(["review.autoApproveLowRisk", "review.trustedSourceToolNames"])
+  )
+): GovernanceRecomputeResult {
+  const targets = repository.recomputeGovernanceTargets(input);
+  const items: GovernanceStateRecord[] = [];
+  let promotedCount = 0;
+  let contestedCount = 0;
+
+  for (const nodeId of targets.nodeIds) {
+    const node = repository.getNode(nodeId);
+    const evaluation = evaluateNodeGovernance(repository, node, policy);
+    if (evaluation.nextCanonicality === "canonical" && node.canonicality !== "canonical") {
+      promotedCount += 1;
+    }
+    if (evaluation.state === "contested") {
+      contestedCount += 1;
+    }
+    items.push(persistGovernanceEvaluation(repository, evaluation));
+  }
+
+  for (const relationId of targets.relationIds) {
+    const relation = repository.getRelation(relationId);
+    const evaluation = evaluateRelationGovernance(repository, relation, policy);
+    if (evaluation.state === "contested") {
+      contestedCount += 1;
+    }
+    items.push(persistGovernanceEvaluation(repository, evaluation));
+  }
+
+  return {
+    updatedCount: items.length,
+    promotedCount,
+    contestedCount,
+    items
+  };
+}
+
+export function bootstrapAutomaticGovernance(repository: MemforgeRepository): GovernanceRecomputeResult {
+  const legacyReviewItems = repository.listLegacyReviewItems();
+  if (legacyReviewItems.length === 0) {
+    return {
+      updatedCount: 0,
+      promotedCount: 0,
+      contestedCount: 0,
+      items: []
+    };
+  }
+
+  const migratedNodeIds = new Set<string>();
+  const migratedRelationIds = new Set<string>();
+  for (const item of legacyReviewItems) {
+    if (item.entityType !== "node" && item.entityType !== "relation") {
+      continue;
+    }
+    const state: GovernanceState = item.status === "pending" ? "contested" : "low_confidence";
+    const current = repository.getGovernanceStateNullable(item.entityType, item.entityId);
+    repository.upsertGovernanceState({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      state,
+      confidence: item.status === "pending" ? 0.2 : 0.4,
+      reasons: [`legacy review migrated from ${item.status}`],
+      metadata: {
+        legacyReviewId: item.id,
+        legacyReviewType: item.reviewType
+      }
+    });
+    repository.appendGovernanceEvent({
+      entityType: item.entityType,
+      entityId: item.entityId,
+      eventType: "migrated",
+      previousState: current?.state ?? null,
+      nextState: state,
+      confidence: item.status === "pending" ? 0.2 : 0.4,
+      reason: `Migrated legacy review item ${item.id}`,
+      metadata: {
+        legacyReviewStatus: item.status,
+        legacyReviewType: item.reviewType
+      }
+    });
+    if (item.entityType === "node") {
+      migratedNodeIds.add(item.entityId);
+    } else {
+      migratedRelationIds.add(item.entityId);
+    }
+  }
+
+  repository.clearLegacyReviewQueue();
+
+  const nodeResult =
+    migratedNodeIds.size > 0
+      ? recomputeAutomaticGovernance(repository, {
+          entityType: "node",
+          entityIds: Array.from(migratedNodeIds),
+          limit: migratedNodeIds.size
+        })
+      : { updatedCount: 0, promotedCount: 0, contestedCount: 0, items: [] as GovernanceStateRecord[] };
+  const relationResult =
+    migratedRelationIds.size > 0
+      ? recomputeAutomaticGovernance(repository, {
+          entityType: "relation",
+          entityIds: Array.from(migratedRelationIds),
+          limit: migratedRelationIds.size
+        })
+      : { updatedCount: 0, promotedCount: 0, contestedCount: 0, items: [] as GovernanceStateRecord[] };
+
+  return {
+    updatedCount: nodeResult.updatedCount + relationResult.updatedCount,
+    promotedCount: nodeResult.promotedCount + relationResult.promotedCount,
+    contestedCount: nodeResult.contestedCount + relationResult.contestedCount,
+    items: [...nodeResult.items, ...relationResult.items]
+  };
 }

@@ -4,6 +4,10 @@
 
 This document defines how Memforge should retrieve, rank, compress, and hand off knowledge to external tools and agents.
 
+Current runtime note:
+- the shipped v2 runtime already uses node/activity search, neighborhood retrieval, node-centric context bundles, inferred-relation request-time ranking, and bounded local semantic augmentation
+- this document is now primarily the rationale and operating model for that shipped behavior, not a future-only design sketch
+
 This is not a generic search design.
 It is a **speed-critical retrieval design** for a local-first knowledge layer used by:
 - humans
@@ -18,7 +22,7 @@ The core goal is simple:
 
 The retrieval layer exists to make the workspace feel fast, compact, and useful even as it grows.
 
-For the broader long-term scaling design, including DB shape and relation-layer review, see `docs/scalable-retrieval-architecture.md`.
+For the broader long-term scaling design, including DB shape and relation-layer evolution, see `docs/scalable-retrieval-architecture.md`.
 
 ---
 
@@ -534,20 +538,20 @@ To prevent the workspace from becoming bloated, the retrieval layer should work 
 1. raw output
 2. activity summary
 3. suggested note
-4. review queue decision
-5. approved canonical node
+4. automatic governance evaluation
+5. canonical or contested durable node
 
 ### Principle
 Not everything that enters the workspace deserves equal prominence.
 
 The retrieval layer should prefer:
 - canonical nodes
-- approved suggested content that has been promoted into canonical nodes
+- healthy suggested or appended content when canonical results are scarce
 - high-signal activity digests
 
 over raw uncurated material.
 
-`Reviewed` is a governance event, not a separate persisted node stage in v1.
+`Governance evaluated` is an audit event, not a separate persisted node stage.
 
 ---
 

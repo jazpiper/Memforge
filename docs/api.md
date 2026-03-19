@@ -188,7 +188,7 @@ The API centers around these resource groups:
 - relation usage events
 - activities
 - artifacts
-- review queue
+- governance
 - context bundles
 - integrations
 - settings
@@ -425,14 +425,15 @@ Archive without hard deletion.
 
 ## 10. Relation endpoints
 
-## 10.1 List related nodes
+## 10.1 List node neighborhood
 ### HTTP
-`GET /api/v1/nodes/:id/related?depth=1&types=related_to,supports`
+`GET /api/v1/nodes/:id/neighborhood?depth=1&types=related_to,supports`
 
 ### Purpose
 Return local graph neighborhood.
 
 ### Notes
+- `GET /api/v1/nodes/:id/related` remains as a legacy compatibility alias over the same neighborhood implementation
 - depth should default to 1
 - keep depth limited in hot path
 
@@ -463,16 +464,15 @@ For external tools, default relation status to `suggested` unless explicitly tru
 `PATCH /api/v1/relations/:id`
 
 ### Typical uses
-- approve suggested relation
-- reject suggested relation
 - archive stale relation
+- accept explicit human-authored relation edits
 
 ## 10.4 Upsert inferred relation
 ### HTTP
 `POST /api/v1/inferred-relations`
 
 ### Purpose
-Store or refresh a rebuildable weighted relation outside the canonical review path.
+Store or refresh a rebuildable weighted relation outside the canonical durable graph path.
 
 ## 10.5 Append relation usage event
 ### HTTP
@@ -485,6 +485,17 @@ Append a lightweight signal that a canonical or inferred relation actually helpe
 - this is append-only
 - usage events may trigger debounced auto-recompute of inferred relation scores
 - this endpoint is for meaningful feedback, not every read
+
+## 10.6 Append search feedback event
+### HTTP
+`POST /api/v1/search-feedback-events`
+
+### Purpose
+Append usefulness feedback for a node or activity result after it actually helped a task or answer.
+
+### Notes
+- feedback is a ranking and governance signal, not a truth assertion
+- negative feedback can help demote or contest noisy results
 
 ---
 
@@ -521,6 +532,54 @@ Append a timeline event tied to a node.
 ### Rules
 - append-only by default
 - activity edits should be rare and not part of normal external flow
+
+## 11.3 Search activities
+### HTTP
+`POST /api/v1/activities/search`
+
+### Purpose
+Search operational history without mixing it into durable-node retrieval.
+
+### Request
+```json
+{
+  "query": "cleanup",
+  "filters": {
+    "activityTypes": ["agent_run_summary"]
+  },
+  "limit": 10,
+  "offset": 0,
+  "sort": "relevance"
+}
+```
+
+### Notes
+- uses activity FTS first when available
+- falls back to bounded `LIKE` matching for empty queries or compatibility cases
+- result payload includes target node summary fields for display and reranking
+
+## 11.4 Search workspace
+### HTTP
+`POST /api/v1/search`
+
+### Purpose
+Search nodes and activities together through one agent-friendly entry point.
+
+### Request
+```json
+{
+  "query": "what changed",
+  "scopes": ["nodes", "activities"],
+  "limit": 10,
+  "offset": 0,
+  "sort": "relevance"
+}
+```
+
+### Notes
+- deterministic lexical quality still dominates ranking
+- nodes rank ahead of activities when confidence is similar
+- activity results are capped per target node to avoid timeline spam
 
 ---
 
@@ -667,7 +726,6 @@ Context bundles are a core primitive.
 ```json
 {
   "target": {
-    "type": "project",
     "id": "node_project_1"
   },
   "mode": "compact",
@@ -795,53 +853,48 @@ Backfill or refresh automatically generated inferred relations across the active
 ```
 
 ### Notes
-- this runs the cheap deterministic generator across existing active/review nodes
+- this runs the cheap deterministic generator across existing active/contested nodes
 - the current generator uses tag overlap, explicit body/title references, and activity-body references
 - this is the endpoint to run when older workspace content should appear in graph/retrieval without waiting for fresh writes
 
 ---
 
-## 15. Review queue endpoints
+## 15. Governance endpoints
 
-## 15.1 List review items
+## 15.1 List governance issues
 ### HTTP
-`GET /api/v1/review-queue?status=pending&limit=20`
+`GET /api/v1/governance/issues?state=contested&limit=20`
 
 ### Query parameters
-- `status`
+- `state` — optional `healthy` | `low_confidence` | `contested`
+- `entityType` — optional `node` | `relation`
 - `limit`
-- `review_type` — optional subtype filter such as `relation_suggestion` or `node_promotion`
 
-## 15.2 Get review item detail
-### HTTP
-`GET /api/v1/review-queue/:id`
+### Purpose
+Return the surfaced automatic-governance issues without exposing a manual review queue.
 
-## 15.3 Approve review item
+## 15.2 Get governance state
 ### HTTP
-`POST /api/v1/review-queue/:id/approve`
+`GET /api/v1/governance/state/:entityType/:id`
+
+### Purpose
+Return the current confidence, reasons, and transition timestamps for one node or relation.
+
+## 15.3 Recompute governance
+### HTTP
+`POST /api/v1/governance/recompute`
 
 ### Request
 ```json
 {
-  "source": {
-    "actorType": "human",
-    "actorLabel": "juhwan",
-    "toolName": "pnw-desktop"
-  },
-  "notes": "Looks good"
+  "entityType": "node",
+  "entityIds": ["node_1"],
+  "limit": 50
 }
 ```
 
-## 15.4 Reject review item
-### HTTP
-`POST /api/v1/review-queue/:id/reject`
-
-## 15.5 Edit then approve
-### HTTP
-`POST /api/v1/review-queue/:id/edit-and-approve`
-
 ### Purpose
-Supports human curation without losing provenance.
+Run a bounded deterministic maintenance pass across governance state.
 
 ---
 
@@ -895,7 +948,7 @@ Provides a Server-Sent Events stream for lightweight workspace update notificati
   - `at`
 - Intended use:
   - keep `Recent` and similar live surfaces responsive without background polling
-  - react to writes such as node creation, activity append, review action, settings changes, or workspace switching
+  - react to writes such as node creation, activity append, governance recompute, settings changes, or workspace switching
 - Auth:
   - non-browser clients in bearer mode should still send the normal `Authorization: Bearer ...` header
   - browser `EventSource` clients connect without query-string tokens and are accepted only from loopback origins
@@ -1014,9 +1067,9 @@ Return a detail list for pending, stale, or failed semantic indexing items witho
 Keep settings patchable in small subsets.
 Avoid giant replace-whole-config behavior.
 
-Useful review-related settings:
-- `review.autoApproveLowRisk`: boolean toggle for letting low-risk agent-authored nodes bypass review
-- `review.trustedSourceToolNames`: array of trusted agent `toolName` values that may bypass review for agent-authored notes, decisions, and default relations to `active`
+Legacy governance-related settings:
+- `review.autoApproveLowRisk`: retained only for backward-compatible policy reads during migration
+- `review.trustedSourceToolNames`: retained only for backward-compatible trusted-source policy reads during migration
 
 ---
 
@@ -1028,17 +1081,16 @@ The CLI should be a thin ergonomic layer over the API.
 - `pnw health`
 - `pnw search <query>`
 - `pnw get <node-id>`
-- `pnw related <node-id>`
+- `pnw neighborhood <node-id>`
+- `pnw related <node-id>` (legacy compatibility alias)
 - `pnw context <target-id>`
 - `pnw create`
 - `pnw append`
 - `pnw link`
 - `pnw attach`
-- `pnw review list`
-- `pnw review show <id>`
-- `pnw review approve <id>`
-- `pnw review reject <id>`
-- `pnw review edit-and-approve <id>`
+- `pnw governance issues`
+- `pnw governance show --entity-type node --entity-id <id>`
+- `pnw governance recompute`
 - `pnw workspace current`
 - `pnw workspace list`
 - `pnw workspace create`
@@ -1101,7 +1153,7 @@ These operations currently create provenance events:
 - update relation status
 - append activity
 - attach artifact
-- approve/reject review item
+- inspect governance issue state
 
 ### Provenance minimum fields
 - entity type
@@ -1123,7 +1175,7 @@ The API should protect the hot path.
 ### Hot path endpoints
 - search
 - get node summaries
-- list related nodes
+- list node neighborhood items
 - get recent activity digest
 - get open questions
 - get decision set
@@ -1162,7 +1214,7 @@ Add these only if real integration pressure justifies them.
 4. retrieval summary/digest endpoints
 5. context bundle endpoint
 6. CLI wrapper
-7. review queue endpoints
+7. governance endpoints
 8. integrations/settings endpoints
 
 This keeps the API practical and aligned with the build plan.

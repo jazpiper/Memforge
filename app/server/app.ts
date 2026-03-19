@@ -4,32 +4,36 @@ import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import mime from "mime-types";
 import {
+  activitySearchSchema,
   appendActivitySchema,
   appendRelationUsageEventSchema,
+  appendSearchFeedbackSchema,
   attachArtifactSchema,
   buildContextBundleSchema,
   createWorkspaceSchema,
   createNodeSchema,
   createRelationSchema,
+  governanceIssuesQuerySchema,
   nodeSearchSchema,
   openWorkspaceSchema,
   reindexInferredRelationsSchema,
+  recomputeGovernanceSchema,
   recomputeInferredRelationsSchema,
   relationTypes,
   registerIntegrationSchema,
-  reviewActionSchema,
   sourceSchema,
   upsertInferredRelationSchema,
   updateIntegrationSchema,
   updateNodeSchema,
   updateRelationSchema,
-  updateSettingsSchema
+  updateSettingsSchema,
+  workspaceSearchSchema
 } from "../shared/contracts.js";
 import type { ApiEnvelope, ApiErrorEnvelope, InferredRelationRecord, NodeRecord } from "../shared/types.js";
 import { AppError } from "./errors.js";
 import {
-  applyReviewDecision,
   maybeCreatePromotionCandidate,
+  recomputeAutomaticGovernance,
   resolveGovernancePolicy,
   resolveNodeGovernance,
   resolveRelationStatus,
@@ -41,6 +45,7 @@ import {
   buildCandidateRelationBonusMap,
   buildContextBundle,
   buildNeighborhoodItems,
+  buildTargetRelatedRetrievalItems,
   bundleAsMarkdown,
   computeRankCandidateScore,
   shouldUseSemanticCandidateAugmentation
@@ -55,16 +60,9 @@ const updateNodeRequestSchema = updateNodeSchema.extend({
 });
 
 function parseRelationTypesQuery(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) {
-    return undefined;
-  }
+  const items = parseCommaSeparatedValues(value)?.filter((item): item is (typeof relationTypes)[number] => relationTypeSet.has(item));
 
-  const items = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item): item is (typeof relationTypes)[number] => relationTypeSet.has(item));
-
-  return items.length ? items : undefined;
+  return items?.length ? items : undefined;
 }
 
 function isAllowedBrowserOrigin(origin: string): boolean {
@@ -74,6 +72,50 @@ function isAllowedBrowserOrigin(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+type SemanticIssueStatus = "pending" | "stale" | "failed";
+
+function parseCommaSeparatedValues(value: unknown): string[] | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length ? items : undefined;
+}
+
+function parseClampedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const numericValue =
+    typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numericValue), min), max);
+}
+
+function parseSemanticIssueStatuses(value: unknown): SemanticIssueStatus[] | undefined {
+  const statuses = parseCommaSeparatedValues(value)?.filter(
+    (status): status is SemanticIssueStatus => status === "pending" || status === "stale" || status === "failed"
+  );
+  return statuses?.length ? statuses : undefined;
+}
+
+function readRequestParam(value: string | string[] | undefined): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value[0] ?? "";
+  }
+
+  return "";
 }
 
 type AutoRecomputeConfig = {
@@ -235,12 +277,13 @@ function buildServiceIndex(workspaceInfo: {
     ],
     capabilities: [
       "search nodes by keyword and structured filters",
-      "read node detail, related nodes, activities, and artifacts",
+      "read node detail, related nodes, activities, artifacts, and governance summaries",
       "create nodes, relations, activities, and artifacts with provenance",
       "upsert inferred relations and append relation usage signals for retrieval feedback",
+      "append search-result usefulness feedback for future ranking and governance",
+      "recompute automatic governance and inspect contested or low-confidence items",
       "recompute inferred relation scores in an explicit maintenance pass",
       "inspect semantic indexing status and queue bounded reindex passes",
-      "list and act on review queue items",
       "build compact context bundles for coding/research/writing",
       "create or open workspaces without restarting the server"
     ],
@@ -249,9 +292,10 @@ function buildServiceIndex(workspaceInfo: {
       examples: [
         "pnw health --api http://127.0.0.1:8787/api/v1",
         "pnw search --api http://127.0.0.1:8787/api/v1 \"agent memory\"",
+        "pnw search workspace --api http://127.0.0.1:8787/api/v1 \"cleanup\"",
         "pnw create --api http://127.0.0.1:8787/api/v1 --type note --title \"Idea\" --body \"...\"",
         "pnw context --api http://127.0.0.1:8787/api/v1 <node-id> --mode compact --preset for-coding",
-        "pnw review list --api http://127.0.0.1:8787/api/v1 --status pending",
+        "pnw governance issues --api http://127.0.0.1:8787/api/v1",
         "pnw workspace list --api http://127.0.0.1:8787/api/v1"
       ]
     },
@@ -333,6 +377,21 @@ function buildServiceIndex(workspaceInfo: {
       },
       {
         method: "POST",
+        path: "/api/v1/search-feedback-events",
+        purpose: "Append a usefulness signal for a search result after it helped or failed a task."
+      },
+      {
+        method: "POST",
+        path: "/api/v1/activities/search",
+        purpose: "Search activities by keyword, provenance, target node, or time window."
+      },
+      {
+        method: "POST",
+        path: "/api/v1/search",
+        purpose: "Search nodes, activities, or both through a single workspace-wide endpoint."
+      },
+      {
+        method: "POST",
         path: "/api/v1/inferred-relations/recompute",
         purpose: "Run an explicit maintenance pass to refresh inferred relation scores from usage events."
       },
@@ -361,8 +420,18 @@ function buildServiceIndex(workspaceInfo: {
       },
       {
         method: "GET",
-        path: "/api/v1/review-queue?status=pending",
-        purpose: "Read pending governance items."
+        path: "/api/v1/governance/issues?limit=20",
+        purpose: "Read contested or low-confidence governance issues."
+      },
+      {
+        method: "GET",
+        path: "/api/v1/governance/state/node/:id",
+        purpose: "Read the current automatic governance state for a node."
+      },
+      {
+        method: "POST",
+        path: "/api/v1/governance/recompute",
+        purpose: "Run a bounded automatic governance recompute pass."
       },
       {
         method: "POST",
@@ -370,7 +439,6 @@ function buildServiceIndex(workspaceInfo: {
         purpose: "Build compact context bundles for downstream agents.",
         requestExample: {
           target: {
-            type: "node",
             id: "node_..."
           },
           mode: "compact",
@@ -408,7 +476,7 @@ function buildServiceIndex(workspaceInfo: {
       fullApiContract: "docs/api.md"
     },
     notes: [
-      "Do not expect GET /api/v1/nodes/search. Search is POST-based.",
+      "Do not expect GET search endpoints. Search is POST-based for nodes, activities, and workspace-wide queries.",
       "Reuse the existing running local service instead of starting a second instance when possible.",
       "All durable writes should include a source object for provenance.",
       "Semantic reindex endpoints only queue work. They do not generate embeddings inline on the write path."
@@ -807,7 +875,7 @@ export function createMemforgeApp(params: {
       };
 
       if (reason === "manual" && pending.relationIds.length === 0) {
-        const totalRelations = currentRepository().countInferredRelations();
+        const totalRelations = currentRepository().countInferredRelations("active");
         if (totalRelations === 0) {
           currentRepository().setSetting("relations.autoRecompute.lastRunAt", startedAt);
           return aggregate;
@@ -987,6 +1055,58 @@ export function createMemforgeApp(params: {
     }
   }
 
+  function refreshWorkspaceState() {
+    hydrateAutoRecomputeState();
+    hydrateAutoRefreshState();
+    hydrateAutoSemanticIndexState();
+  }
+
+  function buildWorkspaceMutationPayload(workspace: unknown) {
+    return {
+      workspace,
+      current: currentWorkspaceInfo(),
+      items: params.workspaceSessionManager.listWorkspaces()
+    };
+  }
+
+  function commitWorkspaceMutation(response: Response, workspace: unknown, reason: string, statusCode = 200) {
+    refreshWorkspaceState();
+    broadcastWorkspaceEvent({
+      reason,
+      entityType: "workspace"
+    });
+    response.status(statusCode).json(envelope(response.locals.requestId, buildWorkspaceMutationPayload(workspace)));
+  }
+
+  function recomputeGovernanceForEntities(entityType: "node" | "relation", entityIds: string[]) {
+    const repository = currentRepository();
+    if (!entityIds.length) {
+      return {
+        updatedCount: 0,
+        promotedCount: 0,
+        contestedCount: 0,
+        items: []
+      };
+    }
+    return recomputeAutomaticGovernance(repository, {
+      entityType,
+      entityIds,
+      limit: Math.max(entityIds.length, 1)
+    });
+  }
+
+  function buildGovernancePayload(
+    repository: ReturnType<typeof currentRepository>,
+    entityType: "node" | "relation",
+    entityId: string,
+    preferredState?: ReturnType<typeof repository.getGovernanceStateNullable> | null
+  ) {
+    return {
+      state: preferredState ?? repository.getGovernanceStateNullable(entityType, entityId),
+      events: repository.listGovernanceEvents(entityType, entityId, 10)
+    };
+  }
+
   hydrateAutoRecomputeState();
   hydrateAutoRefreshState();
   hydrateAutoSemanticIndexState();
@@ -1065,16 +1185,9 @@ export function createMemforgeApp(params: {
   });
 
   app.get("/api/v1/semantic/issues", (request, response) => {
-    const rawLimit = typeof request.query.limit === "string" ? Number.parseInt(request.query.limit, 10) : 5;
-    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 25) : 5;
+    const limit = parseClampedNumber(request.query.limit, 5, 1, 25);
     const cursor = typeof request.query.cursor === "string" && request.query.cursor.trim() ? request.query.cursor : null;
-    const statuses =
-      typeof request.query.statuses === "string" && request.query.statuses.trim()
-        ? request.query.statuses
-            .split(",")
-            .map((value) => value.trim())
-            .filter((value): value is "pending" | "stale" | "failed" => value === "pending" || value === "stale" || value === "failed")
-        : undefined;
+    const statuses = parseSemanticIssueStatuses(request.query.statuses);
     response.json(
       envelope(
         response.locals.requestId,
@@ -1088,10 +1201,7 @@ export function createMemforgeApp(params: {
   });
 
   app.post("/api/v1/semantic/reindex", (request, response) => {
-    const limit =
-      typeof request.body?.limit === "number" && Number.isFinite(request.body.limit)
-        ? Math.max(1, Math.min(1000, Math.trunc(request.body.limit)))
-        : 250;
+    const limit = parseClampedNumber(request.body?.limit, 250, 1, 1000);
     const result = currentRepository().queueSemanticReindex(limit);
     broadcastWorkspaceEvent({
       reason: "semantic.reindex_queued",
@@ -1150,44 +1260,28 @@ export function createMemforgeApp(params: {
   app.post("/api/v1/workspaces", (request, response) => {
     const input = createWorkspaceSchema.parse(request.body ?? {});
     const workspace = params.workspaceSessionManager.createWorkspace(input.rootPath, input.workspaceName);
-    hydrateAutoRecomputeState();
-    hydrateAutoRefreshState();
-    hydrateAutoSemanticIndexState();
-    broadcastWorkspaceEvent({
-      reason: "workspace.created",
-      entityType: "workspace"
-    });
-    response.status(201).json(
-      envelope(response.locals.requestId, {
-        workspace,
-        current: currentWorkspaceInfo(),
-        items: params.workspaceSessionManager.listWorkspaces()
-      })
-    );
+    commitWorkspaceMutation(response, workspace, "workspace.created", 201);
   });
 
   app.post("/api/v1/workspaces/open", (request, response) => {
     const input = openWorkspaceSchema.parse(request.body ?? {});
     const workspace = params.workspaceSessionManager.openWorkspace(input.rootPath);
-    hydrateAutoRecomputeState();
-    hydrateAutoRefreshState();
-    hydrateAutoSemanticIndexState();
-    broadcastWorkspaceEvent({
-      reason: "workspace.opened",
-      entityType: "workspace"
-    });
-    response.json(
-      envelope(response.locals.requestId, {
-        workspace,
-        current: currentWorkspaceInfo(),
-        items: params.workspaceSessionManager.listWorkspaces()
-      })
-    );
+    commitWorkspaceMutation(response, workspace, "workspace.opened");
   });
 
   app.post("/api/v1/nodes/search", (request, response) => {
     const input = nodeSearchSchema.parse(request.body ?? {});
     response.json(envelope(response.locals.requestId, currentRepository().searchNodes(input)));
+  });
+
+  app.post("/api/v1/activities/search", (request, response) => {
+    const input = activitySearchSchema.parse(request.body ?? {});
+    response.json(envelope(response.locals.requestId, currentRepository().searchActivities(input)));
+  });
+
+  app.post("/api/v1/search", (request, response) => {
+    const input = workspaceSearchSchema.parse(request.body ?? {});
+    response.json(envelope(response.locals.requestId, currentRepository().searchWorkspace(input)));
   });
 
   app.get("/api/v1/nodes/:id", (request, response) => {
@@ -1199,7 +1293,8 @@ export function createMemforgeApp(params: {
         related: repository.listRelatedNodes(node.id),
         activities: repository.listNodeActivities(node.id, 10),
         artifacts: repository.listArtifacts(node.id),
-        provenance: repository.listProvenance("node", node.id)
+        provenance: repository.listProvenance("node", node.id),
+        governance: buildGovernancePayload(repository, "node", node.id)
       })
     );
   });
@@ -1225,19 +1320,7 @@ export function createMemforgeApp(params: {
         reason: governance.reason
       }
     });
-    let reviewItem = null;
-    if (governance.createReview) {
-      reviewItem = repository.createReviewItem({
-        entityType: "node",
-        entityId: node.id,
-        reviewType: governance.reviewType ?? "node_promotion",
-        proposedBy: input.source.actorLabel,
-        notes: governance.reason,
-        metadata: {
-          nodeType: node.type
-        }
-      });
-    }
+    const governanceResult = recomputeGovernanceForEntities("node", [node.id]);
     queueInferredRefresh(node.id, "node-write");
     scheduleAutoSemanticIndex();
     broadcastWorkspaceEvent({
@@ -1245,7 +1328,17 @@ export function createMemforgeApp(params: {
       entityType: "node",
       entityId: node.id
     });
-    response.status(201).json(envelope(response.locals.requestId, { node, reviewItem }));
+    response.status(201).json(
+      envelope(response.locals.requestId, {
+        node: repository.getNode(node.id),
+        governance: buildGovernancePayload(
+          repository,
+          "node",
+          node.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("node", node.id)
+        )
+      })
+    );
   });
 
   app.patch("/api/v1/nodes/:id", (request, response) => {
@@ -1262,6 +1355,7 @@ export function createMemforgeApp(params: {
         fields: Object.keys(input).filter((key) => key !== "source")
       }
     });
+    const governanceResult = recomputeGovernanceForEntities("node", [node.id]);
     queueInferredRefresh(node.id, "node-write");
     scheduleAutoSemanticIndex();
     broadcastWorkspaceEvent({
@@ -1269,23 +1363,34 @@ export function createMemforgeApp(params: {
       entityType: "node",
       entityId: node.id
     });
-    response.json(envelope(response.locals.requestId, { node }));
+    response.json(
+      envelope(response.locals.requestId, {
+        node: repository.getNode(node.id),
+        governance: buildGovernancePayload(
+          repository,
+          "node",
+          node.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("node", node.id)
+        )
+      })
+    );
   });
 
   app.post("/api/v1/nodes/:id/refresh-summary", (request, response) => {
     const repository = currentRepository();
-    const body = reviewActionSchema.pick({ source: true }).parse(request.body ?? {});
+    const source = sourceSchema.parse(request.body?.source ?? request.body ?? {});
     const node = repository.refreshNodeSummary(request.params.id);
     repository.recordProvenance({
       entityType: "node",
       entityId: node.id,
       operationType: "update",
-      source: body.source,
+      source,
       metadata: {
         fields: ["summary"],
         reason: "summary.refreshed"
       }
     });
+    const governanceResult = recomputeGovernanceForEntities("node", [node.id]);
     queueInferredRefresh(node.id, "node-write");
     scheduleAutoSemanticIndex();
     broadcastWorkspaceEvent({
@@ -1293,19 +1398,30 @@ export function createMemforgeApp(params: {
       entityType: "node",
       entityId: node.id
     });
-    response.json(envelope(response.locals.requestId, { node }));
+    response.json(
+      envelope(response.locals.requestId, {
+        node: repository.getNode(node.id),
+        governance: buildGovernancePayload(
+          repository,
+          "node",
+          node.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("node", node.id)
+        )
+      })
+    );
   });
 
   app.post("/api/v1/nodes/:id/archive", (request, response) => {
     const repository = currentRepository();
-    const body = reviewActionSchema.pick({ source: true }).parse(request.body ?? {});
+    const source = sourceSchema.parse(request.body?.source ?? request.body ?? {});
     const node = repository.archiveNode(request.params.id);
     repository.recordProvenance({
       entityType: "node",
       entityId: node.id,
       operationType: "archive",
-      source: body.source
+      source
     });
+    const governanceResult = recomputeGovernanceForEntities("node", [node.id]);
     queueInferredRefresh(node.id, "node-write");
     scheduleAutoSemanticIndex();
     broadcastWorkspaceEvent({
@@ -1313,17 +1429,20 @@ export function createMemforgeApp(params: {
       entityType: "node",
       entityId: node.id
     });
-    response.json(envelope(response.locals.requestId, { node }));
+    response.json(
+      envelope(response.locals.requestId, {
+        node: repository.getNode(node.id),
+        governance: buildGovernancePayload(
+          repository,
+          "node",
+          node.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("node", node.id)
+        )
+      })
+    );
   });
 
   app.get("/api/v1/nodes/:id/related", (request, response) => {
-    const depth = Number(request.query.depth ?? 1);
-    const types = parseRelationTypesQuery(request.query.types);
-    const items = currentRepository().listRelatedNodes(request.params.id, depth, types);
-    response.json(envelope(response.locals.requestId, { items }));
-  });
-
-  app.get("/api/v1/nodes/:id/neighborhood", (request, response) => {
     const depth = Number(request.query.depth ?? 1);
     if (depth !== 1) {
       throw new AppError(400, "INVALID_INPUT", "Only depth=1 is supported in the hot path.");
@@ -1333,8 +1452,23 @@ export function createMemforgeApp(params: {
       request.query.include_inferred === "1" ||
       request.query.include_inferred === "true" ||
       request.query.include_inferred === undefined;
-    const requestedMaxInferred = Number(request.query.max_inferred ?? 4);
-    const maxInferred = Number.isFinite(requestedMaxInferred) ? Math.max(0, Math.min(requestedMaxInferred, 10)) : 4;
+    const maxInferred = parseClampedNumber(request.query.max_inferred, 4, 0, 10);
+    const items = buildNeighborhoodItems(currentRepository(), request.params.id, {
+      relationTypes: types,
+      includeInferred,
+      maxInferred
+    });
+    response.json(envelope(response.locals.requestId, { items }));
+  });
+
+  app.get("/api/v1/nodes/:id/neighborhood", (request, response) => {
+    const depth = Number(request.query.depth ?? 1);
+    if (depth !== 1) {
+      throw new AppError(400, "INVALID_INPUT", "Only depth=1 is supported in the hot path.");
+    }
+    const types = parseRelationTypesQuery(request.query.types);
+    const includeInferred = request.query.include_inferred === "1" || request.query.include_inferred === "true" || request.query.include_inferred === undefined;
+    const maxInferred = parseClampedNumber(request.query.max_inferred, 4, 0, 10);
     const items = buildNeighborhoodItems(currentRepository(), request.params.id, {
       relationTypes: types,
       includeInferred,
@@ -1360,23 +1494,24 @@ export function createMemforgeApp(params: {
       operationType: "create",
       source: input.source
     });
-    let reviewItem = null;
-    if (governance.createReview) {
-      reviewItem = repository.createReviewItem({
-        entityType: "relation",
-        entityId: relation.id,
-        reviewType: "relation_suggestion",
-        proposedBy: input.source.actorLabel,
-        notes: "Agent-created relations stay suggested until approved."
-      });
-    }
+    const governanceResult = recomputeGovernanceForEntities("relation", [relation.id]);
     queueInferredRefreshForNodes([relation.fromNodeId, relation.toNodeId], "node-write");
     broadcastWorkspaceEvent({
       reason: "relation.created",
       entityType: "relation",
       entityId: relation.id
     });
-    response.status(201).json(envelope(response.locals.requestId, { relation, reviewItem }));
+    response.status(201).json(
+      envelope(response.locals.requestId, {
+        relation: repository.getRelation(relation.id),
+        governance: buildGovernancePayload(
+          repository,
+          "relation",
+          relation.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("relation", relation.id)
+        )
+      })
+    );
   });
 
   app.post("/api/v1/inferred-relations", (request, response) => {
@@ -1390,18 +1525,58 @@ export function createMemforgeApp(params: {
   });
 
   app.post("/api/v1/relation-usage-events", (request, response) => {
-    const event = currentRepository().appendRelationUsageEvent(appendRelationUsageEventSchema.parse(request.body ?? {}));
+    const repository = currentRepository();
+    const event = repository.appendRelationUsageEvent(appendRelationUsageEventSchema.parse(request.body ?? {}));
     markPendingRelationUsage({
       relationId: event.relationId,
       createdAt: event.createdAt
     });
     scheduleAutoRecompute();
+    const governanceResult = recomputeGovernanceForEntities("relation", [event.relationId]);
     broadcastWorkspaceEvent({
       reason: "relation-usage.appended",
       entityType: "relation",
       entityId: event.relationId
     });
-    response.status(201).json(envelope(response.locals.requestId, { event }));
+    response.status(201).json(
+      envelope(response.locals.requestId, {
+        event,
+        governance: buildGovernancePayload(
+          repository,
+          "relation",
+          event.relationId,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("relation", event.relationId)
+        )
+      })
+    );
+  });
+
+  app.post("/api/v1/search-feedback-events", (request, response) => {
+    const repository = currentRepository();
+    const event = repository.appendSearchFeedbackEvent(appendSearchFeedbackSchema.parse(request.body ?? {}));
+    const governanceResult =
+      event.resultType === "node"
+        ? recomputeGovernanceForEntities("node", [event.resultId])
+        : { items: [] };
+    broadcastWorkspaceEvent({
+      reason: "search-feedback.appended",
+      entityType: event.resultType === "activity" ? "activity" : "node",
+      entityId: event.resultId
+    });
+    response.status(201).json(
+      envelope(response.locals.requestId, {
+        event,
+        governance:
+          event.resultType === "node"
+            ? buildGovernancePayload(
+                repository,
+                "node",
+                event.resultId,
+                governanceResult.items[0] ?? repository.getGovernanceStateNullable("node", event.resultId)
+              )
+            : null
+      })
+    );
   });
 
   app.post("/api/v1/inferred-relations/recompute", async (request, response) => {
@@ -1442,13 +1617,24 @@ export function createMemforgeApp(params: {
       source: input.source,
       metadata: input.metadata
     });
+    const governanceResult = recomputeGovernanceForEntities("relation", [relation.id]);
     queueInferredRefreshForNodes([relation.fromNodeId, relation.toNodeId], "node-write");
     broadcastWorkspaceEvent({
       reason: "relation.updated",
       entityType: "relation",
       entityId: relation.id
     });
-    response.json(envelope(response.locals.requestId, { relation }));
+    response.json(
+      envelope(response.locals.requestId, {
+        relation: repository.getRelation(relation.id),
+        governance: buildGovernancePayload(
+          repository,
+          "relation",
+          relation.id,
+          governanceResult.items[0] ?? repository.getGovernanceStateNullable("relation", relation.id)
+        )
+      })
+    );
   });
 
   app.get("/api/v1/nodes/:id/activities", (request, response) => {
@@ -1468,7 +1654,7 @@ export function createMemforgeApp(params: {
       promotion.suggestedNodeId
         ? {
             ...input,
-            body: `Durable agent summary promoted to suggested node ${promotion.suggestedNodeId} for review.`,
+            body: `Durable agent summary promoted to suggested node ${promotion.suggestedNodeId} for automatic governance.`,
             metadata: {
               ...input.metadata,
               promotedToSuggested: true,
@@ -1487,6 +1673,9 @@ export function createMemforgeApp(params: {
         promotedToSuggested: Boolean(promotion.suggestedNodeId)
       }
     });
+    const governanceResult = promotion.suggestedNodeId
+      ? recomputeGovernanceForEntities("node", [promotion.suggestedNodeId])
+      : { items: [] };
     queueInferredRefresh(activity.targetNodeId, "activity-append");
     scheduleAutoSemanticIndex();
     broadcastWorkspaceEvent({
@@ -1497,7 +1686,11 @@ export function createMemforgeApp(params: {
     response.status(201).json(
       envelope(response.locals.requestId, {
         activity,
-        promotion
+        promotion,
+        governance:
+          promotion.suggestedNodeId && governanceResult.items[0]
+            ? buildGovernancePayload(repository, "node", promotion.suggestedNodeId, governanceResult.items[0])
+            : null
       })
     );
   });
@@ -1556,39 +1749,19 @@ export function createMemforgeApp(params: {
 
   app.get("/api/v1/retrieval/decisions/:targetId", (request, response) => {
     const repository = currentRepository();
-    const target = repository.getNode(request.params.targetId);
-    const related = buildNeighborhoodItems(repository, target.id, {
-      includeInferred: true,
-      maxInferred: 4
-    }).map((item) => item.node.id);
-    const items = repository
-      .searchNodes({
-        query: "",
-        filters: { types: ["decision"], status: ["active", "review"] },
-        limit: 20,
-        offset: 0,
-        sort: "updated_at"
-      })
-      .items.filter((item) => item.id === target.id || related.includes(item.id));
+    const items = buildTargetRelatedRetrievalItems(repository, readRequestParam(request.params.targetId), {
+      types: ["decision"],
+      status: ["active", "contested"]
+    });
     response.json(envelope(response.locals.requestId, { items }));
   });
 
   app.get("/api/v1/retrieval/open-questions/:targetId", (request, response) => {
     const repository = currentRepository();
-    const target = repository.getNode(request.params.targetId);
-    const related = buildNeighborhoodItems(repository, target.id, {
-      includeInferred: true,
-      maxInferred: 4
-    }).map((item) => item.node.id);
-    const items = repository
-      .searchNodes({
-        query: "",
-        filters: { types: ["question"], status: ["active", "draft", "review"] },
-        limit: 20,
-        offset: 0,
-        sort: "updated_at"
-      })
-      .items.filter((item) => item.id === target.id || related.includes(item.id));
+    const items = buildTargetRelatedRetrievalItems(repository, readRequestParam(request.params.targetId), {
+      types: ["question"],
+      status: ["active", "draft", "contested"]
+    });
     response.json(envelope(response.locals.requestId, { items }));
   });
 
@@ -1599,11 +1772,7 @@ export function createMemforgeApp(params: {
     const preset = typeof request.body?.preset === "string" ? request.body.preset : "for-assistant";
     const targetNodeId = typeof request.body?.targetNodeId === "string" ? request.body.targetNodeId : null;
     const relationBonuses = targetNodeId ? buildCandidateRelationBonusMap(repository, targetNodeId, candidateNodeIds) : new Map();
-    const candidates = candidateNodeIds
-      .map((id: string) => repository.getNode(id))
-      .map((node) => {
-        return node;
-      });
+    const candidates = candidateNodeIds.map((id: string) => repository.getNode(id));
     const semanticAugmentation = repository.getSemanticAugmentationSettings();
     const semanticBonuses = shouldUseSemanticCandidateAugmentation(query, candidates)
       ? buildSemanticCandidateBonusMap(await repository.rankSemanticCandidates(query, candidateNodeIds), semanticAugmentation)
@@ -1661,82 +1830,42 @@ export function createMemforgeApp(params: {
     response.json(envelope(response.locals.requestId, { format, output, bundle }));
   });
 
-  app.get("/api/v1/review-queue", (request, response) => {
-    const status = typeof request.query.status === "string" ? request.query.status : "pending";
-    const limit = Number(request.query.limit ?? 20);
-    const reviewType = typeof request.query.review_type === "string" ? request.query.review_type : undefined;
+  app.get("/api/v1/governance/issues", (request, response) => {
+    const states = parseCommaSeparatedValues(request.query.states)?.filter(
+      (state): state is "healthy" | "low_confidence" | "contested" =>
+        state === "healthy" || state === "low_confidence" || state === "contested"
+    );
+    const input = governanceIssuesQuerySchema.parse({
+      states,
+      limit: Number(request.query.limit ?? 20)
+    });
     response.json(
       envelope(response.locals.requestId, {
-        items: currentRepository().listReviewItems(status, limit, reviewType)
+        items: currentRepository().listGovernanceIssues(input.limit, input.states)
       })
     );
   });
 
-  app.get("/api/v1/review-queue/:id", (request, response) => {
-    const repository = currentRepository();
-    const review = repository.getReviewItem(request.params.id);
-    let entity: unknown = null;
-    if (review.entityType === "node") {
-      entity = repository.getNode(review.entityId);
-    } else if (review.entityType === "relation") {
-      entity = repository.getRelation(review.entityId);
+  app.get("/api/v1/governance/state/:entityType/:id", (request, response) => {
+    const entityType = readRequestParam(request.params.entityType);
+    if (entityType !== "node" && entityType !== "relation") {
+      throw new AppError(400, "INVALID_INPUT", "entityType must be node or relation");
     }
-    response.json(envelope(response.locals.requestId, { review, entity }));
+    const repository = currentRepository();
+    response.json(
+      envelope(response.locals.requestId, {
+        state: repository.getGovernanceStateNullable(entityType, request.params.id),
+        events: repository.listGovernanceEvents(entityType, request.params.id, 20)
+      })
+    );
   });
 
-  app.post("/api/v1/review-queue/:id/approve", (request, response) => {
-    const repository = currentRepository();
-    const input = reviewActionSchema.parse(request.body ?? {});
-    const review = repository.getReviewItem(request.params.id);
-    const result = applyReviewDecision(repository, request.params.id, "approve", input);
-    if (review.entityType === "relation") {
-      const relation = repository.getRelation(review.entityId);
-      queueInferredRefreshForNodes([relation.fromNodeId, relation.toNodeId], "node-write");
-    } else if (review.entityType === "node") {
-      queueInferredRefresh(review.entityId, "node-write");
-    }
+  app.post("/api/v1/governance/recompute", (request, response) => {
+    const input = recomputeGovernanceSchema.parse(request.body ?? {});
+    const result = recomputeAutomaticGovernance(currentRepository(), input);
     broadcastWorkspaceEvent({
-      reason: "review.approved",
-      entityType: "review",
-      entityId: request.params.id
-    });
-    response.json(envelope(response.locals.requestId, result));
-  });
-
-  app.post("/api/v1/review-queue/:id/reject", (request, response) => {
-    const repository = currentRepository();
-    const input = reviewActionSchema.parse(request.body ?? {});
-    const review = repository.getReviewItem(request.params.id);
-    const result = applyReviewDecision(repository, request.params.id, "reject", input);
-    if (review.entityType === "relation") {
-      const relation = repository.getRelation(review.entityId);
-      queueInferredRefreshForNodes([relation.fromNodeId, relation.toNodeId], "node-write");
-    } else if (review.entityType === "node") {
-      queueInferredRefresh(review.entityId, "node-write");
-    }
-    broadcastWorkspaceEvent({
-      reason: "review.rejected",
-      entityType: "review",
-      entityId: request.params.id
-    });
-    response.json(envelope(response.locals.requestId, result));
-  });
-
-  app.post("/api/v1/review-queue/:id/edit-and-approve", (request, response) => {
-    const repository = currentRepository();
-    const input = reviewActionSchema.parse(request.body ?? {});
-    const review = repository.getReviewItem(request.params.id);
-    const result = applyReviewDecision(repository, request.params.id, "edit-and-approve", input);
-    if (review.entityType === "relation") {
-      const relation = repository.getRelation(review.entityId);
-      queueInferredRefreshForNodes([relation.fromNodeId, relation.toNodeId], "node-write");
-    } else if (review.entityType === "node") {
-      queueInferredRefresh(review.entityId, "node-write");
-    }
-    broadcastWorkspaceEvent({
-      reason: "review.edit_and_approved",
-      entityType: "review",
-      entityId: request.params.id
+      reason: "governance.recomputed",
+      entityType: input.entityType ?? "settings"
     });
     response.json(envelope(response.locals.requestId, result));
   });
@@ -1768,13 +1897,7 @@ export function createMemforgeApp(params: {
   });
 
   app.get("/api/v1/settings", (request, response) => {
-    const keys =
-      typeof request.query.keys === "string"
-        ? request.query.keys
-            .split(",")
-            .map((key) => key.trim())
-            .filter(Boolean)
-        : undefined;
+    const keys = parseCommaSeparatedValues(request.query.keys);
     response.json(envelope(response.locals.requestId, { values: currentRepository().getSettings(keys) }));
   });
 

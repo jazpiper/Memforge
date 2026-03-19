@@ -4,14 +4,17 @@ import type {
   BundlePreset,
   Canonicality,
   InferredRelationStatus,
+  GovernanceEntityType,
+  GovernanceEventType,
+  GovernanceState,
   NodeStatus,
   NodeType,
   RelationSource,
   RelationStatus,
   RelationType,
   RelationUsageEventType,
-  ReviewStatus,
-  ReviewType
+  SearchFeedbackResultType,
+  SearchFeedbackVerdict
 } from "./contracts.js";
 
 export type JsonMap = Record<string, unknown>;
@@ -161,6 +164,63 @@ export interface RelationUsageSummary {
   lastEventAt: string | null;
 }
 
+export interface SearchFeedbackEventRecord {
+  id: string;
+  resultType: SearchFeedbackResultType;
+  resultId: string;
+  verdict: SearchFeedbackVerdict;
+  query: string | null;
+  sessionId: string | null;
+  runId: string | null;
+  actorType: string | null;
+  actorLabel: string | null;
+  toolName: string | null;
+  confidence: number;
+  delta: number;
+  createdAt: string;
+  metadata: JsonMap;
+}
+
+export interface SearchFeedbackSummary {
+  resultType: SearchFeedbackResultType;
+  resultId: string;
+  totalDelta: number;
+  eventCount: number;
+  usefulCount: number;
+  notUsefulCount: number;
+  uncertainCount: number;
+  lastEventAt: string | null;
+}
+
+export interface GovernanceEventRecord {
+  id: string;
+  entityType: GovernanceEntityType;
+  entityId: string;
+  eventType: GovernanceEventType;
+  previousState: GovernanceState | null;
+  nextState: GovernanceState;
+  confidence: number;
+  reason: string;
+  createdAt: string;
+  metadata: JsonMap;
+}
+
+export interface GovernanceStateRecord {
+  entityType: GovernanceEntityType;
+  entityId: string;
+  state: GovernanceState;
+  confidence: number;
+  reasons: string[];
+  lastEvaluatedAt: string;
+  lastTransitionAt: string;
+  metadata: JsonMap;
+}
+
+export interface GovernanceIssueItem extends GovernanceStateRecord {
+  title: string | null;
+  subtitle: string | null;
+}
+
 export interface InferredRelationRecomputeResult {
   updatedCount: number;
   expiredCount: number;
@@ -201,18 +261,6 @@ export interface ProvenanceRecord {
   metadata: JsonMap;
 }
 
-export interface ReviewQueueRecord {
-  id: string;
-  entityType: string;
-  entityId: string;
-  reviewType: ReviewType;
-  proposedBy: string | null;
-  createdAt: string;
-  status: ReviewStatus;
-  notes: string | null;
-  metadata: JsonMap;
-}
-
 export interface IntegrationRecord {
   id: string;
   name: string;
@@ -234,6 +282,24 @@ export interface SearchResultItem {
   sourceLabel: string | null;
   updatedAt: string;
   tags: string[];
+}
+
+export interface ActivitySearchResultItem {
+  id: string;
+  targetNodeId: string;
+  targetNodeTitle: string | null;
+  targetNodeType: NodeType | null;
+  targetNodeStatus: NodeStatus | null;
+  activityType: ActivityType;
+  body: string | null;
+  sourceLabel: string | null;
+  createdAt: string;
+}
+
+export interface WorkspaceSearchResultItem {
+  resultType: "node" | "activity";
+  node?: SearchResultItem;
+  activity?: ActivitySearchResultItem;
 }
 
 export interface ContextBundleItem {
@@ -270,7 +336,7 @@ export interface NeighborhoodItem {
 
 export interface ContextBundle {
   target: {
-    type: string;
+    type: NodeType;
     id: string;
     title: string | null;
   };

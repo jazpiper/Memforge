@@ -58,10 +58,6 @@ function revealWindow(window: BrowserWindow): void {
   window.focus();
 }
 
-function currentMcpCommand(): string {
-  return app.isPackaged ? "Memforge --mcp-stdio" : `"${process.execPath}" "${app.getAppPath()}" --mcp-stdio`;
-}
-
 function shortenPath(value: string): string {
   const home = os.homedir();
   if (value.startsWith(home)) {
@@ -71,7 +67,32 @@ function shortenPath(value: string): string {
   return value;
 }
 
-function buildTrayIcon(_status: DesktopServiceStatus) {
+function quoteShellArg(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function buildMcpCommand(): string {
+  return app.isPackaged
+    ? "Memforge --mcp-stdio"
+    : `${quoteShellArg(process.execPath)} ${quoteShellArg(app.getAppPath())} --mcp-stdio`;
+}
+
+function buildLauncherScript(commandParts: string[]): string {
+  return `#!/bin/sh
+exec ${commandParts.map(quoteShellArg).join(" ")} "$@"
+`;
+}
+
+function getLiveMainWindow(): BrowserWindow | null {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function isMainWindowVisible(): boolean {
+  const window = getLiveMainWindow();
+  return Boolean(window?.isVisible());
+}
+
+function buildTrayIcon() {
   try {
     const iconPath = resolveBundledPath(...TRAY_ICON_ASSET_PATH);
     const image = nativeImage.createFromPath(iconPath);
@@ -128,7 +149,7 @@ function syncTray(): void {
     return;
   }
 
-  tray.setImage(buildTrayIcon(desktopState.serviceStatus));
+  tray.setImage(buildTrayIcon());
   tray.setTitle(currentTrayTitle());
   tray.setToolTip(
     `${currentStatusHeadline()}${desktopState.apiBase ? ` • ${desktopState.apiBase}` : ""}${desktopState.workspaceName ? ` • ${desktopState.workspaceName}` : ""}`
@@ -170,10 +191,11 @@ function syncTray(): void {
       : []),
     { type: "separator" },
     {
-      label: mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() ? "Hide Memforge" : "Open Memforge",
+      label: isMainWindowVisible() ? "Hide Memforge" : "Open Memforge",
       click: () => {
-        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-          mainWindow.hide();
+        const window = getLiveMainWindow();
+        if (window && window.isVisible()) {
+          window.hide();
           syncTray();
           return;
         }
@@ -204,7 +226,7 @@ function syncTray(): void {
     {
       label: "Copy MCP Command",
       click: () => {
-        clipboard.writeText(currentMcpCommand());
+        clipboard.writeText(buildMcpCommand());
       }
     },
     {
@@ -261,7 +283,7 @@ function createTray(): void {
     return;
   }
 
-  tray = new Tray(buildTrayIcon(desktopState.serviceStatus));
+  tray = new Tray(buildTrayIcon());
   tray.on("click", () => {
     tray?.popUpContextMenu();
   });
@@ -441,20 +463,10 @@ function resolveBundledPath(...parts: string[]): string {
 }
 
 function ensureLauncherScripts(): void {
-  const genericLauncherScript = app.isPackaged
-    ? `#!/bin/sh
-exec "${process.execPath}" "$@"
-`
-    : `#!/bin/sh
-exec "${process.execPath}" "${app.getAppPath()}" "$@"
-`;
-  const mcpLauncherScript = app.isPackaged
-    ? `#!/bin/sh
-exec "${process.execPath}" --mcp-stdio "$@"
-`
-    : `#!/bin/sh
-exec "${process.execPath}" "${app.getAppPath()}" --mcp-stdio "$@"
-`;
+  const genericLauncherScript = buildLauncherScript(app.isPackaged ? [process.execPath] : [process.execPath, app.getAppPath()]);
+  const mcpLauncherScript = buildLauncherScript(
+    app.isPackaged ? [process.execPath, "--mcp-stdio"] : [process.execPath, app.getAppPath(), "--mcp-stdio"]
+  );
 
   for (const [targetPath, contents] of [
     [DESKTOP_COMMAND_SHIM_PATH, genericLauncherScript],
@@ -616,10 +628,11 @@ async function runMcpStdioMode(): Promise<void> {
 }
 
 async function openMainWindow(): Promise<BrowserWindow> {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    revealWindow(mainWindow);
+  const window = getLiveMainWindow();
+  if (window) {
+    revealWindow(window);
     syncTray();
-    return mainWindow;
+    return window;
   }
 
   await createMainWindow();
@@ -646,8 +659,9 @@ async function restartLocalService(): Promise<void> {
   }
 
   const previousApiBase = desktopState.apiBase;
-  const hadWindow = Boolean(mainWindow && !mainWindow.isDestroyed());
-  const wasVisible = Boolean(mainWindow?.isVisible());
+  const existingWindow = getLiveMainWindow();
+  const hadWindow = Boolean(existingWindow);
+  const wasVisible = Boolean(existingWindow?.isVisible());
 
   updateDesktopState({
     serviceStatus: "starting",
@@ -663,9 +677,10 @@ async function restartLocalService(): Promise<void> {
     const nextApiBase = await resolveApiBase();
     await refreshDesktopStatus();
 
-    if (hadWindow && mainWindow && !mainWindow.isDestroyed()) {
+    const window = getLiveMainWindow();
+    if (hadWindow && window) {
       if (previousApiBase !== nextApiBase) {
-        mainWindow.destroy();
+        window.destroy();
         mainWindow = null;
         await createMainWindow();
         const recreatedWindow = mainWindow as BrowserWindow | null;
@@ -673,9 +688,9 @@ async function restartLocalService(): Promise<void> {
           recreatedWindow.hide();
         }
       } else {
-        mainWindow.webContents.reload();
+        window.webContents.reload();
         if (wasVisible) {
-          revealWindow(mainWindow);
+          revealWindow(window);
         }
       }
     }
@@ -712,7 +727,7 @@ async function createMainWindow(): Promise<void> {
         `--memforge-workspace-root=${DESKTOP_WORKSPACE_ROOT}`,
         `--memforge-command-shim-path=${DESKTOP_COMMAND_SHIM_PATH}`,
         `--memforge-mcp-launcher-path=${MCP_LAUNCHER_PATH}`,
-        `--memforge-mcp-command=${app.isPackaged ? "Memforge --mcp-stdio" : `"${process.execPath}" "${app.getAppPath()}" --mcp-stdio`}`,
+        `--memforge-mcp-command=${buildMcpCommand()}`,
         `--memforge-app-executable=${process.execPath}`,
         `--memforge-is-packaged=${app.isPackaged ? "1" : "0"}`
       ]
@@ -827,8 +842,9 @@ app.whenReady().then(async () => {
   }
 
   app.on("activate", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      revealWindow(mainWindow);
+    const window = getLiveMainWindow();
+    if (window) {
+      revealWindow(window);
       syncTray();
       return;
     }

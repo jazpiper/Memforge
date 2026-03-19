@@ -34,19 +34,21 @@ A non-agent client can bootstrap from the service index and then use the API dir
 - `GET /api/v1/workspace`
 - `GET /api/v1/bootstrap`
 - `POST /api/v1/nodes/search`
-- `GET /api/v1/review-queue`
+- `POST /api/v1/activities/search`
+- `POST /api/v1/search`
+- `GET /api/v1/governance/issues`
 - `POST /api/v1/context/bundles`
 
 What this proves:
 
 - another tool can discover Memforge without a custom SDK
 - the local API is self-describing enough to bootstrap a client
-- search, review, and context packaging are all reachable over plain HTTP
+- search, governance inspection, and context packaging are all reachable over plain HTTP
 
 Why this is validated:
 
 - the service index is implemented at `GET /api/v1`
-- the API contract documents the bootstrap, workspace, search, review, and bundle endpoints
+- the API contract documents the bootstrap, workspace, search, governance, and bundle endpoints
 - browser and non-browser auth behavior is already documented and enforced
 
 ## 3. Stdio MCP bridge
@@ -63,9 +65,9 @@ Representative tools:
 
 - `memforge_get_related`
 - `memforge_append_activity`
-- `memforge_review_list`
-- `memforge_review_get`
-- `memforge_review_decide`
+- `memforge_search_workspace`
+- `memforge_list_governance_issues`
+- `memforge_get_governance_state`
 
 Why this matters:
 

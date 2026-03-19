@@ -5,6 +5,7 @@ import {
   bundleModes,
   bundlePresets,
   canonicalities,
+  governanceStates,
   inferredRelationStatuses,
   nodeStatuses,
   nodeTypes,
@@ -12,8 +13,8 @@ import {
   relationStatuses,
   relationTypes,
   relationUsageEventTypes,
-  reviewStatuses,
-  reviewTypes,
+  searchFeedbackResultTypes,
+  searchFeedbackVerdicts,
   sourceTypes
 } from "../shared/contracts.js";
 import type { Source } from "../shared/contracts.js";
@@ -25,7 +26,7 @@ function formatStructuredContent(content: unknown) {
   return JSON.stringify(content, null, 2);
 }
 
-function toolResult<T extends Record<string, unknown>>(structuredContent: T) {
+function toolResult<T>(structuredContent: T) {
   return {
     content: [
       {
@@ -68,6 +69,37 @@ const workspaceInfoSchema = z.object({
 
 const sourceDescription =
   "Optional provenance override. If omitted, Memforge MCP uses its own agent identity so durable writes still keep attribution.";
+const readOnlyToolAnnotations = {
+  readOnlyHint: true,
+  idempotentHint: true
+} as const;
+
+function createGetToolHandler(apiClient: Pick<MemforgeApiClient, "get">, path: string) {
+  return async () => toolResult(await apiClient.get<Record<string, unknown>>(path));
+}
+
+function createPostToolHandler(apiClient: Pick<MemforgeApiClient, "post">, path: string) {
+  return async (input: Record<string, unknown>) => toolResult(await apiClient.post<Record<string, unknown>>(path, input));
+}
+
+function withReadOnlyAnnotations(config: any) {
+  return {
+    ...config,
+    annotations: {
+      ...readOnlyToolAnnotations,
+      ...(config.annotations ?? {})
+    }
+  };
+}
+
+function registerReadOnlyTool(
+  server: McpServer,
+  name: string,
+  config: any,
+  handler: (...args: any[]) => any
+) {
+  server.registerTool(name, withReadOnlyAnnotations(config), handler);
+}
 
 export function createMemforgeMcpServer(params?: {
   apiClient?: Pick<MemforgeApiClient, "get" | "post" | "patch">;
@@ -99,15 +131,12 @@ export function createMemforgeMcpServer(params?: {
     }
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_health",
     {
       title: "Memforge Health",
       description: "Check whether the running local Memforge API is healthy and which workspace is loaded.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       outputSchema: z.object({
         status: z.string(),
         workspaceLoaded: z.boolean(),
@@ -115,38 +144,32 @@ export function createMemforgeMcpServer(params?: {
         schemaVersion: z.number()
       })
     },
-    async () => toolResult(await apiClient.get("/health"))
+    createGetToolHandler(apiClient, "/health")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_workspace_current",
     {
       title: "Current Workspace",
       description: "Read the currently active Memforge workspace and auth mode.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       outputSchema: workspaceInfoSchema
     },
-    async () => toolResult(await apiClient.get("/workspace"))
+    createGetToolHandler(apiClient, "/workspace")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_workspace_list",
     {
       title: "List Workspaces",
       description: "List known Memforge workspaces and identify the currently active one.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       outputSchema: z.object({
         current: workspaceInfoSchema,
         items: z.array(workspaceInfoSchema.extend({ isCurrent: z.boolean(), lastOpenedAt: z.string() }))
       })
     },
-    async () => toolResult(await apiClient.get("/workspaces"))
+    createGetToolHandler(apiClient, "/workspaces")
   );
 
   server.registerTool(
@@ -159,7 +182,7 @@ export function createMemforgeMcpServer(params?: {
         workspaceName: z.string().min(1).optional().describe("Human-friendly workspace name.")
       }
     },
-    async (input) => toolResult(await apiClient.post("/workspaces", input))
+    createPostToolHandler(apiClient, "/workspaces")
   );
 
   server.registerTool(
@@ -171,18 +194,15 @@ export function createMemforgeMcpServer(params?: {
         rootPath: z.string().min(1).describe("Existing workspace root path to open.")
       }
     },
-    async (input) => toolResult(await apiClient.post("/workspaces/open", input))
+    createPostToolHandler(apiClient, "/workspaces/open")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_semantic_status",
     {
       title: "Semantic Index Status",
       description: "Read the current semantic indexing status, provider configuration, and queued item counts.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       outputSchema: z.object({
         enabled: z.boolean(),
         provider: z.string().nullable(),
@@ -198,18 +218,15 @@ export function createMemforgeMcpServer(params?: {
         })
       })
     },
-    async () => toolResult(await apiClient.get("/semantic/status"))
+    createGetToolHandler(apiClient, "/semantic/status")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_semantic_issues",
     {
       title: "Semantic Index Issues",
       description: "Read semantic indexing issues with optional status filters and cursor pagination.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       inputSchema: {
         limit: z.number().int().min(1).max(25).default(5).describe("Maximum number of semantic issue items to return."),
         cursor: z.string().min(1).optional().describe("Opaque cursor from a previous semantic issues call."),
@@ -241,15 +258,12 @@ export function createMemforgeMcpServer(params?: {
     }
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_search_nodes",
     {
       title: "Search Nodes",
       description: "Search Memforge nodes by keyword and optional structured filters.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       inputSchema: {
         query: z.string().default("").describe("Keyword or phrase query."),
         filters: z
@@ -265,18 +279,74 @@ export function createMemforgeMcpServer(params?: {
         sort: z.enum(["relevance", "updated_at"]).default("relevance")
       }
     },
-    async (input) => toolResult(await apiClient.post("/nodes/search", input))
+    createPostToolHandler(apiClient, "/nodes/search")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
+    "memforge_search_activities",
+    {
+      title: "Search Activities",
+      description: "Search Memforge activity timelines by keyword and optional structured filters.",
+      inputSchema: {
+        query: z.string().default("").describe("Keyword or phrase query."),
+        filters: z
+          .object({
+            targetNodeIds: z.array(z.string()).optional(),
+            activityTypes: z.array(z.enum(activityTypes)).optional(),
+            sourceLabels: z.array(z.string()).optional(),
+            createdAfter: z.string().optional(),
+            createdBefore: z.string().optional()
+          })
+          .default({}),
+        limit: z.number().int().min(1).max(100).default(10),
+        offset: z.number().int().min(0).default(0),
+        sort: z.enum(["relevance", "updated_at"]).default("relevance")
+      }
+    },
+    createPostToolHandler(apiClient, "/activities/search")
+  );
+
+  registerReadOnlyTool(
+    server,
+    "memforge_search_workspace",
+    {
+      title: "Search Workspace",
+      description: "Search nodes, activities, or both through a single workspace-wide endpoint.",
+      inputSchema: {
+        query: z.string().default("").describe("Keyword or phrase query."),
+        scopes: z.array(z.enum(["nodes", "activities"])).min(1).default(["nodes", "activities"]),
+        nodeFilters: z
+          .object({
+            types: z.array(z.enum(nodeTypes)).optional(),
+            status: z.array(z.enum(nodeStatuses)).optional(),
+            sourceLabels: z.array(z.string()).optional(),
+            tags: z.array(z.string()).optional()
+          })
+          .optional(),
+        activityFilters: z
+          .object({
+            targetNodeIds: z.array(z.string()).optional(),
+            activityTypes: z.array(z.enum(activityTypes)).optional(),
+            sourceLabels: z.array(z.string()).optional(),
+            createdAfter: z.string().optional(),
+            createdBefore: z.string().optional()
+          })
+          .optional(),
+        limit: z.number().int().min(1).max(100).default(10),
+        offset: z.number().int().min(0).default(0),
+        sort: z.enum(["relevance", "updated_at"]).default("relevance")
+      }
+    },
+    createPostToolHandler(apiClient, "/search")
+  );
+
+  registerReadOnlyTool(
+    server,
     "memforge_get_node",
     {
       title: "Get Node",
       description: "Fetch a node together with its related nodes, activities, artifacts, and provenance.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       inputSchema: {
         nodeId: z.string().min(1).describe("Target node id.")
       }
@@ -284,15 +354,12 @@ export function createMemforgeMcpServer(params?: {
     async ({ nodeId }) => toolResult(await apiClient.get(`/nodes/${encodeURIComponent(nodeId)}`))
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_get_related",
     {
-      title: "Get Related Nodes",
-      description: "Fetch lightweight node neighborhood data with canonical relations and optional inferred relations.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
+      title: "Get Node Neighborhood",
+      description: "Fetch the canonical Memforge node neighborhood with optional inferred relations.",
       inputSchema: {
         nodeId: z.string().min(1).describe("Target node id."),
         depth: z.number().int().min(1).max(1).default(1),
@@ -333,7 +400,7 @@ export function createMemforgeMcpServer(params?: {
         metadata: jsonRecordSchema
       }
     },
-    async (input) => toolResult(await apiClient.post("/inferred-relations", input))
+    createPostToolHandler(apiClient, "/inferred-relations")
   );
 
   server.registerTool(
@@ -352,7 +419,27 @@ export function createMemforgeMcpServer(params?: {
         metadata: jsonRecordSchema
       }
     },
-    async (input) => toolResult(await apiClient.post("/relation-usage-events", input))
+    createPostToolHandler(apiClient, "/relation-usage-events")
+  );
+
+  server.registerTool(
+    "memforge_append_search_feedback",
+    {
+      title: "Append Search Feedback",
+      description: "Append a usefulness signal for a node or activity search result after it helped or failed a task.",
+      inputSchema: {
+        resultType: z.enum(searchFeedbackResultTypes),
+        resultId: z.string().min(1),
+        verdict: z.enum(searchFeedbackVerdicts),
+        query: z.string().optional(),
+        sessionId: z.string().optional(),
+        runId: z.string().optional(),
+        source: sourceSchema.optional(),
+        confidence: z.number().min(0).max(1).default(1),
+        metadata: jsonRecordSchema
+      }
+    },
+    createPostToolHandler(apiClient, "/search-feedback-events")
   );
 
   server.registerTool(
@@ -366,7 +453,7 @@ export function createMemforgeMcpServer(params?: {
         limit: z.number().int().min(1).max(500).default(100)
       }
     },
-    async (input) => toolResult(await apiClient.post("/inferred-relations/recompute", input))
+    createPostToolHandler(apiClient, "/inferred-relations/recompute")
   );
 
   server.registerTool(
@@ -382,7 +469,7 @@ export function createMemforgeMcpServer(params?: {
         metadata: jsonRecordSchema
       }
     },
-    async (input) => toolResult(await apiClient.post("/activities", input))
+    createPostToolHandler(apiClient, "/activities")
   );
 
   server.registerTool(
@@ -402,14 +489,14 @@ export function createMemforgeMcpServer(params?: {
         metadata: jsonRecordSchema
       }
     },
-    async (input) => toolResult(await apiClient.post("/nodes", input))
+    createPostToolHandler(apiClient, "/nodes")
   );
 
   server.registerTool(
     "memforge_create_relation",
     {
       title: "Create Relation",
-      description: "Create a relation between two nodes. Agent-created relations typically remain suggested until approved.",
+      description: "Create a relation between two nodes. Agent-created relations typically start suggested and are promoted automatically when confidence improves.",
       inputSchema: {
         fromNodeId: z.string().min(1),
         toNodeId: z.string().min(1),
@@ -419,86 +506,64 @@ export function createMemforgeMcpServer(params?: {
         metadata: jsonRecordSchema
       }
     },
-    async (input) => toolResult(await apiClient.post("/relations", input))
+    createPostToolHandler(apiClient, "/relations")
   );
 
-  server.registerTool(
-    "memforge_review_list",
+  registerReadOnlyTool(
+    server,
+    "memforge_list_governance_issues",
     {
-      title: "List Review Items",
-      description: "List Memforge review queue items, optionally filtered by status and review type.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
+      title: "List Governance Issues",
+      description: "List contested or low-confidence governance items that may need inspection.",
       inputSchema: {
-        status: z.enum(reviewStatuses).default("pending"),
-        limit: z.number().int().min(1).max(100).default(20),
-        reviewType: z.enum(reviewTypes).optional()
+        states: z.array(z.enum(governanceStates)).default(["contested", "low_confidence"]),
+        limit: z.number().int().min(1).max(100).default(20)
       }
     },
-    async ({ status, limit, reviewType }) => {
+    async ({ states, limit }) => {
       const query = new URLSearchParams({
-        status,
+        states: states.join(","),
         limit: String(limit)
       });
-      if (reviewType) {
-        query.set("review_type", reviewType);
-      }
-      return toolResult(await apiClient.get(`/review-queue?${query.toString()}`));
+      return toolResult(await apiClient.get(`/governance/issues?${query.toString()}`));
     }
   );
 
-  server.registerTool(
-    "memforge_review_get",
+  registerReadOnlyTool(
+    server,
+    "memforge_get_governance_state",
     {
-      title: "Get Review Item",
-      description: "Read a specific review queue item and the entity it points to.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
+      title: "Get Governance State",
+      description: "Read the current automatic governance state and recent events for a node or relation.",
       inputSchema: {
-        reviewId: z.string().min(1)
+        entityType: z.enum(["node", "relation"]),
+        entityId: z.string().min(1)
       }
     },
-    async ({ reviewId }) => toolResult(await apiClient.get(`/review-queue/${encodeURIComponent(reviewId)}`))
+    async ({ entityType, entityId }) =>
+      toolResult(await apiClient.get(`/governance/state/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`))
   );
 
   server.registerTool(
-    "memforge_review_decide",
+    "memforge_recompute_governance",
     {
-      title: "Apply Review Decision",
-      description: "Approve, reject, or edit-and-approve a Memforge review item.",
+      title: "Recompute Governance",
+      description: "Run a bounded automatic governance recompute pass for nodes, relations, or both.",
       inputSchema: {
-        reviewId: z.string().min(1),
-        action: z.enum(["approve", "reject", "edit-and-approve"]),
-        source: sourceSchema,
-        notes: z.string().optional(),
-        patch: z
-          .object({
-            title: z.string().optional(),
-            body: z.string().optional(),
-            summary: z.string().optional(),
-            tags: z.array(z.string()).optional(),
-            metadata: z.record(z.string(), z.any()).optional()
-          })
-          .optional()
+        entityType: z.enum(["node", "relation"]).optional(),
+        entityIds: z.array(z.string().min(1)).max(200).optional(),
+        limit: z.number().int().min(1).max(500).default(100)
       }
     },
-    async ({ reviewId, action, ...body }) =>
-      toolResult(await apiClient.post(`/review-queue/${encodeURIComponent(reviewId)}/${action}`, body))
+    createPostToolHandler(apiClient, "/governance/recompute")
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_context_bundle",
     {
       title: "Build Context Bundle",
       description: "Build a compact Memforge context bundle for coding, research, writing, or decision support.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       inputSchema: {
         targetId: z.string().min(1),
         mode: z.enum(bundleModes).default("compact"),
@@ -529,7 +594,6 @@ export function createMemforgeMcpServer(params?: {
         await apiClient.post("/context/bundles", {
           ...input,
           target: {
-            type: "node",
             id: targetId
           }
         })
@@ -545,7 +609,7 @@ export function createMemforgeMcpServer(params?: {
         limit: z.number().int().min(1).max(1000).default(250)
       }
     },
-    async (input) => toolResult(await apiClient.post("/semantic/reindex", input))
+    createPostToolHandler(apiClient, "/semantic/reindex")
   );
 
   server.registerTool(
@@ -560,15 +624,12 @@ export function createMemforgeMcpServer(params?: {
     async ({ nodeId }) => toolResult(await apiClient.post(`/semantic/reindex/${encodeURIComponent(nodeId)}`, {}))
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "memforge_rank_candidates",
     {
       title: "Rank Candidate Nodes",
       description: "Rank a bounded set of candidate node ids for a target using Memforge request-time retrieval scoring.",
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true
-      },
       inputSchema: {
         query: z.string().default(""),
         candidateNodeIds: z.array(z.string().min(1)).min(1).max(100),
@@ -576,7 +637,7 @@ export function createMemforgeMcpServer(params?: {
         targetNodeId: z.string().optional()
       }
     },
-    async (input) => toolResult(await apiClient.post("/retrieval/rank-candidates", input))
+    createPostToolHandler(apiClient, "/retrieval/rank-candidates")
   );
 
   return server;

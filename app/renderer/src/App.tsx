@@ -1,46 +1,40 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import {
   appendRelationUsageEvent,
-  approveReview,
   clearRendererToken,
   createWorkspace as createWorkspaceSession,
   createNode,
   getBootstrap,
   getContextBundlePreview,
-  getActivities,
-  getArtifacts,
-  getNode,
+  getGovernanceIssues,
+  getNodeDetail,
   getGraphNeighborhood,
-  getPinnedNodes,
-  getRecentNodes,
-  getReviewSettings,
-  getRelatedNodes,
-  getReviewQueue,
   getSemanticIssues,
   getSemanticStatus,
   getSnapshot,
-  getWorkspace,
   getWorkspaceCatalog,
+  getWorkspace,
   isAuthError,
   openWorkspace as openWorkspaceSession,
   queueSemanticReindex,
   queueSemanticReindexForNode,
-  rejectReview,
   refreshNodeSummary as refreshNodeSummaryRequest,
   saveRendererToken,
-  searchNodes,
+  searchWorkspace,
   subscribeWorkspaceEvents,
-  updateReviewSettings,
 } from './lib/mockApi';
 import type {
   Activity,
   Artifact,
   ContextBundlePreviewItem,
+  GovernanceEventRecord,
+  GovernanceIssueItem,
+  GovernancePayload,
   GraphConnection,
   NavView,
+  NodeDetail,
   Node,
-  ReviewSettings,
-  ReviewQueueItem,
+  SearchResultItem,
   SemanticIssueItem,
   SemanticStatusSummary,
   WorkspaceCatalogItem,
@@ -53,35 +47,40 @@ type DetailPanel = {
   bundleItems: ContextBundlePreviewItem[];
   activities: Activity[];
   artifacts: Artifact[];
+  governance: GovernancePayload;
 };
 
 type SemanticIssueFilter = 'all' | 'failed' | 'stale' | 'pending';
+type SearchScope = 'nodes' | 'activities';
 
 const navigation: { id: NavView; label: string; hint: string }[] = [
   { id: 'home', label: 'Home', hint: 're-entry' },
   { id: 'search', label: 'Search', hint: 'retrieval' },
   { id: 'projects', label: 'Projects', hint: 'core nodes' },
   { id: 'recent', label: 'Recent', hint: 'latest work' },
-  { id: 'review', label: 'Review', hint: 'governance' },
+  { id: 'governance', label: 'Governance', hint: 'automation' },
   { id: 'graph', label: 'Graph', hint: 'secondary' },
   { id: 'settings', label: 'Settings', hint: 'workspace' },
 ];
 
-const TRUSTED_SOURCE_PRESETS = [
-  'codex',
-  'claude-code',
-  'gemini-cli',
-  'openclaw',
-] as const;
-
-const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
-  autoApproveLowRisk: true,
-  trustedSourceToolNames: [],
+const DEFAULT_SEMANTIC_COUNTS = {
+  pending: 0,
+  processing: 0,
+  stale: 0,
+  ready: 0,
+  failed: 0,
 };
+
+const SEMANTIC_ISSUE_FILTERS: SemanticIssueFilter[] = ['all', 'failed', 'stale', 'pending'];
+const SEARCH_SCOPE_OPTIONS: Array<{ id: SearchScope | 'all'; label: string; scopes: SearchScope[] }> = [
+  { id: 'all', label: 'All', scopes: ['nodes', 'activities'] },
+  { id: 'nodes', label: 'Nodes', scopes: ['nodes'] },
+  { id: 'activities', label: 'Activities', scopes: ['activities'] },
+];
 
 function badgeTone(status: string) {
   if (status === 'active' || status === 'approved') return 'tone-good';
-  if (status === 'review' || status === 'pending') return 'tone-warn';
+  if (status === 'contested' || status === 'pending') return 'tone-warn';
   if (status === 'draft' || status === 'suggested') return 'tone-info';
   return 'tone-muted';
 }
@@ -109,25 +108,6 @@ function relationToneClass(relationType: GraphConnection['relation']['relationTy
 
 function relationLabel(value: string) {
   return value.replaceAll('_', ' ');
-}
-
-function normalizeToolName(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function parseToolNames(value: string) {
-  return Array.from(
-    new Set(
-      value
-        .split(/[\n,]/)
-        .map(normalizeToolName)
-        .filter(Boolean),
-    ),
-  );
-}
-
-function mergeToolNames(current: string[], additions: string[]) {
-  return Array.from(new Set([...current.map(normalizeToolName), ...additions.map(normalizeToolName)].filter(Boolean)));
 }
 
 function formatTime(iso: string) {
@@ -203,6 +183,125 @@ function getSummaryLifecycle(node: Node | null) {
   };
 }
 
+function getSearchResultKey(item: SearchResultItem) {
+  return item.resultType === 'node' ? item.node?.id ?? 'node-unknown' : item.activity?.id ?? 'activity-unknown';
+}
+
+function getSearchResultNodeId(item: SearchResultItem) {
+  return item.resultType === 'node' ? item.node?.id ?? null : item.activity?.targetNodeId ?? null;
+}
+
+function getSearchResultTitle(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return item.node?.title ?? 'Untitled node';
+  }
+  return item.activity?.targetNodeTitle ?? item.activity?.targetNodeId ?? 'Activity';
+}
+
+function getSearchResultSummary(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return item.node?.summary ?? 'No summary yet.';
+  }
+  return item.activity?.body ?? 'No activity body available.';
+}
+
+function getSearchResultBadge(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return item.node?.type ?? 'node';
+  }
+  return item.activity?.activityType ?? 'activity';
+}
+
+function getSearchResultStatus(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return item.node?.status ?? 'draft';
+  }
+  return item.activity?.targetNodeStatus ?? 'draft';
+}
+
+function getSearchResultMeta(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return {
+      source: item.node?.sourceLabel ?? 'unknown',
+      updatedAt: item.node?.updatedAt ?? item.node?.createdAt ?? new Date().toISOString(),
+    };
+  }
+  return {
+    source: item.activity?.sourceLabel ?? 'unknown',
+    updatedAt: item.activity?.createdAt ?? new Date().toISOString(),
+  };
+}
+
+function getSearchScopeMode(scopes: SearchScope[]) {
+  if (scopes.length === 2) {
+    return 'all';
+  }
+  return scopes[0] ?? 'nodes';
+}
+
+function getSearchScopeSummary(scopes: SearchScope[]) {
+  const mode = getSearchScopeMode(scopes);
+  if (mode === 'activities') {
+    return 'Activity recall over operational history and target-node context.';
+  }
+  if (mode === 'nodes') {
+    return 'Durable node retrieval over titles, summaries, bodies, and tags.';
+  }
+  return 'Mixed retrieval across durable nodes and recent activity trails.';
+}
+
+function getSearchResultEyebrow(item: SearchResultItem) {
+  return item.resultType === 'node' ? 'Durable node' : 'Activity trail';
+}
+
+function getSearchResultSecondaryMeta(item: SearchResultItem) {
+  if (item.resultType === 'node') {
+    return [item.node?.type ?? 'node', item.node?.status ?? 'draft'].join(' · ');
+  }
+
+  return [
+    item.activity?.activityType ?? 'activity',
+    item.activity?.targetNodeTitle ? `target ${item.activity.targetNodeTitle}` : item.activity?.targetNodeId ?? 'unlinked',
+    item.activity?.createdAt ? formatTime(item.activity.createdAt) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function governanceStateRank(state: GovernanceIssueItem['state']) {
+  switch (state) {
+    case 'contested':
+      return 0;
+    case 'low_confidence':
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+function formatConfidence(value: number) {
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function getGovernanceStateSummary(state: GovernanceIssueItem['state']) {
+  switch (state) {
+    case 'contested':
+      return 'Contradiction or repeated negative signals are suppressing trust right now.';
+    case 'low_confidence':
+      return 'Local evidence exists, but the entity still needs stronger repeated confirmation.';
+    default:
+      return 'Signals are currently stable and no contest path is active.';
+  }
+}
+
+function getGovernanceActionLabel(item: GovernanceIssueItem) {
+  return item.entityType === 'node' ? 'Inspect node' : 'Relation issue';
+}
+
+function getGovernanceEventLabel(event: GovernanceEventRecord) {
+  return [event.eventType, event.nextState, formatTime(event.createdAt)].join(' · ');
+}
+
 type DesktopIntegrationInfo = {
   apiBase: string;
   healthUrl: string;
@@ -242,6 +341,20 @@ function getDesktopActionBridge() {
   ).__MEMFORGE_DESKTOP_ACTIONS__ ?? null;
 }
 
+function emptyDetailPanel(): DetailPanel {
+  return {
+    node: null,
+    related: [],
+    bundleItems: [],
+    activities: [],
+    artifacts: [],
+    governance: {
+      state: null,
+      events: [],
+    },
+  };
+}
+
 function Section({
   title,
   subtitle,
@@ -271,13 +384,14 @@ export default function App() {
   const [view, setView] = useState<NavView>('home');
   const [selectedNodeId, setSelectedNodeId] = useState<string>('node_memforge');
   const [query, setQuery] = useState('');
+  const [searchScopes, setSearchScopes] = useState<SearchScope[]>(['nodes', 'activities']);
   const deferredQuery = useDeferredValue(query);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [authTokenInput, setAuthTokenInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
-  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
+  const [selectedGovernanceId, setSelectedGovernanceId] = useState<string | null>(null);
   const [captureType, setCaptureType] = useState<Node['type']>('note');
   const [captureTitle, setCaptureTitle] = useState('');
   const [captureBody, setCaptureBody] = useState('');
@@ -287,13 +401,6 @@ export default function App() {
   const [workspaceNameInput, setWorkspaceNameInput] = useState('');
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
-  const [savedReviewSettings, setSavedReviewSettings] = useState<ReviewSettings>(DEFAULT_REVIEW_SETTINGS);
-  const [reviewSettings, setReviewSettings] = useState<ReviewSettings>(DEFAULT_REVIEW_SETTINGS);
-  const [trustedToolNameDraft, setTrustedToolNameDraft] = useState('');
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [isSettingsDirty, setIsSettingsDirty] = useState(false);
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatusSummary | null>(null);
   const [semanticIssues, setSemanticIssues] = useState<SemanticIssueItem[]>([]);
   const [semanticIssueFilter, setSemanticIssueFilter] = useState<SemanticIssueFilter>('all');
@@ -318,13 +425,17 @@ export default function App() {
     filter?: SemanticIssueFilter;
     cursor?: string | null;
     append?: boolean;
+    refreshStatus?: boolean;
   }) {
     const filter = options?.filter ?? semanticIssueFilter;
-    const page = await getSemanticIssues({
-      limit: 5,
-      cursor: options?.cursor ?? undefined,
-      statuses: semanticIssueStatuses(filter),
-    });
+    const [page, nextStatus] = await Promise.all([
+      getSemanticIssues({
+        limit: 5,
+        cursor: options?.cursor ?? undefined,
+        statuses: semanticIssueStatuses(filter),
+      }),
+      options?.refreshStatus ? getSemanticStatus() : Promise.resolve(null),
+    ]);
     setSemanticIssueFilter(filter);
     setSemanticIssues((current) => {
       if (!options?.append) {
@@ -337,22 +448,23 @@ export default function App() {
       ];
     });
     setSemanticIssuesNextCursor(page.nextCursor);
+    if (nextStatus) {
+      setSemanticStatus(nextStatus);
+    }
     return page;
   }
 
-  async function refreshWorkspaceState(options?: { syncReviewSettings?: boolean }) {
-    const [workspaceResult, snapshotResult, catalog, nextReviewSettings, nextSemanticStatus, nextSemanticIssues] = await Promise.all([
+  async function refreshWorkspaceState() {
+    const [workspaceResult, snapshotResult, catalog, nextSemanticStatus, nextSemanticIssues] = await Promise.all([
       getWorkspace(),
       getSnapshot(),
       getWorkspaceCatalog(),
-      getReviewSettings(),
       getSemanticStatus(),
       getSemanticIssues({
         limit: 5,
         statuses: semanticIssueStatuses(semanticIssueFilter),
       }),
     ]);
-    const shouldSyncReviewSettings = options?.syncReviewSettings ?? !isSettingsDirty;
     setWorkspace(workspaceResult);
     setSnapshot(snapshotResult);
     setWorkspaceCatalog(catalog.items);
@@ -360,16 +472,6 @@ export default function App() {
     setSemanticStatus(nextSemanticStatus);
     setSemanticIssues(nextSemanticIssues.items);
     setSemanticIssuesNextCursor(nextSemanticIssues.nextCursor);
-    if (shouldSyncReviewSettings) {
-      const normalizedNextReviewSettings = {
-        autoApproveLowRisk: nextReviewSettings.autoApproveLowRisk,
-        trustedSourceToolNames: mergeToolNames([], nextReviewSettings.trustedSourceToolNames),
-      };
-      setSavedReviewSettings(normalizedNextReviewSettings);
-      setReviewSettings(normalizedNextReviewSettings);
-      setTrustedToolNameDraft('');
-    }
-    setSelectedReviewId((current) => current ?? snapshotResult.reviewQueue[0]?.id ?? null);
     setLoadError(null);
     return snapshotResult;
   }
@@ -406,7 +508,7 @@ export default function App() {
         if (!mounted) return;
         setAuthRequired(false);
         setAuthError(null);
-        setSelectedReviewId(snapshotResult.reviewQueue[0]?.id ?? null);
+        setSelectedGovernanceId(null);
       } catch (error) {
         if (!mounted) return;
         handleRequestFailure(error, 'Failed to load workspace.');
@@ -537,42 +639,45 @@ export default function App() {
 
   const selectedNode = nodeMap.get(selectedNodeId) ?? snapshot?.nodes[0] ?? null;
 
-  const [detail, setDetail] = useState<DetailPanel>({
-    node: null,
-    related: [],
-    bundleItems: [],
-    activities: [],
-    artifacts: [],
-  });
+  const [detail, setDetail] = useState<DetailPanel>(emptyDetailPanel);
+  const detailNode = detail.node?.id === selectedNode?.id ? detail.node : selectedNode;
   const [graphRadius, setGraphRadius] = useState<1 | 2>(1);
   const [graphConnections, setGraphConnections] = useState<GraphConnection[]>([]);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [isGraphLoading, setIsGraphLoading] = useState(false);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState(false);
+  const desktopInfo = getDesktopIntegrationInfo();
 
   useEffect(() => {
     let mounted = true;
     const currentNode = selectedNode;
     if (!currentNode) return undefined;
     const nodeId = currentNode.id;
+    setDetail({
+      ...emptyDetailPanel(),
+      node: currentNode,
+    });
 
     async function loadDetail() {
       try {
-        const [node, related, bundleItems, activities, artifacts] = await Promise.all([
-          getNode(nodeId),
-          getRelatedNodes(nodeId),
+        const [nodeDetail, bundleItems] = await Promise.all([
+          getNodeDetail(nodeId),
           getContextBundlePreview(nodeId),
-          getActivities(nodeId),
-          getArtifacts(nodeId),
         ]);
 
         if (!mounted) return;
+        const resolvedDetail: NodeDetail =
+          nodeDetail ?? {
+            ...emptyDetailPanel(),
+            node: currentNode,
+          };
         setDetail({
-          node: node ?? currentNode,
-          related,
+          node: resolvedDetail.node?.id === nodeId ? resolvedDetail.node : currentNode,
+          related: resolvedDetail.related,
           bundleItems,
-          activities,
-          artifacts,
+          activities: resolvedDetail.activities,
+          artifacts: resolvedDetail.artifacts,
+          governance: resolvedDetail.governance,
         });
         setLoadError(null);
       } catch (error) {
@@ -619,11 +724,18 @@ export default function App() {
     };
   }, [graphRadius, selectedNode]);
 
-  const [searchResults, setSearchResults] = useState<Node[]>([]);
-  const [recentNodes, setRecentNodes] = useState<Node[]>([]);
-  const [pinnedNodes, setPinnedNodes] = useState<Node[]>([]);
-  const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
-  const summaryLifecycle = useMemo(() => getSummaryLifecycle(detail.node), [detail.node]);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [governanceIssues, setGovernanceIssues] = useState<GovernanceIssueItem[]>([]);
+  const recentNodes = useMemo(
+    () => (snapshot ? snapshot.recentNodeIds.map((id) => nodeMap.get(id)).filter((node): node is Node => Boolean(node)) : []),
+    [nodeMap, snapshot],
+  );
+  const pinnedNodes = useMemo(
+    () =>
+      snapshot ? snapshot.pinnedProjectIds.map((id) => nodeMap.get(id)).filter((node): node is Node => Boolean(node)) : [],
+    [nodeMap, snapshot],
+  );
+  const summaryLifecycle = useMemo(() => getSummaryLifecycle(detailNode), [detailNode]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -632,21 +744,19 @@ export default function App() {
 
     async function loadLists() {
       try {
-        const [recent, pinned, reviews, results] = await Promise.all([
-          getRecentNodes(),
-          getPinnedNodes(),
-          getReviewQueue(),
-          searchNodes(deferredQuery),
-        ]);
+        const [issues, results] = await Promise.all([getGovernanceIssues(), searchWorkspace(deferredQuery, searchScopes)]);
 
         if (!mounted) return;
-        setRecentNodes(recent);
-        setPinnedNodes(pinned);
-        setReviewQueue(reviews.filter((item) => item.status === 'pending'));
+        setGovernanceIssues(
+          issues.slice().sort((left, right) => {
+            const rankDiff = governanceStateRank(left.state) - governanceStateRank(right.state);
+            if (rankDiff !== 0) {
+              return rankDiff;
+            }
+            return left.confidence - right.confidence || right.lastTransitionAt.localeCompare(left.lastTransitionAt);
+          })
+        );
         setSearchResults(results);
-        if (selectedReviewId && !reviews.some((item) => item.id === selectedReviewId)) {
-          setSelectedReviewId(reviews[0]?.id ?? null);
-        }
         setLoadError(null);
       } catch (error) {
         if (!mounted) return;
@@ -659,20 +769,26 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [deferredQuery, selectedReviewId, snapshot]);
+  }, [deferredQuery, searchScopes, snapshot]);
 
-  const activeReview = reviewQueue.find((item) => item.id === selectedReviewId) ?? reviewQueue[0];
+  useEffect(() => {
+    if (!governanceIssues.length) {
+      if (selectedGovernanceId !== null) {
+        setSelectedGovernanceId(null);
+      }
+      return;
+    }
+    if (!selectedGovernanceId || !governanceIssues.some((item) => item.entityId === selectedGovernanceId)) {
+      setSelectedGovernanceId(governanceIssues[0]?.entityId ?? null);
+    }
+  }, [governanceIssues, selectedGovernanceId]);
+
+  const activeGovernanceIssue =
+    governanceIssues.find((item) => item.entityId === selectedGovernanceId) ?? governanceIssues[0];
 
   const homeActivities = detail.activities.slice(0, 3);
   const workspaceName = workspace?.name ?? 'Memforge';
-  const semanticCounts = semanticStatus?.counts ?? {
-    pending: 0,
-    processing: 0,
-    stale: 0,
-    ready: 0,
-    failed: 0,
-  };
-  const desktopInfo = useMemo(() => getDesktopIntegrationInfo(), []);
+  const semanticCounts = semanticStatus?.counts ?? DEFAULT_SEMANTIC_COUNTS;
   const apiBase = desktopInfo?.apiBase ?? `http://${workspace?.apiBind ?? '127.0.0.1:8787'}/api/v1`;
   const workspaceHome = desktopInfo?.workspaceHome ?? '';
   const workspaceRoot = workspace?.rootPath ?? desktopInfo?.workspaceRoot ?? '';
@@ -721,17 +837,6 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     [graphConnections],
   );
 
-  async function refreshReviewQueue() {
-    try {
-      const reviews = await getReviewQueue();
-      setReviewQueue(reviews.filter((item) => item.status === 'pending'));
-      setSelectedReviewId((current) => current ?? reviews[0]?.id ?? null);
-      setLoadError(null);
-    } catch (error) {
-      handleRequestFailure(error, 'Failed to refresh review queue.');
-    }
-  }
-
   async function handleSemanticIssueFilterChange(nextFilter: SemanticIssueFilter) {
     try {
       setSemanticError(null);
@@ -760,16 +865,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     setSemanticNotice(null);
     try {
       const result = await queueSemanticReindex();
-      const [nextStatus, nextIssues] = await Promise.all([
-        getSemanticStatus(),
-        getSemanticIssues({
-          limit: 5,
-          statuses: semanticIssueStatuses(semanticIssueFilter),
-        }),
-      ]);
-      setSemanticStatus(nextStatus);
-      setSemanticIssues(nextIssues.items);
-      setSemanticIssuesNextCursor(nextIssues.nextCursor);
+      await loadSemanticIssues({ filter: semanticIssueFilter, refreshStatus: true });
       setSemanticNotice(`Queued ${result.queuedCount} nodes for semantic reindex.`);
       setLoadError(null);
     } catch (error) {
@@ -782,25 +878,16 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   }
 
   async function handleQueueSelectedNodeSemanticReindex() {
-    if (!detail.node) {
+    if (!detailNode) {
       return;
     }
     setIsReindexingSelectedNode(true);
     setSemanticError(null);
     setSemanticNotice(null);
     try {
-      await queueSemanticReindexForNode(detail.node.id);
-      const [nextStatus, nextIssues] = await Promise.all([
-        getSemanticStatus(),
-        getSemanticIssues({
-          limit: 5,
-          statuses: semanticIssueStatuses(semanticIssueFilter),
-        }),
-      ]);
-      setSemanticStatus(nextStatus);
-      setSemanticIssues(nextIssues.items);
-      setSemanticIssuesNextCursor(nextIssues.nextCursor);
-      setSemanticNotice(`Queued semantic reindex for "${detail.node.title}".`);
+      await queueSemanticReindexForNode(detailNode.id);
+      await loadSemanticIssues({ filter: semanticIssueFilter, refreshStatus: true });
+      setSemanticNotice(`Queued semantic reindex for "${detailNode.title}".`);
       setLoadError(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to queue node reindex.';
@@ -811,9 +898,21 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     }
   }
 
+  function resetWorkspaceSelection(nextSnapshot: WorkspaceSeed) {
+    setSelectedNodeId(nextSnapshot.nodes[0]?.id ?? '');
+    setDetail(emptyDetailPanel());
+  }
+
+  function focusNode(nodeId: string, nextView?: NavView) {
+    setSelectedNodeId(nodeId);
+    if (nextView) {
+      selectView(nextView);
+    }
+  }
+
   async function handleBundlePreviewClick(item: ContextBundlePreviewItem) {
-    const targetNodeId = detail.node?.id;
-    setSelectedNodeId(item.nodeId);
+    const targetNodeId = detailNode?.id;
+    focusNode(item.nodeId);
     if (!targetNodeId || !item.relationId || !item.relationSource) {
       return;
     }
@@ -859,7 +958,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
         body: captureBody.trim(),
       });
       await refreshWorkspaceState();
-      setSelectedNodeId(node.id);
+      focusNode(node.id);
       setView(node.type === 'project' ? 'projects' : 'recent');
       setCaptureTitle('');
       setCaptureBody('');
@@ -879,32 +978,14 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     }
   }
 
-  async function handleApprove(id: string) {
-    try {
-      await approveReview(id);
-      await refreshReviewQueue();
-    } catch (error) {
-      handleRequestFailure(error, 'Failed to approve review item.');
-    }
-  }
-
-  async function handleReject(id: string) {
-    try {
-      await rejectReview(id);
-      await refreshReviewQueue();
-    } catch (error) {
-      handleRequestFailure(error, 'Failed to reject review item.');
-    }
-  }
-
   async function handleRefreshSummary() {
-    if (!detail.node) {
+    if (!detailNode) {
       return;
     }
 
     setIsRefreshingSummary(true);
     try {
-      const refreshedNode = await refreshNodeSummaryRequest(detail.node.id);
+      const refreshedNode = await refreshNodeSummaryRequest(detailNode.id);
       setDetail((current) => ({
         ...current,
         node: refreshedNode,
@@ -960,8 +1041,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
         workspaceName: workspaceNameInput.trim() || undefined,
       });
       const nextSnapshot = await refreshWorkspaceState();
-      setSelectedNodeId(nextSnapshot.nodes[0]?.id ?? '');
-      setDetail({ node: null, related: [], bundleItems: [], activities: [], artifacts: [] });
+      resetWorkspaceSelection(nextSnapshot);
       setWorkspaceNameInput('');
     } catch (error) {
       handleRequestFailure(error, 'Failed to create workspace.');
@@ -977,95 +1057,13 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     try {
       await openWorkspaceSession(rootPath);
       const nextSnapshot = await refreshWorkspaceState();
-      setSelectedNodeId(nextSnapshot.nodes[0]?.id ?? '');
-      setDetail({ node: null, related: [], bundleItems: [], activities: [], artifacts: [] });
+      resetWorkspaceSelection(nextSnapshot);
     } catch (error) {
       handleRequestFailure(error, 'Failed to switch workspace.');
       setWorkspaceActionError(error instanceof Error ? error.message : 'Failed to switch workspace.');
     } finally {
       setIsSwitchingWorkspace(false);
     }
-  }
-
-  async function handleSaveReviewSettings() {
-    setIsSavingSettings(true);
-    setSettingsError(null);
-    setSettingsNotice(null);
-
-    try {
-      const saved = await updateReviewSettings({
-        autoApproveLowRisk: reviewSettings.autoApproveLowRisk,
-        trustedSourceToolNames: mergeToolNames([], reviewSettings.trustedSourceToolNames),
-      });
-      const normalizedSaved = {
-        autoApproveLowRisk: saved.autoApproveLowRisk,
-        trustedSourceToolNames: mergeToolNames([], saved.trustedSourceToolNames),
-      };
-      setSavedReviewSettings(normalizedSaved);
-      setReviewSettings(normalizedSaved);
-      setTrustedToolNameDraft('');
-      setIsSettingsDirty(false);
-      setSettingsNotice('Review settings saved.');
-      await refreshWorkspaceState({ syncReviewSettings: true });
-    } catch (error) {
-      if (isAuthError(error)) {
-        clearRendererToken();
-        setAuthRequired(true);
-        setAuthError('Enter the Memforge API token to continue.');
-      } else {
-        setSettingsError(error instanceof Error ? error.message : 'Failed to save review settings.');
-      }
-    } finally {
-      setIsSavingSettings(false);
-    }
-  }
-
-  function updateReviewSettingsDraft(next: ReviewSettings) {
-    setReviewSettings(next);
-    setIsSettingsDirty(true);
-    setSettingsNotice(null);
-  }
-
-  function toggleTrustedSourceToolName(toolName: string) {
-    const normalized = normalizeToolName(toolName);
-    setReviewSettings((current) => ({
-      ...current,
-      trustedSourceToolNames: current.trustedSourceToolNames.includes(normalized)
-        ? current.trustedSourceToolNames.filter((item) => item !== normalized)
-        : [...current.trustedSourceToolNames, normalized],
-    }));
-    setIsSettingsDirty(true);
-    setSettingsNotice(null);
-  }
-
-  function addTrustedToolNamesFromDraft() {
-    const additions = parseToolNames(trustedToolNameDraft);
-    if (!additions.length) {
-      return;
-    }
-
-    setReviewSettings((current) => ({
-      ...current,
-      trustedSourceToolNames: mergeToolNames(current.trustedSourceToolNames, additions),
-    }));
-    setIsSettingsDirty(true);
-    setSettingsNotice(null);
-    setTrustedToolNameDraft('');
-  }
-
-  function discardReviewSettings() {
-    setReviewSettings(savedReviewSettings);
-    setTrustedToolNameDraft('');
-    setIsSettingsDirty(false);
-    setSettingsError(null);
-    setSettingsNotice('Changes discarded.');
-  }
-
-  function resetReviewSettings() {
-    setReviewSettings(DEFAULT_REVIEW_SETTINGS);
-    setIsSettingsDirty(true);
-    setSettingsNotice(null);
-    setTrustedToolNameDraft('');
   }
 
   function selectView(next: NavView) {
@@ -1075,8 +1073,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   }
 
   function openNodeInGraph(nodeId: string) {
-    setSelectedNodeId(nodeId);
-    selectView('graph');
+    focusNode(nodeId, 'graph');
   }
 
   const centerContent = (() => {
@@ -1129,7 +1126,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               <div className="empty-state">{loadError}</div>
             </Section>
           ) : null}
-          <Section title="Search" subtitle="Fast retrieval over titles, summaries, bodies, and tags.">
+          <Section title="Search" subtitle={getSearchScopeSummary(searchScopes)}>
             <label className="search-box" htmlFor="search-input">
               <span>Query</span>
               <input
@@ -1139,33 +1136,66 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 placeholder="Search Memforge"
               />
             </label>
+            <div className="chip-row">
+              {SEARCH_SCOPE_OPTIONS.map((option) => {
+                const active =
+                  option.scopes.length === searchScopes.length &&
+                  option.scopes.every((scope) => searchScopes.includes(scope));
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`tool-chip ${active ? 'tool-chip--active' : ''}`}
+                    onClick={() => setSearchScopes(option.scopes)}
+                    aria-pressed={active}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="settings-copy">
+              Scope is currently <strong>{getSearchScopeMode(searchScopes)}</strong>. Node results surface durable knowledge;
+              activity results surface operational history with target-node context.
+            </p>
           </Section>
           <Section
             title={`Results ${searchResults.length ? `(${searchResults.length})` : ''}`}
-            subtitle="Click a result to inspect the node and its local context."
+            subtitle="Select a result to inspect the node, governance state, and nearby context."
           >
             <div className="stack">
-              {searchResults.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
-                  onClick={() => {
-                    setSelectedNodeId(node.id);
-                    selectView('search');
-                  }}
-                >
-                  <div className="result-card__top">
-                    <strong>{node.title}</strong>
-                    <span className={`pill ${badgeTone(node.status)}`}>{node.type}</span>
-                  </div>
-                  <p>{node.summary}</p>
-                  <div className="meta-row">
-                    <span>{node.sourceLabel}</span>
-                    <span>{formatTime(node.updatedAt)}</span>
-                  </div>
-                </button>
-              ))}
+              {searchResults.map((item) => {
+                const nodeId = getSearchResultNodeId(item);
+                const meta = getSearchResultMeta(item);
+                return (
+                  <button
+                    key={getSearchResultKey(item)}
+                    type="button"
+                    className={`result-card ${nodeId && selectedNodeId === nodeId ? 'selected' : ''}`}
+                    disabled={!nodeId}
+                    onClick={() => {
+                      if (nodeId) {
+                        focusNode(nodeId, 'search');
+                      }
+                    }}
+                  >
+                    <span className="eyebrow">{getSearchResultEyebrow(item)}</span>
+                    <div className="result-card__top">
+                      <strong>{getSearchResultTitle(item)}</strong>
+                      <span className={`pill ${badgeTone(getSearchResultStatus(item))}`}>{getSearchResultBadge(item)}</span>
+                    </div>
+                    <p>{getSearchResultSummary(item)}</p>
+                    <div className="meta-row">
+                      <span>{getSearchResultSecondaryMeta(item)}</span>
+                      <span>{meta.source}</span>
+                    </div>
+                    <div className="meta-row">
+                      <span>{item.resultType === 'node' ? 'durable retrieval' : 'activity recall'}</span>
+                      <span>{formatTime(meta.updatedAt)}</span>
+                    </div>
+                  </button>
+                );
+              })}
               {!searchResults.length ? <div className="empty-state">No matches for this query.</div> : null}
             </div>
           </Section>
@@ -1173,36 +1203,50 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       );
     }
 
-    if (view === 'review') {
+    if (view === 'governance') {
       return (
-        <Section title="Review queue" subtitle="Approve or reject incoming suggestions and promotions.">
+        <Section title="Governance" subtitle="Automatic governance highlights contested and low-confidence entities.">
           <div className="stack">
-            {reviewQueue.map((item) => (
+            {governanceIssues.map((item) => (
               <article
-                key={item.id}
-                className={`review-card ${selectedReviewId === item.id ? 'selected' : ''}`}
-                onClick={() => setSelectedReviewId(item.id)}
+                key={`${item.entityType}:${item.entityId}`}
+                className={`governance-card ${selectedGovernanceId === item.entityId ? 'selected' : ''}`}
+                onClick={() => setSelectedGovernanceId(item.entityId)}
               >
+                <span className="eyebrow">{item.entityType === 'node' ? 'Node issue' : 'Relation issue'}</span>
                 <div className="result-card__top">
-                  <strong>{item.reviewType}</strong>
-                  <span className={`pill ${badgeTone(item.status)}`}>{item.status}</span>
+                  <strong>{item.title}</strong>
+                  <span className={`pill ${badgeTone(item.state)}`}>{item.state}</span>
                 </div>
-                <p>{item.notes}</p>
+                <p>{item.subtitle || getGovernanceStateSummary(item.state)}</p>
                 <div className="meta-row">
-                  <span>Proposed by {item.proposedBy}</span>
                   <span>{item.entityType}:{item.entityId}</span>
+                  <span>confidence {formatConfidence(item.confidence)}</span>
+                </div>
+                <div className="chip-row">
+                  {item.reasons.slice(0, 3).map((reason) => (
+                    <span key={reason} className="chip">
+                      {reason}
+                    </span>
+                  ))}
                 </div>
                 <div className="action-row">
-                  <button type="button" onClick={() => void handleApprove(item.id)}>
-                    Approve
-                  </button>
-                  <button type="button" className="ghost" onClick={() => void handleReject(item.id)}>
-                    Reject
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={item.entityType !== 'node'}
+                    onClick={() => {
+                      if (item.entityType === 'node') {
+                        focusNode(item.entityId, 'governance');
+                      }
+                    }}
+                  >
+                    {getGovernanceActionLabel(item)}
                   </button>
                 </div>
               </article>
             ))}
-            {!reviewQueue.length ? <div className="empty-state">Nothing pending review.</div> : null}
+            {!governanceIssues.length ? <div className="empty-state">No governance issues are currently surfaced.</div> : null}
           </div>
         </Section>
       );
@@ -1212,16 +1256,15 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       return (
         <Section title="Projects" subtitle="Canonical project nodes and their local context.">
           <div className="stack">
-            {pinnedNodes.map((node) => (
-              <button
-                key={node.id}
-                type="button"
-                className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
-                onClick={() => {
-                  setSelectedNodeId(node.id);
-                  selectView('projects');
-                }}
-              >
+              {pinnedNodes.map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
+                  onClick={() => {
+                    focusNode(node.id, 'projects');
+                  }}
+                >
                 <div className="result-card__top">
                   <strong>{node.title}</strong>
                   <span className={`pill ${badgeTone(node.status)}`}>{node.status}</span>
@@ -1244,7 +1287,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 value={selectedNode?.id ?? ''}
                 onChange={(event) => {
                   if (event.target.value) {
-                    setSelectedNodeId(event.target.value);
+                    focusNode(event.target.value);
                   }
                 }}
               >
@@ -1322,16 +1365,15 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
             {!isGraphLoading && !graphConnections.length ? (
               <div className="empty-state">No related nodes in this neighborhood yet.</div>
             ) : null}
-            {graphConnections.map((item) => (
-              <button
-                key={`${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'focus'}`}
-                type="button"
-                className={`graph-node graph-node--hop-${item.hop}`}
-                onClick={() => {
-                  setSelectedNodeId(item.node.id);
-                  selectView('graph');
-                }}
-              >
+              {graphConnections.map((item) => (
+                <button
+                  key={`${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'focus'}`}
+                  type="button"
+                  className={`graph-node graph-node--hop-${item.hop}`}
+                  onClick={() => {
+                    focusNode(item.node.id, 'graph');
+                  }}
+                >
                 <div className="result-card__top">
                   <strong>{item.node.title}</strong>
                   <span className={`pill ${badgeTone(item.node.status)}`}>{item.node.type}</span>
@@ -1426,131 +1468,31 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
             <section className="settings-card">
               <div className="settings-head">
                 <div>
-                  <span className="eyebrow">Review policy</span>
-                  <h3>Trusted sources and low-risk writes</h3>
-                  <p className="settings-copy">Keep review for high-impact content by default. Trusted tools can bypass review for notes, decisions, and default relations.</p>
+                  <span className="eyebrow">Automatic governance</span>
+                  <h3>Deterministic promotion and contest rules</h3>
+                  <p className="settings-copy">Memforge v2 no longer requires manual review actions. Governance is derived from local confidence, contradiction signals, and usage feedback.</p>
                 </div>
                 <div className="settings-head-meta">
-                  <span className={`pill ${reviewSettings.autoApproveLowRisk ? 'tone-good' : 'tone-muted'}`}>
-                    {reviewSettings.autoApproveLowRisk ? 'Low-risk auto-approve on' : 'Low-risk auto-approve off'}
-                  </span>
-                  <span className="pill tone-info">{reviewSettings.trustedSourceToolNames.length} trusted tool{reviewSettings.trustedSourceToolNames.length === 1 ? '' : 's'}</span>
+                  <span className="pill tone-good">manual review removed</span>
+                  <span className="pill tone-info">{governanceIssues.length} live issue{governanceIssues.length === 1 ? '' : 's'}</span>
                 </div>
               </div>
-
-              <div className="toggle-row">
-                <input
-                  id="auto-approve-low-risk"
-                  type="checkbox"
-                  checked={reviewSettings.autoApproveLowRisk}
-                  onChange={(event) => {
-                    updateReviewSettingsDraft({
-                      ...reviewSettings,
-                      autoApproveLowRisk: event.target.checked,
-                    });
-                  }}
-                />
-                <label htmlFor="auto-approve-low-risk" className="toggle-copy">
-                  <strong>Auto-approve low-risk agent notes</strong>
-                  <span>Useful for short append-only notes and routine agent output.</span>
-                </label>
-              </div>
-
               <div className="settings-block">
-                <div className="settings-block-head">
-                  <div>
-                    <span className="eyebrow">Trusted source tools</span>
-                    <p className="settings-copy">These `toolName` values bypass review for notes, decisions, and default relations.</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      setReviewSettings((current) => ({
-                        ...current,
-                        trustedSourceToolNames: [],
-                      }));
-                      setIsSettingsDirty(true);
-                      setSettingsNotice(null);
-                    }}
-                  >
-                    Clear all
-                  </button>
-                </div>
-
                 <div className="chip-row">
-                  {reviewSettings.trustedSourceToolNames.length ? (
-                    reviewSettings.trustedSourceToolNames.map((toolName) => (
-                      <button
-                        key={toolName}
-                        type="button"
-                        className="tool-chip tool-chip--active"
-                        onClick={() => toggleTrustedSourceToolName(toolName)}
-                        title="Remove trusted tool"
-                      >
-                        <span>{toolName}</span>
-                        <span aria-hidden="true">×</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="empty-state compact">No trusted tools yet. Add one below or use a preset.</div>
-                  )}
+                  <span className="pill tone-good">Search feedback reranks results</span>
+                  <span className="pill tone-warn">Contradictions can contest content</span>
+                  <span className="pill tone-info">Suggested notes can auto-promote</span>
                 </div>
-
-                <div className="settings-inline">
-                  <label className="search-box settings-inline__input">
-                    <span>Add trusted tool</span>
-                    <input
-                      value={trustedToolNameDraft}
-                      onChange={(event) => {
-                        setTrustedToolNameDraft(event.target.value);
-                        setSettingsNotice(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          addTrustedToolNamesFromDraft();
-                        }
-                      }}
-                      placeholder="codex, claude-code"
-                    />
-                  </label>
-                  <button type="button" onClick={addTrustedToolNamesFromDraft}>
-                    Add
-                  </button>
-                </div>
-
-                <div className="preset-row">
-                  {TRUSTED_SOURCE_PRESETS.map((toolName) => {
-                    const active = reviewSettings.trustedSourceToolNames.includes(toolName);
-                    return (
-                      <button
-                        key={toolName}
-                        type="button"
-                        className={`tool-chip ${active ? 'tool-chip--active' : ''}`}
-                        onClick={() => toggleTrustedSourceToolName(toolName)}
-                        aria-pressed={active}
-                      >
-                        {toolName}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {settingsError ? <div className="empty-state">{settingsError}</div> : null}
-              {settingsNotice ? <div className="empty-state">{settingsNotice}</div> : null}
-
-              <div className="action-row settings-actions">
-                <button type="button" onClick={() => void handleSaveReviewSettings()} disabled={isSavingSettings || !isSettingsDirty}>
-                  {isSavingSettings ? 'Saving...' : 'Save changes'}
-                </button>
-                <button type="button" className="ghost" onClick={discardReviewSettings} disabled={isSavingSettings || !isSettingsDirty}>
-                  Discard
-                </button>
-                <button type="button" className="ghost" onClick={resetReviewSettings} disabled={isSavingSettings}>
-                  Reset defaults
-                </button>
+                <p className="settings-copy">
+                  Confidence is derived from local source trust, search feedback, relation usage, contradiction signals,
+                  and stability over time. Contested entities stay searchable but rank below healthier peers until local
+                  evidence improves.
+                </p>
+                <p className="settings-copy">
+                  Use the Governance tab to inspect low-confidence or contested entities. MCP and CLI surfaces expose
+                  recompute and issue listing for operational workflows, while `review.*` settings remain legacy
+                  compatibility inputs only.
+                </p>
               </div>
             </section>
 
@@ -1598,8 +1540,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 type="button"
                 className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
                 onClick={() => {
-                  setSelectedNodeId(node.id);
-                  selectView('recent');
+                  focusNode(node.id, 'recent');
                 }}
               >
                 <div className="result-card__top">
@@ -1621,14 +1562,14 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
             <div className="empty-state">{loadError}</div>
           </Section>
         ) : null}
-        <Section title="Home" subtitle="Fast re-entry point for search, review, and pinned context.">
+        <Section title="Home" subtitle="Fast re-entry point for search, governance, and pinned context.">
           <div className="home-grid">
             <div className="hero-card">
               <span className="eyebrow">Workspace</span>
               <h3>{workspaceName}</h3>
               <p>
-                Retrieve compact context quickly, inspect provenance, and keep suggested content
-                reviewable.
+                Retrieve compact context quickly, inspect provenance, and let automatic governance
+                keep durable content healthy.
               </p>
               <form
                 className="hero-search"
@@ -1654,9 +1595,9 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               <p>{pinnedNodes[0]?.summary}</p>
             </div>
             <div className="mini-card">
-              <span className="eyebrow">Review</span>
-              <strong>{reviewQueue.length} pending items</strong>
-              <p>Relation suggestions and node promotions need attention.</p>
+              <span className="eyebrow">Governance</span>
+              <strong>{governanceIssues.length} surfaced issues</strong>
+              <p>Contested or low-confidence entities are available for inspection in one place.</p>
             </div>
           </div>
         </Section>
@@ -1698,7 +1639,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               </div>
               <p>Last workspace reindex: {formatMaybeTime(semanticStatus?.lastBackfillAt ?? null)}</p>
               <div className="chip-row">
-                {(['all', 'failed', 'stale', 'pending'] as const).map((filter) => (
+                {SEMANTIC_ISSUE_FILTERS.map((filter) => (
                   <button
                     key={filter}
                     type="button"
@@ -1878,8 +1819,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               type="button"
               className="sidebar-link"
               onClick={() => {
-                setSelectedNodeId(node.id);
-                selectView('projects');
+                focusNode(node.id, 'projects');
               }}
             >
               {node.title}
@@ -1894,8 +1834,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               type="button"
               className="sidebar-link"
               onClick={() => {
-                setSelectedNodeId(node.id);
-                selectView('recent');
+                focusNode(node.id, 'recent');
               }}
             >
               {node.title}
@@ -1907,7 +1846,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       <main className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Memforge v1</span>
+            <span className="eyebrow">Memforge v2</span>
             <h1>{view.charAt(0).toUpperCase() + view.slice(1)}</h1>
           </div>
           <div className="topbar-meta">
@@ -1921,16 +1860,16 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
 
           <aside className="detail-pane">
             <Section title="Node detail" subtitle="Selected node and its local context.">
-              {detail.node ? (
+              {detailNode ? (
                 <div className="detail-stack">
                   <div className="detail-title">
-                    <strong>{detail.node.title}</strong>
-                    <span className={`pill ${badgeTone(detail.node.status)}`}>{detail.node.type}</span>
+                    <strong>{detailNode.title}</strong>
+                    <span className={`pill ${badgeTone(detailNode.status)}`}>{detailNode.type}</span>
                     {summaryLifecycle.isStale ? <span className="pill tone-warn">summary stale</span> : null}
                   </div>
-                  <p>{detail.node.summary}</p>
+                  <p>{detailNode.summary}</p>
                   <div className="action-row">
-                    <button type="button" onClick={() => openNodeInGraph(detail.node!.id)}>
+                    <button type="button" onClick={() => openNodeInGraph(detailNode.id)}>
                       Inspect in Graph
                     </button>
                     <button type="button" onClick={() => void handleRefreshSummary()} disabled={isRefreshingSummary}>
@@ -1945,9 +1884,9 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                       {isReindexingSelectedNode ? 'Queueing node reindex...' : 'Reindex selected node'}
                     </button>
                   </div>
-                  <div className="body-copy">{detail.node.body}</div>
+                  <div className="body-copy">{detailNode.body}</div>
                   <div className="chip-row">
-                    {detail.node.tags.map((tag) => (
+                    {detailNode.tags.map((tag) => (
                       <span key={tag} className="chip">
                         {tag}
                       </span>
@@ -1956,11 +1895,11 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                   <div className="meta-grid">
                     <div>
                       <span className="eyebrow">Source</span>
-                      <p>{detail.node.sourceLabel}</p>
+                      <p>{detailNode.sourceLabel}</p>
                     </div>
                     <div>
                       <span className="eyebrow">Canonicality</span>
-                      <p>{detail.node.canonicality}</p>
+                      <p>{detailNode.canonicality}</p>
                     </div>
                     <div>
                       <span className="eyebrow">Summary lifecycle</span>
@@ -1968,6 +1907,39 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                         {summaryLifecycle.summarySource ?? 'unknown'}
                         {summaryLifecycle.summaryUpdatedAt ? ` · ${formatTime(summaryLifecycle.summaryUpdatedAt)}` : ''}
                       </p>
+                    </div>
+                    <div>
+                      <span className="eyebrow">Governance</span>
+                      <p>
+                        {detail.governance.state?.state ?? 'healthy'} ·{' '}
+                        {detail.governance.state ? formatConfidence(detail.governance.state.confidence) : 'n/a'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="stack compact">
+                    <div>
+                      <span className="eyebrow">Governance reasons</span>
+                      <div className="chip-row">
+                        {(detail.governance.state?.reasons ?? ['No governance pressure is currently attached.']).map((reason) => (
+                          <span key={reason} className="chip">
+                            {reason}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="eyebrow">Recent governance events</span>
+                      <div className="stack compact">
+                        {detail.governance.events.slice(0, 3).map((event) => (
+                          <article key={event.id} className="mini-card">
+                            <strong>{getGovernanceEventLabel(event)}</strong>
+                            <p>{event.reason}</p>
+                          </article>
+                        ))}
+                        {!detail.governance.events.length ? (
+                          <div className="empty-state compact">No governance transitions recorded for this node yet.</div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1984,7 +1956,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                         key={node.id}
                         type="button"
                         className="sidebar-link"
-                        onClick={() => setSelectedNodeId(node.id)}
+                        onClick={() => focusNode(node.id)}
                       >
                         {node.title}
                       </button>
@@ -2051,15 +2023,26 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               </div>
             </Section>
 
-            <Section title="Review focus" subtitle="Highlighted item from the queue.">
-              {activeReview ? (
+            <Section title="Governance focus" subtitle="Highlighted automatic governance issue.">
+              {activeGovernanceIssue ? (
                 <div className="mini-card">
-                  <strong>{activeReview.reviewType}</strong>
-                  <p>{activeReview.notes}</p>
-                  <span className={`pill ${badgeTone(activeReview.status)}`}>{activeReview.status}</span>
+                  <span className="eyebrow">{activeGovernanceIssue.entityType === 'node' ? 'Node issue' : 'Relation issue'}</span>
+                  <strong>{activeGovernanceIssue.title}</strong>
+                  <p>{activeGovernanceIssue.subtitle || getGovernanceStateSummary(activeGovernanceIssue.state)}</p>
+                  <div className="chip-row">
+                    <span className={`pill ${badgeTone(activeGovernanceIssue.state)}`}>{activeGovernanceIssue.state}</span>
+                    <span className="pill tone-muted">confidence {formatConfidence(activeGovernanceIssue.confidence)}</span>
+                  </div>
+                  <div className="chip-row">
+                    {activeGovernanceIssue.reasons.slice(0, 3).map((reason) => (
+                      <span key={reason} className="chip">
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               ) : (
-                <div className="empty-state">No review items pending.</div>
+                <div className="empty-state">No governance issues are currently surfaced.</div>
               )}
             </Section>
           </aside>

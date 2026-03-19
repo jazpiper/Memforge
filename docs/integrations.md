@@ -1,5 +1,9 @@
 # Memforge — Integrations
 
+> Historical v1 integration reference.
+> Some sections in this document no longer reflect the shipped v2 surface.
+> For current behavior, see `README.md`, `docs/api.md`, `docs/mcp.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
+
 ## 1. Integration goal
 
 The purpose of integrations is not to make Memforge own every workflow.

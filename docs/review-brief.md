@@ -1,8 +1,12 @@
 # Memforge — Review Brief
 
+> Historical v1 review document.
+> Some sections in this document no longer reflect the shipped v2 surface.
+> For current behavior, see `README.md`, `docs/api.md`, `docs/mcp.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
+
 ## 1. Purpose of this document
 
-This brief is for a reviewer who wants to quickly understand the project, its constraints, and the most important things to pressure-test.
+This brief was written for a reviewer who wanted to quickly understand the project, its constraints, and the most important things to pressure-test during the v1 review-driven phase.
 
 It is intentionally shorter than the full document set.
 

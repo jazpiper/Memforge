@@ -2,12 +2,16 @@ import { mockWorkspace } from './mockWorkspace';
 import type {
   Activity,
   Artifact,
+  GovernanceEventRecord,
+  GovernanceIssueItem,
+  GovernancePayload,
+  GovernanceStateRecord,
   GraphConnection,
   Integration,
+  NodeDetail,
   Node,
   Relation,
-  ReviewSettings,
-  ReviewQueueItem,
+  SearchResultItem,
   ContextBundlePreviewItem,
   SemanticIssueItem,
   SemanticIssuePage,
@@ -53,16 +57,11 @@ export interface WorkspaceCatalog {
 export interface WorkspaceEvent {
   type: 'workspace.updated';
   reason: string;
-  entityType?: 'node' | 'relation' | 'activity' | 'artifact' | 'review' | 'workspace' | 'integration' | 'settings';
+  entityType?: 'node' | 'relation' | 'activity' | 'artifact' | 'workspace' | 'integration' | 'settings';
   entityId?: string;
   workspaceRoot: string;
   at: string;
 }
-
-const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
-  autoApproveLowRisk: true,
-  trustedSourceToolNames: [],
-};
 
 function cloneWorkspace(seed: WorkspaceSeed) {
   return structuredClone(seed);
@@ -82,12 +81,42 @@ function mapWorkspace(payload: any): Workspace {
   };
 }
 
+function readPayloadData<T = any>(payload: any): T {
+  return payload?.data ?? payload;
+}
+
+function readPayloadItems(payload: any): any[] {
+  const data = readPayloadData(payload);
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+function readBundleItems(payload: any): any[] {
+  const data = readPayloadData(payload);
+  return Array.isArray(data?.bundle?.items) ? data.bundle.items : [];
+}
+
+function mapPayloadItems<T>(payload: any, mapper: (raw: any) => T): T[] {
+  return readPayloadItems(payload).map(mapper);
+}
+
 function mapWorkspaceCatalogItem(raw: any): WorkspaceCatalogItem {
   const workspace = mapWorkspace(raw);
   return {
     ...workspace,
     isCurrent: Boolean(raw?.isCurrent),
     lastOpenedAt: raw?.lastOpenedAt ?? new Date().toISOString(),
+  };
+}
+
+function mapWorkspaceCatalogItems(rawItems: unknown): WorkspaceCatalogItem[] {
+  return Array.isArray(rawItems) ? rawItems.map(mapWorkspaceCatalogItem) : [];
+}
+
+function mapWorkspaceCatalogResponse(payload: any): WorkspaceCatalog {
+  const data = readPayloadData(payload);
+  return {
+    current: mapWorkspace(data?.current),
+    items: mapWorkspaceCatalogItems(data?.items),
   };
 }
 
@@ -161,18 +190,47 @@ function mapActivity(raw: any): Activity {
   };
 }
 
-function mapRelation(raw: any): Relation {
+function mapGovernanceState(raw: any): GovernanceStateRecord {
   return {
-    id: raw.id,
-    fromNodeId: raw.fromNodeId ?? raw.from_node_id,
-    toNodeId: raw.toNodeId ?? raw.to_node_id,
-    relationType: raw.relationType ?? raw.relation_type,
-    status: raw.status,
-    createdBy: raw.createdBy ?? raw.created_by ?? raw.sourceLabel ?? 'unknown',
-    sourceType: raw.sourceType ?? raw.source_type ?? 'system',
-    sourceLabel: raw.sourceLabel ?? raw.source_label ?? 'system',
+    entityType: raw.entityType ?? raw.entity_type,
+    entityId: raw.entityId ?? raw.entity_id,
+    state: raw.state ?? 'healthy',
+    confidence: typeof raw.confidence === 'number' ? raw.confidence : 0,
+    reasons: Array.isArray(raw.reasons) ? raw.reasons : [],
+    lastEvaluatedAt: raw.lastEvaluatedAt ?? raw.last_evaluated_at ?? new Date().toISOString(),
+    lastTransitionAt: raw.lastTransitionAt ?? raw.last_transition_at ?? new Date().toISOString(),
+    metadata: raw.metadata ?? {},
+  };
+}
+
+function mapGovernanceIssue(raw: any): GovernanceIssueItem {
+  const state = mapGovernanceState(raw);
+  return {
+    ...state,
+    title: raw.title ?? raw.display_title ?? `${state.entityType}:${state.entityId}`,
+    subtitle: raw.subtitle ?? raw.display_subtitle ?? '',
+  };
+}
+
+function mapGovernanceEvent(raw: any): GovernanceEventRecord {
+  return {
+    id: raw.id ?? `gov-event:${raw.entityType ?? raw.entity_type}:${raw.entityId ?? raw.entity_id}:${raw.eventType ?? raw.event_type ?? 'evaluated'}`,
+    entityType: raw.entityType ?? raw.entity_type ?? 'node',
+    entityId: raw.entityId ?? raw.entity_id,
+    eventType: raw.eventType ?? raw.event_type ?? 'evaluated',
+    previousState: raw.previousState ?? raw.previous_state ?? null,
+    nextState: raw.nextState ?? raw.next_state ?? 'healthy',
+    confidence: typeof raw.confidence === 'number' ? raw.confidence : 0,
+    reason: raw.reason ?? 'No governance reason available.',
     createdAt: raw.createdAt ?? raw.created_at ?? new Date().toISOString(),
     metadata: raw.metadata ?? {},
+  };
+}
+
+function mapGovernancePayload(raw: any): GovernancePayload {
+  return {
+    state: raw?.state ? mapGovernanceState(raw.state) : null,
+    events: Array.isArray(raw?.events) ? raw.events.map(mapGovernanceEvent) : [],
   };
 }
 
@@ -191,17 +249,98 @@ function mapArtifact(raw: any): Artifact {
   };
 }
 
-function mapReviewItem(raw: any): ReviewQueueItem {
+function buildWorkspaceCatalog(workspace: Workspace, lastOpenedAt = new Date().toISOString()): WorkspaceCatalog {
   return {
-    id: raw.id,
-    entityType: raw.entityType ?? raw.entity_type,
-    entityId: raw.entityId ?? raw.entity_id,
-    reviewType: raw.reviewType ?? raw.review_type,
-    proposedBy: raw.proposedBy ?? raw.proposed_by ?? 'system',
-    createdAt: raw.createdAt ?? raw.created_at ?? new Date().toISOString(),
-    status: raw.status,
-    notes: raw.notes ?? '',
-    metadata: raw.metadata ?? {},
+    current: workspace,
+    items: [
+      {
+        ...workspace,
+        isCurrent: true,
+        lastOpenedAt,
+      },
+    ],
+  };
+}
+
+function buildFallbackGovernanceState(node: Node): GovernanceStateRecord {
+  if (node.status === 'contested') {
+    return {
+      entityType: 'node',
+      entityId: node.id,
+      state: 'contested',
+      confidence: 0.22,
+      reasons: ['Historical contradiction or migration pressure is still attached to this node.'],
+      lastEvaluatedAt: node.updatedAt,
+      lastTransitionAt: node.updatedAt,
+      metadata: {
+        source: 'fallback',
+      },
+    };
+  }
+
+  if (node.canonicality === 'suggested' || node.canonicality === 'generated') {
+    return {
+      entityType: 'node',
+      entityId: node.id,
+      state: 'low_confidence',
+      confidence: 0.56,
+      reasons: ['Suggested or generated content still needs repeated local confirmation signals.'],
+      lastEvaluatedAt: node.updatedAt,
+      lastTransitionAt: node.updatedAt,
+      metadata: {
+        source: 'fallback',
+      },
+    };
+  }
+
+  return {
+    entityType: 'node',
+    entityId: node.id,
+    state: 'healthy',
+    confidence: 0.86,
+    reasons: ['Canonical or appended content is currently stable in the fallback workspace.'],
+    lastEvaluatedAt: node.updatedAt,
+    lastTransitionAt: node.updatedAt,
+    metadata: {
+      source: 'fallback',
+    },
+  };
+}
+
+function buildFallbackGovernanceEvents(node: Node, state: GovernanceStateRecord): GovernanceEventRecord[] {
+  return [
+    {
+      id: `gov-fallback:${node.id}`,
+      entityType: 'node',
+      entityId: node.id,
+      eventType: state.state === 'contested' ? 'contested' : 'evaluated',
+      previousState: null,
+      nextState: state.state,
+      confidence: state.confidence,
+      reason: state.reasons[0] ?? 'Fallback governance evaluation.',
+      createdAt: node.updatedAt,
+      metadata: {
+        source: 'fallback',
+      },
+    },
+  ];
+}
+
+function buildFallbackNodeDetail(node: Node): NodeDetail {
+  const governanceState = buildFallbackGovernanceState(node);
+  return {
+    node,
+    related: fallbackState.relations
+      .filter((relation) => relation.fromNodeId === node.id || relation.toNodeId === node.id)
+      .map((relation) => (relation.fromNodeId === node.id ? relation.toNodeId : relation.fromNodeId))
+      .map((relatedId) => fallbackState.nodes.find((item) => item.id === relatedId))
+      .filter((item): item is Node => Boolean(item)),
+    activities: fallbackState.activities.filter((activity) => activity.targetNodeId === node.id),
+    artifacts: fallbackState.artifacts.filter((artifact) => artifact.nodeId === node.id),
+    governance: {
+      state: governanceState,
+      events: buildFallbackGovernanceEvents(node, governanceState),
+    },
   };
 }
 
@@ -213,6 +352,30 @@ function mapIntegration(raw: any): Integration {
     status: raw.status ?? 'active',
     capabilities: Array.isArray(raw.capabilities) ? raw.capabilities : [],
     updatedAt: raw.updatedAt ?? raw.updated_at ?? raw.createdAt ?? raw.created_at ?? new Date().toISOString(),
+  };
+}
+
+function mapNeighborhoodConnection(targetNodeId: string, raw: any): GraphConnection {
+  const node = mapNode(raw.node);
+  const edge = raw.edge ?? {};
+  const relation: Relation = {
+    id: edge.relationId ?? edge.relation_id ?? `edge:${targetNodeId}:${node.id}:${edge.relationType ?? edge.relation_type ?? 'related_to'}`,
+    fromNodeId: edge.direction === 'incoming' ? node.id : targetNodeId,
+    toNodeId: edge.direction === 'incoming' ? targetNodeId : node.id,
+    relationType: edge.relationType ?? edge.relation_type ?? 'related_to',
+    status: edge.relationStatus ?? edge.relation_status ?? 'active',
+    createdBy: edge.generator ?? edge.relationSource ?? 'memforge',
+    sourceType: edge.relationSource === 'inferred' ? 'system' : 'human',
+    sourceLabel: edge.relationSource === 'inferred' ? `inferred:${edge.generator ?? 'derived'}` : 'canonical',
+    createdAt: new Date().toISOString(),
+    metadata: {},
+  };
+
+  return {
+    node,
+    relation,
+    direction: edge.direction === 'incoming' ? 'incoming' : 'outgoing',
+    hop: 1 as const,
   };
 }
 
@@ -295,21 +458,9 @@ export async function getWorkspaceCatalog(): Promise<WorkspaceCatalog> {
   return withFallback(
     async () => {
       const payload = await requestJson('/workspaces');
-      return {
-        current: mapWorkspace(payload?.data?.current),
-        items: ((payload?.data?.items ?? []) as any[]).map(mapWorkspaceCatalogItem),
-      };
+      return mapWorkspaceCatalogResponse(payload);
     },
-    async () => ({
-      current: fallbackState.workspace,
-      items: [
-        {
-          ...fallbackState.workspace,
-          isCurrent: true,
-          lastOpenedAt: new Date().toISOString(),
-        },
-      ],
-    }),
+    async () => buildWorkspaceCatalog(fallbackState.workspace),
   );
 }
 
@@ -317,7 +468,7 @@ export async function getBootstrap(): Promise<BootstrapInfo> {
   return withFallback(
     async () => {
       const payload = await requestJson('/bootstrap');
-      const data = payload?.data ?? payload;
+      const data = readPayloadData(payload);
       const workspace = mapWorkspace(data.workspace ?? data);
       return {
         workspace,
@@ -361,24 +512,22 @@ export async function getSemanticIssues(options?: {
         params.set('statuses', options.statuses.join(','));
       }
       const payload = await requestJson(`/semantic/issues?${params.toString()}`);
-      const items = Array.isArray(payload?.data?.items)
-        ? payload.data.items
-            .filter((item: any) => item && typeof item.nodeId === 'string')
-            .map((item: any) => ({
-              nodeId: item.nodeId,
-              title: typeof item.title === 'string' ? item.title : null,
-              embeddingStatus:
-                item.embeddingStatus === 'pending' ||
-                item.embeddingStatus === 'processing' ||
-                item.embeddingStatus === 'stale' ||
-                item.embeddingStatus === 'ready' ||
-                item.embeddingStatus === 'failed'
-                  ? item.embeddingStatus
-                  : 'pending',
-              staleReason: typeof item.staleReason === 'string' ? item.staleReason : null,
-              updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
-            }))
-        : [];
+      const items = readPayloadItems(payload)
+        .filter((item: any) => item && typeof item.nodeId === 'string')
+        .map((item: any) => ({
+          nodeId: item.nodeId,
+          title: typeof item.title === 'string' ? item.title : null,
+          embeddingStatus:
+            item.embeddingStatus === 'pending' ||
+            item.embeddingStatus === 'processing' ||
+            item.embeddingStatus === 'stale' ||
+            item.embeddingStatus === 'ready' ||
+            item.embeddingStatus === 'failed'
+              ? item.embeddingStatus
+              : 'pending',
+          staleReason: typeof item.staleReason === 'string' ? item.staleReason : null,
+          updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
+        }));
       return {
         items,
         nextCursor: typeof payload?.data?.nextCursor === 'string' ? payload.data.nextCursor : null,
@@ -398,7 +547,6 @@ export async function getContextBundlePreview(targetId: string): Promise<Context
         method: 'POST',
         body: JSON.stringify({
           target: {
-            type: 'node',
             id: targetId,
           },
           mode: 'compact',
@@ -415,27 +563,25 @@ export async function getContextBundlePreview(targetId: string): Promise<Context
         }),
       });
 
-      return Array.isArray(payload?.data?.bundle?.items)
-        ? payload.data.bundle.items
-            .filter((item: any) => item && typeof item.nodeId === 'string' && item.nodeId !== targetId)
-            .map((item: any) => ({
-              nodeId: item.nodeId,
-              type: item.type,
-              title: typeof item.title === 'string' ? item.title : null,
-              summary: typeof item.summary === 'string' ? item.summary : null,
-              reason: typeof item.reason === 'string' ? item.reason : 'Included for context',
-              relationId: typeof item.relationId === 'string' ? item.relationId : undefined,
-              relationType: typeof item.relationType === 'string' ? item.relationType : undefined,
-              relationSource:
-                item.relationSource === 'canonical' || item.relationSource === 'inferred'
-                  ? item.relationSource
-                  : undefined,
-              relationScore: typeof item.relationScore === 'number' ? item.relationScore : undefined,
-              retrievalRank: typeof item.retrievalRank === 'number' ? item.retrievalRank : undefined,
-              semanticSimilarity: typeof item.semanticSimilarity === 'number' ? item.semanticSimilarity : undefined,
-              generator: typeof item.generator === 'string' ? item.generator : null,
-            }))
-        : [];
+      return readBundleItems(payload)
+        .filter((item: any) => item && typeof item.nodeId === 'string' && item.nodeId !== targetId)
+        .map((item: any) => ({
+          nodeId: item.nodeId,
+          type: item.type,
+          title: typeof item.title === 'string' ? item.title : null,
+          summary: typeof item.summary === 'string' ? item.summary : null,
+          reason: typeof item.reason === 'string' ? item.reason : 'Included for context',
+          relationId: typeof item.relationId === 'string' ? item.relationId : undefined,
+          relationType: typeof item.relationType === 'string' ? item.relationType : undefined,
+          relationSource:
+            item.relationSource === 'canonical' || item.relationSource === 'inferred'
+              ? item.relationSource
+              : undefined,
+          relationScore: typeof item.relationScore === 'number' ? item.relationScore : undefined,
+          retrievalRank: typeof item.retrievalRank === 'number' ? item.retrievalRank : undefined,
+          semanticSimilarity: typeof item.semanticSimilarity === 'number' ? item.semanticSimilarity : undefined,
+          generator: typeof item.generator === 'string' ? item.generator : null,
+        }));
     },
     async () => [],
   );
@@ -484,56 +630,12 @@ export async function queueSemanticReindexForNode(nodeId: string): Promise<{ nod
   };
 }
 
-export async function getReviewSettings(): Promise<ReviewSettings> {
-  return withFallback(
-    async () => {
-      const payload = await requestJson('/settings?keys=review.autoApproveLowRisk,review.trustedSourceToolNames');
-      const values = payload?.data?.values ?? {};
-      return {
-        autoApproveLowRisk:
-          typeof values['review.autoApproveLowRisk'] === 'boolean'
-            ? values['review.autoApproveLowRisk']
-            : DEFAULT_REVIEW_SETTINGS.autoApproveLowRisk,
-        trustedSourceToolNames: Array.isArray(values['review.trustedSourceToolNames'])
-          ? values['review.trustedSourceToolNames'].filter((value: unknown): value is string => typeof value === 'string')
-          : DEFAULT_REVIEW_SETTINGS.trustedSourceToolNames,
-      };
-    },
-    async () => DEFAULT_REVIEW_SETTINGS,
-  );
-}
-
-export async function updateReviewSettings(input: ReviewSettings): Promise<ReviewSettings> {
-  const payload = await requestJson('/settings', {
-    method: 'PATCH',
-    body: JSON.stringify({
-      values: {
-        'review.autoApproveLowRisk': input.autoApproveLowRisk,
-        'review.trustedSourceToolNames': input.trustedSourceToolNames,
-      },
-    }),
-  });
-  const values = payload?.data?.values ?? {};
-  return {
-    autoApproveLowRisk:
-      typeof values['review.autoApproveLowRisk'] === 'boolean'
-        ? values['review.autoApproveLowRisk']
-        : input.autoApproveLowRisk,
-    trustedSourceToolNames: Array.isArray(values['review.trustedSourceToolNames'])
-      ? values['review.trustedSourceToolNames'].filter((value: unknown): value is string => typeof value === 'string')
-      : input.trustedSourceToolNames,
-  };
-}
-
 export async function createWorkspace(input: { rootPath: string; workspaceName?: string }): Promise<WorkspaceCatalog> {
   const payload = await requestJson('/workspaces', {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return {
-    current: mapWorkspace(payload?.data?.current),
-    items: ((payload?.data?.items ?? []) as any[]).map(mapWorkspaceCatalogItem),
-  };
+  return mapWorkspaceCatalogResponse(payload);
 }
 
 export async function openWorkspace(rootPath: string): Promise<WorkspaceCatalog> {
@@ -541,16 +643,13 @@ export async function openWorkspace(rootPath: string): Promise<WorkspaceCatalog>
     method: 'POST',
     body: JSON.stringify({ rootPath }),
   });
-  return {
-    current: mapWorkspace(payload?.data?.current),
-    items: ((payload?.data?.items ?? []) as any[]).map(mapWorkspaceCatalogItem),
-  };
+  return mapWorkspaceCatalogResponse(payload);
 }
 
 export async function getSnapshot(): Promise<WorkspaceSeed> {
   return withFallback(
     async () => {
-      const [workspacePayload, nodesPayload, reviewsPayload, integrationsPayload] = await Promise.all([
+      const [workspacePayload, nodesPayload, integrationsPayload] = await Promise.all([
         requestJson('/workspace'),
         requestJson('/nodes/search', {
           method: 'POST',
@@ -562,13 +661,11 @@ export async function getSnapshot(): Promise<WorkspaceSeed> {
             sort: 'updated_at',
           }),
         }),
-        requestJson('/review-queue?status=pending&limit=20'),
         requestJson('/integrations'),
       ]);
 
-      const nodes = ((nodesPayload?.data?.items ?? []) as any[]).map(mapNode);
-      const reviewQueue = ((reviewsPayload?.data?.items ?? []) as any[]).map(mapReviewItem);
-      const integrations = ((integrationsPayload?.data?.items ?? []) as any[]).map(mapIntegration);
+      const nodes = mapPayloadItems(nodesPayload, mapNode);
+      const integrations = mapPayloadItems(integrationsPayload, mapIntegration);
       const recentNodeIds = [...nodes]
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, 5)
@@ -581,7 +678,6 @@ export async function getSnapshot(): Promise<WorkspaceSeed> {
         relations: [],
         activities: [],
         artifacts: [],
-        reviewQueue,
         integrations,
         pinnedProjectIds,
         recentNodeIds,
@@ -591,55 +687,87 @@ export async function getSnapshot(): Promise<WorkspaceSeed> {
   );
 }
 
-export async function searchNodes(query: string): Promise<Node[]> {
+export async function searchWorkspace(query: string, scopes: Array<'nodes' | 'activities'> = ['nodes', 'activities']): Promise<SearchResultItem[]> {
   return withFallback(
     async () => {
-      const payload = await requestJson('/nodes/search', {
+      const payload = await requestJson('/search', {
         method: 'POST',
         body: JSON.stringify({
           query,
-          filters: {},
+          scopes,
           limit: 20,
           offset: 0,
           sort: query.trim() ? 'relevance' : 'updated_at',
         }),
       });
-      return ((payload?.data?.items ?? []) as any[]).map(mapNode);
+      const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
+      return items.map((item: any) =>
+        item.resultType === 'activity'
+          ? {
+              resultType: 'activity' as const,
+              activity: {
+                ...mapActivity(item.activity),
+                targetNodeTitle: item.activity?.targetNodeTitle ?? item.activity?.target_title,
+                targetNodeType: item.activity?.targetNodeType ?? item.activity?.target_type,
+                targetNodeStatus: item.activity?.targetNodeStatus ?? item.activity?.target_status,
+              },
+            }
+          : {
+              resultType: 'node' as const,
+              node: mapNode(item.node),
+            }
+      );
     },
     async () => {
       const normalized = query.trim().toLowerCase();
-      return fallbackState.nodes.filter((node) => {
-        if (!normalized) return node.status !== 'archived';
-        const haystack = [node.title, node.summary, node.body, node.tags.join(' '), node.sourceLabel, node.type]
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(normalized);
-      });
+      const nodeItems = scopes.includes('nodes')
+        ? fallbackState.nodes
+            .filter((node) => {
+              if (!normalized) return node.status !== 'archived';
+              const haystack = [node.title, node.summary, node.body, node.tags.join(' '), node.sourceLabel, node.type]
+                .join(' ')
+                .toLowerCase();
+              return haystack.includes(normalized);
+            })
+            .map((node) => ({ resultType: 'node' as const, node }))
+        : [];
+      const activityItems = scopes.includes('activities')
+        ? fallbackState.activities
+            .filter((activity) => !normalized || activity.body.toLowerCase().includes(normalized))
+            .map((activity) => {
+              const targetNode = fallbackState.nodes.find((node) => node.id === activity.targetNodeId);
+              return {
+                resultType: 'activity' as const,
+                activity: {
+                  ...activity,
+                  targetNodeTitle: targetNode?.title,
+                  targetNodeType: targetNode?.type,
+                  targetNodeStatus: targetNode?.status,
+                },
+              };
+            })
+        : [];
+      return [...nodeItems, ...activityItems].slice(0, 20);
     },
   );
 }
 
-export async function getNode(id: string): Promise<Node | undefined> {
+export async function getNodeDetail(id: string): Promise<NodeDetail | undefined> {
   return withFallback(
     async () => {
       const payload = await requestJson(`/nodes/${encodeURIComponent(id)}`);
-      return mapNode(payload?.data?.node);
-    },
-    async () => fallbackState.nodes.find((node) => node.id === id),
-  );
-}
-
-export async function getRelatedNodes(id: string): Promise<Node[]> {
-  return withFallback(
-    async () => {
-      const payload = await requestJson(`/nodes/${encodeURIComponent(id)}/related`);
-      return ((payload?.data?.items ?? []) as any[]).map((item) => mapNode(item.node));
+      const data = readPayloadData(payload);
+      return {
+        node: data?.node ? mapNode(data.node) : null,
+        related: Array.isArray(data?.related) ? data.related.map((item: any) => mapNode(item.node ?? item)) : [],
+        activities: Array.isArray(data?.activities) ? data.activities.map(mapActivity) : [],
+        artifacts: Array.isArray(data?.artifacts) ? data.artifacts.map(mapArtifact) : [],
+        governance: mapGovernancePayload(data?.governance),
+      };
     },
     async () => {
-      const linked = fallbackState.relations
-        .filter((relation) => relation.fromNodeId === id || relation.toNodeId === id)
-        .map((relation) => (relation.fromNodeId === id ? relation.toNodeId : relation.fromNodeId));
-      return fallbackState.nodes.filter((node) => linked.includes(node.id) && node.status !== 'archived');
+      const node = fallbackState.nodes.find((item) => item.id === id);
+      return node ? buildFallbackNodeDetail(node) : undefined;
     },
   );
 }
@@ -648,31 +776,7 @@ export async function getRelatedConnections(id: string): Promise<GraphConnection
   return withFallback(
     async () => {
       const payload = await requestJson(`/nodes/${encodeURIComponent(id)}/neighborhood?include_inferred=1&max_inferred=4`);
-      return ((payload?.data?.items ?? []) as any[]).map((item) => {
-        const node = mapNode(item.node);
-        const edge = item.edge ?? {};
-        const relation: Relation = {
-          id: edge.relationId ?? edge.relation_id ?? `edge:${id}:${node.id}:${edge.relationType ?? edge.relation_type ?? 'related_to'}`,
-          fromNodeId: edge.direction === 'incoming' ? node.id : id,
-          toNodeId: edge.direction === 'incoming' ? id : node.id,
-          relationType: edge.relationType ?? edge.relation_type ?? 'related_to',
-          status: edge.relationStatus ?? edge.relation_status ?? 'active',
-          createdBy: edge.generator ?? edge.relationSource ?? 'memforge',
-          sourceType: edge.relationSource === 'inferred' ? 'system' : 'human',
-          sourceLabel:
-            edge.relationSource === 'inferred'
-              ? `inferred:${edge.generator ?? 'derived'}`
-              : 'canonical',
-          createdAt: new Date().toISOString(),
-          metadata: {},
-        };
-        return {
-          node,
-          relation,
-          direction: edge.direction === 'incoming' ? 'incoming' : 'outgoing',
-          hop: 1 as const,
-        };
-      });
+      return mapPayloadItems(payload, (item) => mapNeighborhoodConnection(id, item));
     },
     async () => {
       const items = fallbackState.relations
@@ -731,69 +835,28 @@ export async function getGraphNeighborhood(id: string, hops: 1 | 2): Promise<Gra
   return merged;
 }
 
-export async function getRecentNodes(): Promise<Node[]> {
-  const snapshot = await getSnapshot();
-  return snapshot.recentNodeIds
-    .map((id) => snapshot.nodes.find((node) => node.id === id))
-    .filter((node): node is Node => Boolean(node));
-}
-
-export async function getPinnedNodes(): Promise<Node[]> {
-  const snapshot = await getSnapshot();
-  return snapshot.pinnedProjectIds
-    .map((id) => snapshot.nodes.find((node) => node.id === id))
-    .filter((node): node is Node => Boolean(node));
-}
-
-export async function getActivities(nodeId?: string): Promise<Activity[]> {
+export async function getGovernanceIssues(): Promise<GovernanceIssueItem[]> {
   return withFallback(
     async () => {
-      if (!nodeId) {
-        return [];
-      }
-      const payload = await requestJson(`/nodes/${encodeURIComponent(nodeId)}/activities?limit=20`);
-      return ((payload?.data?.items ?? []) as any[]).map(mapActivity);
+      const payload = await requestJson('/governance/issues?limit=20');
+      return mapPayloadItems(payload, mapGovernanceIssue);
     },
     async () =>
-      nodeId ? fallbackState.activities.filter((activity) => activity.targetNodeId === nodeId) : fallbackState.activities,
+      fallbackState.nodes
+        .filter((node) => node.status === 'contested' || node.canonicality === 'suggested')
+        .map((node) => ({
+          entityType: 'node' as const,
+          entityId: node.id,
+          state: node.status === 'contested' ? 'contested' : 'low_confidence',
+          confidence: node.status === 'contested' ? 0.2 : 0.55,
+          reasons: node.status === 'contested' ? ['fallback contested node'] : ['fallback suggested node'],
+          lastEvaluatedAt: node.updatedAt,
+          lastTransitionAt: node.updatedAt,
+          metadata: {},
+          title: node.title,
+          subtitle: node.type,
+        })),
   );
-}
-
-export async function getArtifacts(nodeId?: string): Promise<Artifact[]> {
-  return withFallback(
-    async () => {
-      if (!nodeId) {
-        return [];
-      }
-      const payload = await requestJson(`/nodes/${encodeURIComponent(nodeId)}/artifacts`);
-      return ((payload?.data?.items ?? []) as any[]).map(mapArtifact);
-    },
-    async () => (nodeId ? fallbackState.artifacts.filter((artifact) => artifact.nodeId === nodeId) : fallbackState.artifacts),
-  );
-}
-
-export async function getReviewQueue(): Promise<ReviewQueueItem[]> {
-  return withFallback(
-    async () => {
-      const payload = await requestJson('/review-queue?status=pending&limit=20');
-      return ((payload?.data?.items ?? []) as any[]).map(mapReviewItem);
-    },
-    async () => fallbackState.reviewQueue,
-  );
-}
-
-export async function approveReview(id: string): Promise<void> {
-  await requestJson(`/review-queue/${encodeURIComponent(id)}/approve`, {
-    method: 'POST',
-    body: JSON.stringify({ source: DEFAULT_SOURCE }),
-  });
-}
-
-export async function rejectReview(id: string): Promise<void> {
-  await requestJson(`/review-queue/${encodeURIComponent(id)}/reject`, {
-    method: 'POST',
-    body: JSON.stringify({ source: DEFAULT_SOURCE }),
-  });
 }
 
 export function subscribeWorkspaceEvents(handlers: {
@@ -822,11 +885,6 @@ export function subscribeWorkspaceEvents(handlers: {
     stream.removeEventListener('workspace.updated', handleWorkspaceUpdate as EventListener);
     stream.close();
   };
-}
-
-export async function getRelations(): Promise<Relation[]> {
-  const snapshot = await getSnapshot();
-  return snapshot.relations;
 }
 
 export async function createNode(input: {

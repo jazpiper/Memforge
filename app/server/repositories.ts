@@ -2,8 +2,12 @@ import { statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
+  ActivitySearchResultItem,
   ActivityRecord,
   ArtifactRecord,
+  GovernanceEventRecord,
+  GovernanceIssueItem,
+  GovernanceStateRecord,
   InferredRelationRecord,
   InferredRelationRecomputeResult,
   IntegrationRecord,
@@ -14,20 +18,28 @@ import type {
   RelationRecord,
   RelationUsageEventRecord,
   RelationUsageSummary,
-  ReviewQueueRecord,
-  SearchResultItem
+  SearchFeedbackEventRecord,
+  SearchFeedbackSummary,
+  SearchResultItem,
+  WorkspaceSearchResultItem
 } from "../shared/types.js";
 import type {
+  ActivitySearchInput,
   AppendActivityInput,
   AppendRelationUsageEventInput,
+  AppendSearchFeedbackInput,
   CreateNodeInput,
   CreateRelationInput,
+  GovernanceEntityType,
+  GovernanceState,
   RecomputeInferredRelationsInput,
+  RecomputeGovernanceInput,
   RegisterIntegrationInput,
   Source,
   UpsertInferredRelationInput,
   UpdateIntegrationInput,
-  UpdateNodeInput
+  UpdateNodeInput,
+  WorkspaceSearchInput
 } from "../shared/contracts.js";
 import { AppError, assertPresent } from "./errors.js";
 import { computeMaintainedScores } from "./relation-scoring.js";
@@ -41,10 +53,14 @@ type SqlValue = string | number | bigint | Uint8Array | null;
 const SUMMARY_UPDATED_AT_KEY = "summaryUpdatedAt";
 const SUMMARY_SOURCE_KEY = "summarySource";
 const SEARCH_TAG_INDEX_VERSION = 1;
+const SEARCH_ACTIVITY_FTS_VERSION = 1;
 const SEMANTIC_INDEX_STATUS_VALUES = ["pending", "processing", "stale", "ready", "failed"] as const;
 const SEMANTIC_ISSUE_STATUS_VALUES = ["pending", "stale", "failed"] as const;
 const DEFAULT_SEMANTIC_CHUNK_AGGREGATION = "max" as const;
 const SEMANTIC_TOP_K_CHUNK_COUNT = 2;
+const SEARCH_FEEDBACK_WINDOW_PADDING = 20;
+const SEARCH_FEEDBACK_MAX_WINDOW = 100;
+const ACTIVITY_RESULT_CAP_PER_TARGET = 2;
 
 type SemanticIndexStatus = (typeof SEMANTIC_INDEX_STATUS_VALUES)[number];
 type SemanticIssueStatus = (typeof SEMANTIC_ISSUE_STATUS_VALUES)[number];
@@ -58,6 +74,18 @@ type SemanticStatusSummary = {
   lastBackfillAt: string | null;
   counts: Record<SemanticIndexStatus, number>;
 };
+
+export interface LegacyReviewQueueRecord {
+  id: string;
+  entityType: string;
+  entityId: string;
+  reviewType: string;
+  proposedBy: string | null;
+  createdAt: string;
+  status: string;
+  notes: string | null;
+  metadata: JsonMap;
+}
 
 type SemanticIssueItem = {
   nodeId: string;
@@ -104,8 +132,54 @@ type SemanticCandidateSimilarity = {
   matchedChunks: number;
 };
 
+function clampSearchFeedbackDelta(value: number): number {
+  return Math.min(Math.max(value, -2), 2);
+}
+
+function computeSearchFeedbackDelta(verdict: AppendSearchFeedbackInput["verdict"], confidence: number): number {
+  switch (verdict) {
+    case "useful":
+      return confidence;
+    case "not_useful":
+      return -confidence;
+    default:
+      return 0;
+  }
+}
+
+function clampConfidence(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
 function normalizeTagValue(tag: string): string {
   return tag.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function readBooleanSetting(settings: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  return typeof settings[key] === "boolean" ? Boolean(settings[key]) : fallback;
+}
+
+function readStringSetting(settings: Record<string, unknown>, key: string): string | null {
+  return typeof settings[key] === "string" ? String(settings[key]) : null;
+}
+
+function readNumberSetting(settings: Record<string, unknown>, key: string, fallback: number): number {
+  const value = settings[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readSemanticIndexSettingSnapshot(settings: Record<string, unknown>) {
+  const normalizedProvider = normalizeSemanticProviderConfig({
+    provider: readStringSetting(settings, "search.semantic.provider"),
+    model: readStringSetting(settings, "search.semantic.model")
+  });
+
+  return {
+    enabled: readBooleanSetting(settings, "search.semantic.enabled", false),
+    provider: normalizedProvider.provider,
+    model: normalizedProvider.model,
+    chunkEnabled: readBooleanSetting(settings, "search.semantic.chunk.enabled", false)
+  };
 }
 
 function buildSemanticContentHash(input: {
@@ -292,6 +366,53 @@ function mapRelationUsageEvent(row: Record<string, unknown>): RelationUsageEvent
   };
 }
 
+function mapSearchFeedbackEvent(row: Record<string, unknown>): SearchFeedbackEventRecord {
+  return {
+    id: String(row.id),
+    resultType: String(row.result_type) as SearchFeedbackEventRecord["resultType"],
+    resultId: String(row.result_id),
+    verdict: String(row.verdict) as SearchFeedbackEventRecord["verdict"],
+    query: row.query ? String(row.query) : null,
+    sessionId: row.session_id ? String(row.session_id) : null,
+    runId: row.run_id ? String(row.run_id) : null,
+    actorType: row.actor_type ? String(row.actor_type) : null,
+    actorLabel: row.actor_label ? String(row.actor_label) : null,
+    toolName: row.tool_name ? String(row.tool_name) : null,
+    confidence: Number(row.confidence),
+    delta: Number(row.delta),
+    createdAt: String(row.created_at),
+    metadata: parseJson<JsonMap>(row.metadata_json as string | null, {})
+  };
+}
+
+function mapGovernanceEvent(row: Record<string, unknown>): GovernanceEventRecord {
+  return {
+    id: String(row.id),
+    entityType: row.entity_type as GovernanceEventRecord["entityType"],
+    entityId: String(row.entity_id),
+    eventType: row.event_type as GovernanceEventRecord["eventType"],
+    previousState: row.previous_state ? (row.previous_state as GovernanceEventRecord["previousState"]) : null,
+    nextState: row.next_state as GovernanceEventRecord["nextState"],
+    confidence: Number(row.confidence),
+    reason: String(row.reason),
+    createdAt: String(row.created_at),
+    metadata: parseJson<JsonMap>(row.metadata_json as string | null, {})
+  };
+}
+
+function mapGovernanceState(row: Record<string, unknown>): GovernanceStateRecord {
+  return {
+    entityType: row.entity_type as GovernanceStateRecord["entityType"],
+    entityId: String(row.entity_id),
+    state: row.state as GovernanceStateRecord["state"],
+    confidence: Number(row.confidence),
+    reasons: parseJson<string[]>(row.reasons_json as string | null, []),
+    lastEvaluatedAt: String(row.last_evaluated_at),
+    lastTransitionAt: String(row.last_transition_at),
+    metadata: parseJson<JsonMap>(row.metadata_json as string | null, {})
+  };
+}
+
 function mapArtifact(row: Record<string, unknown>): ArtifactRecord {
   return {
     id: String(row.id),
@@ -323,15 +444,15 @@ function mapProvenance(row: Record<string, unknown>): ProvenanceRecord {
   };
 }
 
-function mapReviewQueue(row: Record<string, unknown>): ReviewQueueRecord {
+function mapLegacyReviewQueue(row: Record<string, unknown>): LegacyReviewQueueRecord {
   return {
     id: String(row.id),
     entityType: String(row.entity_type),
     entityId: String(row.entity_id),
-    reviewType: row.review_type as ReviewQueueRecord["reviewType"],
+    reviewType: String(row.review_type),
     proposedBy: row.proposed_by ? String(row.proposed_by) : null,
     createdAt: String(row.created_at),
-    status: row.status as ReviewQueueRecord["status"],
+    status: String(row.status),
     notes: row.notes ? String(row.notes) : null,
     metadata: parseJson<JsonMap>(row.metadata_json as string | null, {})
   };
@@ -529,18 +650,8 @@ export class MemforgeRepository {
       "search.semantic.chunk.enabled",
       "search.semantic.chunk.aggregation"
     ]);
-    const normalizedProvider = normalizeSemanticProviderConfig({
-      provider: typeof settings["search.semantic.provider"] === "string" ? String(settings["search.semantic.provider"]) : null,
-      model: typeof settings["search.semantic.model"] === "string" ? String(settings["search.semantic.model"]) : null,
-    });
     return {
-      enabled: typeof settings["search.semantic.enabled"] === "boolean" ? Boolean(settings["search.semantic.enabled"]) : false,
-      provider: normalizedProvider.provider,
-      model: normalizedProvider.model,
-      chunkEnabled:
-        typeof settings["search.semantic.chunk.enabled"] === "boolean"
-          ? Boolean(settings["search.semantic.chunk.enabled"])
-          : false,
+      ...readSemanticIndexSettingSnapshot(settings),
       chunkAggregation: normalizeSemanticChunkAggregation(settings["search.semantic.chunk.aggregation"])
     };
   }
@@ -552,16 +663,8 @@ export class MemforgeRepository {
     ]);
 
     return {
-      minSimilarity:
-        typeof settings["search.semantic.augmentation.minSimilarity"] === "number" &&
-        Number.isFinite(settings["search.semantic.augmentation.minSimilarity"])
-          ? Math.min(Math.max(Number(settings["search.semantic.augmentation.minSimilarity"]), 0), 1)
-          : 0.2,
-      maxBonus:
-        typeof settings["search.semantic.augmentation.maxBonus"] === "number" &&
-        Number.isFinite(settings["search.semantic.augmentation.maxBonus"])
-          ? Math.max(Number(settings["search.semantic.augmentation.maxBonus"]), 0)
-          : 18
+      minSimilarity: Math.min(Math.max(readNumberSetting(settings, "search.semantic.augmentation.minSimilarity", 0.2), 0), 1),
+      maxBonus: Math.max(readNumberSetting(settings, "search.semantic.augmentation.maxBonus", 18), 0)
     };
   }
 
@@ -825,12 +928,33 @@ export class MemforgeRepository {
     });
   }
 
+  ensureActivitySearchIndex(): void {
+    const settings = this.getSettings(["search.activityFts.version"]);
+    if (Number(settings["search.activityFts.version"] ?? 0) >= SEARCH_ACTIVITY_FTS_VERSION) {
+      return;
+    }
+
+    this.runInTransaction(() => {
+      this.db.prepare(`INSERT INTO activities_fts(activities_fts) VALUES ('delete-all')`).run();
+      const rows = this.db
+        .prepare(`SELECT rowid, id, body FROM activities`)
+        .all() as Array<Record<string, unknown>>;
+      const insertStatement = this.db.prepare(`INSERT INTO activities_fts(rowid, id, body) VALUES (?, ?, ?)`);
+
+      for (const row of rows) {
+        insertStatement.run(Number(row.rowid), String(row.id), row.body ? String(row.body) : "");
+      }
+
+      this.setSetting("search.activityFts.version", SEARCH_ACTIVITY_FTS_VERSION);
+    });
+  }
+
   listSemanticIndexTargetNodeIds(limit = 250): string[] {
     const rows = this.db
       .prepare(
         `SELECT id
          FROM nodes
-         WHERE status IN ('active', 'draft', 'review')
+         WHERE status IN ('active', 'draft')
          ORDER BY updated_at DESC
          LIMIT ?`
       )
@@ -874,10 +998,7 @@ export class MemforgeRepository {
       "search.semantic.chunk.enabled",
       "search.semantic.last_backfill_at"
     ]);
-    const normalizedProvider = normalizeSemanticProviderConfig({
-      provider: typeof settings["search.semantic.provider"] === "string" ? String(settings["search.semantic.provider"]) : null,
-      model: typeof settings["search.semantic.model"] === "string" ? String(settings["search.semantic.model"]) : null,
-    });
+    const semanticSettings = readSemanticIndexSettingSnapshot(settings);
     const counts = Object.fromEntries(
       SEMANTIC_INDEX_STATUS_VALUES.map((status) => [status, 0])
     ) as Record<SemanticIndexStatus, number>;
@@ -897,17 +1018,8 @@ export class MemforgeRepository {
     }
 
     return {
-      enabled: typeof settings["search.semantic.enabled"] === "boolean" ? Boolean(settings["search.semantic.enabled"]) : false,
-      provider: normalizedProvider.provider,
-      model: normalizedProvider.model,
-      chunkEnabled:
-        typeof settings["search.semantic.chunk.enabled"] === "boolean"
-          ? Boolean(settings["search.semantic.chunk.enabled"])
-          : false,
-      lastBackfillAt:
-        typeof settings["search.semantic.last_backfill_at"] === "string"
-          ? String(settings["search.semantic.last_backfill_at"])
-          : null,
+      ...semanticSettings,
+      lastBackfillAt: readStringSetting(settings, "search.semantic.last_backfill_at"),
       counts
     };
   }
@@ -1069,7 +1181,7 @@ export class MemforgeRepository {
       .prepare(
         `SELECT * FROM nodes
          WHERE id != ?
-           AND status IN ('active', 'review')
+           AND status = 'active'
          ORDER BY updated_at DESC
          LIMIT ?`
       )
@@ -1143,7 +1255,7 @@ export class MemforgeRepository {
       .prepare(
         `SELECT id
          FROM nodes
-         WHERE status IN ('active', 'review')
+         WHERE status = 'active'
          ORDER BY updated_at DESC
          LIMIT ?`
       )
@@ -1175,6 +1287,62 @@ export class MemforgeRepository {
     return this.searchNodesWithLike(input);
   }
 
+  searchActivities(input: ActivitySearchInput): { items: ActivitySearchResultItem[]; total: number } {
+    if (input.query.trim()) {
+      try {
+        return this.searchActivitiesWithFts(input);
+      } catch {
+        return this.searchActivitiesWithLike(input);
+      }
+    }
+
+    return this.searchActivitiesWithLike(input);
+  }
+
+  searchWorkspace(input: WorkspaceSearchInput): { items: WorkspaceSearchResultItem[]; total: number } {
+    const includeNodes = input.scopes.includes("nodes");
+    const includeActivities = input.scopes.includes("activities");
+    const requestedWindow = Math.min(input.limit + input.offset + SEARCH_FEEDBACK_WINDOW_PADDING, SEARCH_FEEDBACK_MAX_WINDOW);
+    const nodeResults = includeNodes
+      ? this.searchNodes({
+          query: input.query,
+          filters: input.nodeFilters ?? {},
+          limit: requestedWindow,
+          offset: 0,
+          sort: input.sort
+        })
+      : { items: [], total: 0 };
+    const activityResults = includeActivities
+      ? this.searchActivities({
+          query: input.query,
+          filters: input.activityFilters ?? {},
+          limit: requestedWindow,
+          offset: 0,
+          sort: input.sort
+        })
+      : { items: [], total: 0 };
+
+    const merged =
+      input.sort === "updated_at"
+        ? [
+            ...nodeResults.items.map((node) => ({ resultType: "node" as const, node })),
+            ...activityResults.items.map((activity) => ({ resultType: "activity" as const, activity }))
+          ].sort((left, right) => {
+            const leftTimestamp = left.resultType === "node" ? left.node.updatedAt : left.activity.createdAt;
+            const rightTimestamp = right.resultType === "node" ? right.node.updatedAt : right.activity.createdAt;
+            return rightTimestamp.localeCompare(leftTimestamp);
+          })
+        : [
+            ...nodeResults.items.map((node) => ({ resultType: "node" as const, node })),
+            ...activityResults.items.map((activity) => ({ resultType: "activity" as const, activity }))
+          ];
+
+    return {
+      total: nodeResults.total + activityResults.total,
+      items: merged.slice(input.offset, input.offset + input.limit)
+    };
+  }
+
   private searchNodesWithFts(input: {
     query: string;
     filters: {
@@ -1195,10 +1363,10 @@ export class MemforgeRepository {
     where.push("nodes_fts MATCH ?");
     values.push(input.query.trim());
     if (input.sort === "relevance") {
-      orderBy = "bm25(nodes_fts, 3.0, 1.5, 2.0), n.updated_at DESC";
+      orderBy = "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, bm25(nodes_fts, 3.0, 1.5, 2.0), n.updated_at DESC";
     }
 
-    return this.runSearchQuery(from, where, values, orderBy, [], input.limit, input.offset, input.filters);
+    return this.runSearchQuery(from, where, values, orderBy, [], input.limit, input.offset, input.filters, input.sort === "relevance");
   }
 
   private searchNodesWithLike(input: {
@@ -1215,7 +1383,7 @@ export class MemforgeRepository {
   }): { items: SearchResultItem[]; total: number } {
     const where: string[] = [];
     const values: unknown[] = [];
-    let orderBy = "n.updated_at DESC";
+    let orderBy = "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, n.updated_at DESC";
 
     if (input.query.trim()) {
       where.push(
@@ -1230,6 +1398,7 @@ export class MemforgeRepository {
             WHEN lower(coalesce(n.summary, '')) LIKE lower(?) THEN 1
             ELSE 2
           END,
+          CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END,
           n.updated_at DESC
         `;
         values.push(queryLike, queryLike);
@@ -1239,7 +1408,204 @@ export class MemforgeRepository {
     const orderValues = input.sort === "relevance" && input.query.trim() ? values.slice(-2) : [];
     const whereValues = orderValues.length ? values.slice(0, -2) : values;
 
-    return this.runSearchQuery("nodes n", where, whereValues, orderBy, orderValues, input.limit, input.offset, input.filters);
+    return this.runSearchQuery(
+      "nodes n",
+      where,
+      whereValues,
+      orderBy,
+      orderValues,
+      input.limit,
+      input.offset,
+      input.filters,
+      input.sort === "relevance"
+    );
+  }
+
+  private applySearchFeedbackBoost(items: SearchResultItem[]): SearchResultItem[] {
+    if (items.length <= 1) {
+      return items;
+    }
+
+    const summaries = this.getSearchFeedbackSummaries("node", items.map((item) => item.id));
+    const baseOrder = new Map(items.map((item, index) => [item.id, items.length - index] as const));
+
+    return [...items].sort((left, right) => {
+      const leftPenalty = left.status === "contested" ? 1 : 0;
+      const rightPenalty = right.status === "contested" ? 1 : 0;
+      const leftScore = (baseOrder.get(left.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(left.id)?.totalDelta ?? 0) * 2 - leftPenalty;
+      const rightScore = (baseOrder.get(right.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(right.id)?.totalDelta ?? 0) * 2 - rightPenalty;
+      return rightScore - leftScore || right.updatedAt.localeCompare(left.updatedAt);
+    });
+  }
+
+  private applyActivitySearchFeedbackBoost(items: ActivitySearchResultItem[]): ActivitySearchResultItem[] {
+    if (items.length <= 1) {
+      return items;
+    }
+
+    const summaries = this.getSearchFeedbackSummaries("activity", items.map((item) => item.id));
+    const baseOrder = new Map(items.map((item, index) => [item.id, items.length - index] as const));
+
+    return [...items].sort((left, right) => {
+      const leftPenalty = left.targetNodeStatus === "contested" ? 1 : 0;
+      const rightPenalty = right.targetNodeStatus === "contested" ? 1 : 0;
+      const leftScore = (baseOrder.get(left.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(left.id)?.totalDelta ?? 0) * 2 - leftPenalty;
+      const rightScore = (baseOrder.get(right.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(right.id)?.totalDelta ?? 0) * 2 - rightPenalty;
+      return rightScore - leftScore || right.createdAt.localeCompare(left.createdAt);
+    });
+  }
+
+  private searchActivitiesWithFts(input: ActivitySearchInput): { items: ActivitySearchResultItem[]; total: number } {
+    return this.runActivitySearchQuery({
+      from: "activities a JOIN activities_fts ON activities_fts.rowid = a.rowid JOIN nodes n ON n.id = a.target_node_id",
+      initialWhere: ["activities_fts MATCH ?"],
+      initialWhereValues: [input.query.trim()],
+      orderBy:
+        input.sort === "relevance"
+          ? "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, bm25(activities_fts, 2.0, 1.0), a.created_at DESC"
+          : "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, a.created_at DESC",
+      orderValues: [],
+      input
+    });
+  }
+
+  private searchActivitiesWithLike(input: ActivitySearchInput): { items: ActivitySearchResultItem[]; total: number } {
+    const initialWhere: string[] = [];
+    const initialWhereValues: SqlValue[] = [];
+    let orderBy = "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, a.created_at DESC";
+    const orderValues: SqlValue[] = [];
+
+    if (input.query.trim()) {
+      const queryLike = `%${input.query.trim()}%`;
+      initialWhere.push(`lower(coalesce(a.body, '')) LIKE lower(?)`);
+      initialWhereValues.push(queryLike);
+      if (input.sort === "relevance") {
+        orderBy = `
+          CASE
+            WHEN lower(coalesce(a.body, '')) LIKE lower(?) THEN 0
+            ELSE 1
+          END,
+          CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END,
+          a.created_at DESC
+        `;
+        orderValues.push(queryLike);
+      }
+    }
+
+    return this.runActivitySearchQuery({
+      from: "activities a JOIN nodes n ON n.id = a.target_node_id",
+      initialWhere,
+      initialWhereValues,
+      orderBy,
+      orderValues,
+      input
+    });
+  }
+
+  private capActivityResultsPerTarget(items: ActivitySearchResultItem[]): ActivitySearchResultItem[] {
+    const counts = new Map<string, number>();
+    const capped: ActivitySearchResultItem[] = [];
+
+    for (const item of items) {
+      const currentCount = counts.get(item.targetNodeId) ?? 0;
+      if (currentCount >= ACTIVITY_RESULT_CAP_PER_TARGET) {
+        continue;
+      }
+      counts.set(item.targetNodeId, currentCount + 1);
+      capped.push(item);
+    }
+
+    return capped;
+  }
+
+  private runActivitySearchQuery(params: {
+    from: string;
+    initialWhere: string[];
+    initialWhereValues: SqlValue[];
+    orderBy: string;
+    orderValues: SqlValue[];
+    input: ActivitySearchInput;
+  }): { items: ActivitySearchResultItem[]; total: number } {
+    const where = [...params.initialWhere];
+    const whereValues = [...params.initialWhereValues];
+    const { input } = params;
+
+    if (input.filters.targetNodeIds?.length) {
+      where.push(`a.target_node_id IN (${input.filters.targetNodeIds.map(() => "?").join(", ")})`);
+      whereValues.push(...(input.filters.targetNodeIds as SqlValue[]));
+    }
+
+    if (input.filters.activityTypes?.length) {
+      where.push(`a.activity_type IN (${input.filters.activityTypes.map(() => "?").join(", ")})`);
+      whereValues.push(...(input.filters.activityTypes as SqlValue[]));
+    }
+
+    if (input.filters.sourceLabels?.length) {
+      where.push(`a.source_label IN (${input.filters.sourceLabels.map(() => "?").join(", ")})`);
+      whereValues.push(...(input.filters.sourceLabels as SqlValue[]));
+    }
+
+    if (input.filters.createdAfter) {
+      where.push(`a.created_at >= ?`);
+      whereValues.push(input.filters.createdAfter);
+    }
+
+    if (input.filters.createdBefore) {
+      where.push(`a.created_at <= ?`);
+      whereValues.push(input.filters.createdBefore);
+    }
+
+    const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const countRow = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM ${params.from}
+         ${whereClause}`
+      )
+      .get(...whereValues) as { total: number };
+
+    const useSearchFeedbackBoost = input.sort === "relevance";
+    const effectiveLimit = useSearchFeedbackBoost
+      ? Math.min(input.limit + input.offset + SEARCH_FEEDBACK_WINDOW_PADDING, SEARCH_FEEDBACK_MAX_WINDOW)
+      : input.limit;
+    const effectiveOffset = useSearchFeedbackBoost ? 0 : input.offset;
+    const rows = this.db
+      .prepare(
+        `SELECT
+           a.id,
+           a.target_node_id,
+           a.activity_type,
+           a.body,
+           a.source_label,
+           a.created_at,
+           n.title AS target_title,
+           n.type AS target_type,
+           n.status AS target_status
+         FROM ${params.from}
+         ${whereClause}
+         ORDER BY ${params.orderBy}
+         LIMIT ? OFFSET ?`
+      )
+      .all(...whereValues, ...params.orderValues, effectiveLimit, effectiveOffset) as Record<string, unknown>[];
+
+    const items = rows.map((row) => ({
+      id: String(row.id),
+      targetNodeId: String(row.target_node_id),
+      targetNodeTitle: row.target_title ? String(row.target_title) : null,
+      targetNodeType: row.target_type ? (row.target_type as ActivitySearchResultItem["targetNodeType"]) : null,
+      targetNodeStatus: row.target_status ? (row.target_status as ActivitySearchResultItem["targetNodeStatus"]) : null,
+      activityType: row.activity_type as ActivitySearchResultItem["activityType"],
+      body: row.body ? String(row.body) : null,
+      sourceLabel: row.source_label ? String(row.source_label) : null,
+      createdAt: String(row.created_at)
+    }));
+    const rankedItems = useSearchFeedbackBoost ? this.applyActivitySearchFeedbackBoost(items) : items;
+    const cappedItems = this.capActivityResultsPerTarget(rankedItems);
+
+    return {
+      total: Number(countRow.total ?? 0),
+      items: useSearchFeedbackBoost ? cappedItems.slice(input.offset, input.offset + input.limit) : cappedItems
+    };
   }
 
   private runSearchQuery(
@@ -1255,7 +1621,8 @@ export class MemforgeRepository {
       status?: string[];
       sourceLabels?: string[];
       tags?: string[];
-    }
+    },
+    useSearchFeedbackBoost: boolean
   ): { items: SearchResultItem[]; total: number } {
     const where = [...initialWhere];
     const whereValues = [...initialWhereValues];
@@ -1289,6 +1656,8 @@ export class MemforgeRepository {
       .prepare(`SELECT COUNT(*) as total FROM ${from} ${whereClause}`)
       .get(...countValues) as { total: number };
 
+    const effectiveLimit = useSearchFeedbackBoost ? Math.min(limit + offset + SEARCH_FEEDBACK_WINDOW_PADDING, SEARCH_FEEDBACK_MAX_WINDOW) : limit;
+    const effectiveOffset = useSearchFeedbackBoost ? 0 : offset;
     const rows = this.db
       .prepare(
         `SELECT n.id, n.type, n.title, n.summary, n.status, n.canonicality, n.source_label, n.updated_at, n.tags_json
@@ -1297,21 +1666,24 @@ export class MemforgeRepository {
          ORDER BY ${orderBy}
          LIMIT ? OFFSET ?`
       )
-      .all(...rowValues, limit, offset) as Record<string, unknown>[];
+      .all(...rowValues, effectiveLimit, effectiveOffset) as Record<string, unknown>[];
+
+    const items = rows.map((row) => ({
+      id: String(row.id),
+      type: row.type as SearchResultItem["type"],
+      title: row.title ? String(row.title) : null,
+      summary: row.summary ? String(row.summary) : null,
+      status: row.status as SearchResultItem["status"],
+      canonicality: row.canonicality as SearchResultItem["canonicality"],
+      sourceLabel: row.source_label ? String(row.source_label) : null,
+      updatedAt: String(row.updated_at),
+      tags: parseJson<string[]>(row.tags_json as string | null, [])
+    }));
+    const rankedItems = useSearchFeedbackBoost ? this.applySearchFeedbackBoost(items) : items;
 
     return {
       total: countRow.total,
-      items: rows.map((row) => ({
-        id: String(row.id),
-        type: row.type as SearchResultItem["type"],
-        title: row.title ? String(row.title) : null,
-        summary: row.summary ? String(row.summary) : null,
-        status: row.status as SearchResultItem["status"],
-        canonicality: row.canonicality as SearchResultItem["canonicality"],
-        sourceLabel: row.source_label ? String(row.source_label) : null,
-        updatedAt: String(row.updated_at),
-        tags: parseJson<string[]>(row.tags_json as string | null, [])
-      }))
+      items: useSearchFeedbackBoost ? rankedItems.slice(offset, offset + limit) : rankedItems
     };
   }
 
@@ -1744,6 +2116,429 @@ export class MemforgeRepository {
     );
   }
 
+  appendSearchFeedbackEvent(input: AppendSearchFeedbackInput): SearchFeedbackEventRecord {
+    const id = createId("sfe");
+    const now = nowIso();
+    const delta = computeSearchFeedbackDelta(input.verdict, input.confidence);
+
+    this.runInTransaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO search_feedback_events (
+            id, result_type, result_id, verdict, query, session_id, run_id, actor_type, actor_label,
+            tool_name, confidence, delta, created_at, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          input.resultType,
+          input.resultId,
+          input.verdict,
+          input.query ?? null,
+          input.sessionId ?? null,
+          input.runId ?? null,
+          input.source?.actorType ?? null,
+          input.source?.actorLabel ?? null,
+          input.source?.toolName ?? null,
+          input.confidence,
+          delta,
+          now,
+          JSON.stringify(input.metadata)
+        );
+
+      this.db
+        .prepare(
+          `INSERT INTO search_feedback_rollups (
+             result_type, result_id, total_delta, event_count, useful_count, not_useful_count, uncertain_count, last_event_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(result_type, result_id) DO UPDATE SET
+             total_delta = total_delta + excluded.total_delta,
+             event_count = event_count + excluded.event_count,
+             useful_count = useful_count + excluded.useful_count,
+             not_useful_count = not_useful_count + excluded.not_useful_count,
+             uncertain_count = uncertain_count + excluded.uncertain_count,
+             last_event_at = CASE
+               WHEN excluded.last_event_at > last_event_at THEN excluded.last_event_at
+               ELSE last_event_at
+             END,
+             updated_at = excluded.updated_at`
+        )
+        .run(
+          input.resultType,
+          input.resultId,
+          delta,
+          1,
+          input.verdict === "useful" ? 1 : 0,
+          input.verdict === "not_useful" ? 1 : 0,
+          input.verdict === "uncertain" ? 1 : 0,
+          now,
+          now
+        );
+    });
+
+    return this.getSearchFeedbackEvent(id);
+  }
+
+  getSearchFeedbackEvent(id: string): SearchFeedbackEventRecord {
+    const row = this.db
+      .prepare(`SELECT * FROM search_feedback_events WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    return mapSearchFeedbackEvent(assertPresent(row, `Search feedback event ${id} not found`));
+  }
+
+  listSearchFeedbackEvents(resultType: SearchFeedbackEventRecord["resultType"], resultId: string, limit = 50): SearchFeedbackEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM search_feedback_events
+         WHERE result_type = ? AND result_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(resultType, resultId, limit) as Record<string, unknown>[];
+    return rows.map(mapSearchFeedbackEvent);
+  }
+
+  getSearchFeedbackSummaries(
+    resultType: SearchFeedbackEventRecord["resultType"],
+    resultIds: string[]
+  ): Map<string, SearchFeedbackSummary> {
+    if (!resultIds.length) {
+      return new Map();
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+           result_id,
+           total_delta,
+           event_count,
+           useful_count,
+           not_useful_count,
+           uncertain_count,
+           last_event_at
+         FROM search_feedback_rollups
+         WHERE result_type = ?
+           AND result_id IN (${resultIds.map(() => "?").join(", ")})
+         ORDER BY result_id`
+      )
+      .all(resultType, ...resultIds) as Array<Record<string, unknown>>;
+
+    return new Map(
+      rows.map((row) => [
+        String(row.result_id),
+        {
+          resultType,
+          resultId: String(row.result_id),
+          totalDelta: Number(row.total_delta),
+          eventCount: Number(row.event_count),
+          usefulCount: Number(row.useful_count),
+          notUsefulCount: Number(row.not_useful_count),
+          uncertainCount: Number(row.uncertain_count),
+          lastEventAt: row.last_event_at ? String(row.last_event_at) : null
+        }
+      ])
+    );
+  }
+
+  appendGovernanceEvent(params: {
+    entityType: GovernanceEntityType;
+    entityId: string;
+    eventType: GovernanceEventRecord["eventType"];
+    previousState: GovernanceState | null;
+    nextState: GovernanceState;
+    confidence: number;
+    reason: string;
+    metadata?: JsonMap;
+  }): GovernanceEventRecord {
+    const id = createId("gov");
+    const now = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO governance_events (
+          id, entity_type, entity_id, event_type, previous_state, next_state, confidence, reason, created_at, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        params.entityType,
+        params.entityId,
+        params.eventType,
+        params.previousState ?? null,
+        params.nextState,
+        clampConfidence(params.confidence),
+        params.reason,
+        now,
+        JSON.stringify(params.metadata ?? {})
+      );
+    return this.getGovernanceEvent(id);
+  }
+
+  getGovernanceEvent(id: string): GovernanceEventRecord {
+    const row = this.db
+      .prepare(`SELECT * FROM governance_events WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    return mapGovernanceEvent(assertPresent(row, `Governance event ${id} not found`));
+  }
+
+  listGovernanceEvents(entityType: GovernanceEntityType, entityId: string, limit = 20): GovernanceEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM governance_events
+         WHERE entity_type = ? AND entity_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(entityType, entityId, limit) as Record<string, unknown>[];
+    return rows.map(mapGovernanceEvent);
+  }
+
+  upsertGovernanceState(params: {
+    entityType: GovernanceEntityType;
+    entityId: string;
+    state: GovernanceState;
+    confidence: number;
+    reasons: string[];
+    lastEvaluatedAt?: string;
+    metadata?: JsonMap;
+  }): GovernanceStateRecord {
+    const now = params.lastEvaluatedAt ?? nowIso();
+    const existing = this.getGovernanceStateNullable(params.entityType, params.entityId);
+    const lastTransitionAt = existing?.state === params.state ? existing.lastTransitionAt : now;
+    this.db
+      .prepare(
+        `INSERT INTO governance_state (
+          entity_type, entity_id, state, confidence, reasons_json, last_evaluated_at, last_transition_at, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+          state = excluded.state,
+          confidence = excluded.confidence,
+          reasons_json = excluded.reasons_json,
+          last_evaluated_at = excluded.last_evaluated_at,
+          last_transition_at = excluded.last_transition_at,
+          metadata_json = excluded.metadata_json`
+      )
+      .run(
+        params.entityType,
+        params.entityId,
+        params.state,
+        clampConfidence(params.confidence),
+        JSON.stringify(params.reasons),
+        now,
+        lastTransitionAt,
+        JSON.stringify(params.metadata ?? {})
+      );
+    return this.getGovernanceState(params.entityType, params.entityId);
+  }
+
+  getGovernanceState(entityType: GovernanceEntityType, entityId: string): GovernanceStateRecord {
+    const row = this.db
+      .prepare(`SELECT * FROM governance_state WHERE entity_type = ? AND entity_id = ?`)
+      .get(entityType, entityId) as Record<string, unknown> | undefined;
+    return mapGovernanceState(assertPresent(row, `Governance state ${entityType}:${entityId} not found`));
+  }
+
+  getGovernanceStateNullable(entityType: GovernanceEntityType, entityId: string): GovernanceStateRecord | null {
+    const row = this.db
+      .prepare(`SELECT * FROM governance_state WHERE entity_type = ? AND entity_id = ?`)
+      .get(entityType, entityId) as Record<string, unknown> | undefined;
+    return row ? mapGovernanceState(row) : null;
+  }
+
+  listGovernanceIssues(limit = 20, states?: GovernanceState[]): GovernanceIssueItem[] {
+    const effectiveStates = states?.length ? states : (["low_confidence", "contested"] satisfies GovernanceState[]);
+    const nodeRows = this.db
+      .prepare(
+        `SELECT
+           gs.*,
+           n.title AS display_title,
+           n.type AS display_subtitle
+         FROM governance_state gs
+         JOIN nodes n
+           ON gs.entity_type = 'node'
+          AND gs.entity_id = n.id
+         WHERE gs.state IN (${effectiveStates.map(() => "?").join(", ")})
+           AND n.status != 'archived'
+         ORDER BY CASE WHEN gs.state = 'contested' THEN 0 ELSE 1 END, gs.confidence ASC, gs.last_transition_at DESC
+         LIMIT ?`
+      )
+      .all(...(effectiveStates as SqlValue[]), limit) as Record<string, unknown>[];
+    const relationRows = this.db
+      .prepare(
+        `SELECT
+           gs.*,
+           COALESCE(fn.title, r.from_node_id) || ' ' || r.relation_type || ' ' || COALESCE(tn.title, r.to_node_id) AS display_title,
+           r.status AS display_subtitle
+         FROM governance_state gs
+         JOIN relations r
+           ON gs.entity_type = 'relation'
+          AND gs.entity_id = r.id
+         LEFT JOIN nodes fn ON fn.id = r.from_node_id
+         LEFT JOIN nodes tn ON tn.id = r.to_node_id
+         WHERE gs.state IN (${effectiveStates.map(() => "?").join(", ")})
+           AND r.status != 'archived'
+         ORDER BY CASE WHEN gs.state = 'contested' THEN 0 ELSE 1 END, gs.confidence ASC, gs.last_transition_at DESC
+         LIMIT ?`
+      )
+      .all(...(effectiveStates as SqlValue[]), limit) as Record<string, unknown>[];
+
+    return [...nodeRows, ...relationRows]
+      .map((row) => ({
+        ...mapGovernanceState(row),
+        title: row.display_title ? String(row.display_title) : null,
+        subtitle: row.display_subtitle ? String(row.display_subtitle) : null
+      }))
+      .sort((left, right) => {
+        const leftPriority = left.state === "contested" ? 0 : left.state === "low_confidence" ? 1 : 2;
+        const rightPriority = right.state === "contested" ? 0 : right.state === "low_confidence" ? 1 : 2;
+        return leftPriority - rightPriority || left.confidence - right.confidence || right.lastTransitionAt.localeCompare(left.lastTransitionAt);
+      })
+      .slice(0, limit);
+  }
+
+  listNodeIdsForGovernance(limit = 100, entityIds?: string[]): string[] {
+    const rows = entityIds?.length
+      ? ((this.db
+          .prepare(
+            `SELECT id
+             FROM nodes
+             WHERE id IN (${entityIds.map(() => "?").join(", ")})
+             ORDER BY updated_at DESC
+             LIMIT ?`
+          )
+          .all(...entityIds, limit) as Record<string, unknown>[]))
+      : ((this.db
+          .prepare(
+            `SELECT id
+             FROM nodes
+             WHERE status != 'archived'
+             ORDER BY updated_at DESC
+             LIMIT ?`
+          )
+          .all(limit) as Record<string, unknown>[]));
+    return rows.map((row) => String(row.id));
+  }
+
+  listRelationIdsForGovernance(limit = 100, entityIds?: string[]): string[] {
+    const rows = entityIds?.length
+      ? ((this.db
+          .prepare(
+            `SELECT id
+             FROM relations
+             WHERE id IN (${entityIds.map(() => "?").join(", ")})
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(...entityIds, limit) as Record<string, unknown>[]))
+      : ((this.db
+          .prepare(
+            `SELECT id
+             FROM relations
+             WHERE status != 'archived'
+             ORDER BY created_at DESC
+             LIMIT ?`
+          )
+          .all(limit) as Record<string, unknown>[]));
+    return rows.map((row) => String(row.id));
+  }
+
+  countContradictionRelations(nodeId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM relations
+         WHERE relation_type = 'contradicts'
+           AND status = 'active'
+           AND (from_node_id = ? OR to_node_id = ?)`
+      )
+      .get(nodeId, nodeId) as Record<string, unknown>;
+    return Number(row.total ?? 0);
+  }
+
+  listLegacyReviewItems(limit = 500): LegacyReviewQueueRecord[] {
+    if (!this.hasLegacyReviewQueueTable()) {
+      return [];
+    }
+    const rows = this.db
+      .prepare(`SELECT * FROM review_queue ORDER BY created_at DESC LIMIT ?`)
+      .all(limit) as Record<string, unknown>[];
+    return rows.map(mapLegacyReviewQueue);
+  }
+
+  clearLegacyReviewQueue(): void {
+    if (!this.hasLegacyReviewQueueTable()) {
+      return;
+    }
+    this.db.prepare(`DELETE FROM review_queue`).run();
+  }
+
+  private hasLegacyReviewQueueTable(): boolean {
+    const row = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_queue'`)
+      .get() as Record<string, unknown> | undefined;
+    return Boolean(row?.name);
+  }
+
+  private ensureLegacyReviewQueueTable(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS review_queue (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        review_type TEXT NOT NULL,
+        proposed_by TEXT,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        notes TEXT,
+        metadata_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status);
+      CREATE INDEX IF NOT EXISTS idx_review_queue_status_type_created_at
+        ON review_queue(status, review_type, created_at DESC);
+    `);
+  }
+
+  createLegacyReviewItem(params: {
+    entityType: string;
+    entityId: string;
+    reviewType: string;
+    proposedBy: string | null;
+    status?: string;
+    notes?: string | null;
+    metadata?: JsonMap;
+  }): LegacyReviewQueueRecord {
+    this.ensureLegacyReviewQueueTable();
+    const id = createId("rev");
+    this.db
+      .prepare(
+        `INSERT INTO review_queue (
+          id, entity_type, entity_id, review_type, proposed_by, created_at, status, notes, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        params.entityType,
+        params.entityId,
+        params.reviewType,
+        params.proposedBy,
+        nowIso(),
+        params.status ?? "pending",
+        params.notes ?? null,
+        JSON.stringify(params.metadata ?? {})
+      );
+    const row = this.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return mapLegacyReviewQueue(assertPresent(row, `Legacy review item ${id} not found`));
+  }
+
+  recomputeGovernanceTargets(input: RecomputeGovernanceInput): { nodeIds: string[]; relationIds: string[] } {
+    const limit = input.limit;
+    const targetIds = input.entityIds?.length ? input.entityIds : undefined;
+    const nodeIds =
+      !input.entityType || input.entityType === "node" ? this.listNodeIdsForGovernance(limit, targetIds) : [];
+    const relationIds =
+      !input.entityType || input.entityType === "relation" ? this.listRelationIdsForGovernance(limit, targetIds) : [];
+    return { nodeIds, relationIds };
+  }
+
   getPendingRelationUsageStats(since: string | null): PendingRelationUsageStats {
     const whereClause = since ? "WHERE created_at > ?" : "";
     const bindings = since ? [since] : [];
@@ -1780,6 +2575,10 @@ export class MemforgeRepository {
   recomputeInferredRelationScores(input: RecomputeInferredRelationsInput): InferredRelationRecomputeResult {
     const where: string[] = [];
     const values: SqlValue[] = [];
+
+    if (!input.relationIds?.length) {
+      where.push(`status != 'expired'`);
+    }
 
     if (input.generator) {
       where.push("generator = ?");
@@ -1824,8 +2623,7 @@ export class MemforgeRepository {
       const currentStatus = String(row.status) as InferredRelationRecord["status"];
       const expiresAt = row.expires_at ? String(row.expires_at) : null;
       const recomputed = computeMaintainedScores(Number(row.base_score), summaries.get(id), String(row.last_computed_at));
-      const nextStatus =
-        expiresAt && expiresAt <= now ? "expired" : currentStatus === "expired" ? "active" : currentStatus;
+      const nextStatus = expiresAt && expiresAt <= now ? "expired" : currentStatus;
       if (nextStatus === "expired") {
         expiredCount += 1;
       }
@@ -1839,8 +2637,10 @@ export class MemforgeRepository {
     };
   }
 
-  countInferredRelations(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) AS total FROM inferred_relations`).get() as { total: number };
+  countInferredRelations(status?: InferredRelationRecord["status"]): number {
+    const row = status
+      ? (this.db.prepare(`SELECT COUNT(*) AS total FROM inferred_relations WHERE status = ?`).get(status) as { total: number })
+      : (this.db.prepare(`SELECT COUNT(*) AS total FROM inferred_relations`).get() as { total: number });
     return Number(row.total ?? 0);
   }
 
@@ -1989,63 +2789,6 @@ export class MemforgeRepository {
       .prepare(`SELECT * FROM provenance_events WHERE id = ?`)
       .get(id) as Record<string, unknown> | undefined;
     return mapProvenance(assertPresent(row, `Provenance ${id} not found`));
-  }
-
-  createReviewItem(params: {
-    entityType: string;
-    entityId: string;
-    reviewType: string;
-    proposedBy: string | null;
-    notes?: string | null;
-    metadata?: JsonMap;
-  }): ReviewQueueRecord {
-    const id = createId("rev");
-    this.db
-      .prepare(
-        `INSERT INTO review_queue (
-          id, entity_type, entity_id, review_type, proposed_by, created_at, status, notes, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-      )
-      .run(
-        id,
-        params.entityType,
-        params.entityId,
-        params.reviewType,
-        params.proposedBy,
-        nowIso(),
-        params.notes ?? null,
-        JSON.stringify(params.metadata ?? {})
-      );
-    return this.getReviewItem(id);
-  }
-
-  listReviewItems(status = "pending", limit = 20, reviewType?: string): ReviewQueueRecord[] {
-    const rows = reviewType
-      ? ((this.db
-          .prepare(
-            `SELECT * FROM review_queue
-             WHERE status = ? AND review_type = ?
-             ORDER BY created_at DESC
-             LIMIT ?`
-          )
-          .all(status, reviewType, limit) as Record<string, unknown>[]))
-      : ((this.db
-          .prepare(`SELECT * FROM review_queue WHERE status = ? ORDER BY created_at DESC LIMIT ?`)
-          .all(status, limit) as Record<string, unknown>[]));
-    return rows.map(mapReviewQueue);
-  }
-
-  getReviewItem(id: string): ReviewQueueRecord {
-    const row = this.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return mapReviewQueue(assertPresent(row, `Review item ${id} not found`));
-  }
-
-  updateReviewItemStatus(id: string, status: string, notes?: string | null): ReviewQueueRecord {
-    const existing = this.getReviewItem(id);
-    this.db
-      .prepare(`UPDATE review_queue SET status = ?, notes = ? WHERE id = ?`)
-      .run(status, notes ?? existing.notes ?? null, id);
-    return this.getReviewItem(id);
   }
 
   listIntegrations(): IntegrationRecord[] {

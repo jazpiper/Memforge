@@ -52,12 +52,17 @@ describe("Memforge MCP server", () => {
     expect(toolNames).toContain("memforge_semantic_status");
     expect(toolNames).toContain("memforge_semantic_issues");
     expect(toolNames).toContain("memforge_search_nodes");
+    expect(toolNames).toContain("memforge_search_activities");
+    expect(toolNames).toContain("memforge_search_workspace");
     expect(toolNames).toContain("memforge_append_activity");
     expect(toolNames).toContain("memforge_create_node");
     expect(toolNames).toContain("memforge_upsert_inferred_relation");
     expect(toolNames).toContain("memforge_append_relation_usage_event");
+    expect(toolNames).toContain("memforge_append_search_feedback");
     expect(toolNames).toContain("memforge_recompute_inferred_relations");
-    expect(toolNames).toContain("memforge_review_decide");
+    expect(toolNames).toContain("memforge_list_governance_issues");
+    expect(toolNames).toContain("memforge_get_governance_state");
+    expect(toolNames).toContain("memforge_recompute_governance");
     expect(toolNames).toContain("memforge_context_bundle");
     expect(toolNames).toContain("memforge_semantic_reindex");
     expect(toolNames).toContain("memforge_semantic_reindex_node");
@@ -95,6 +100,65 @@ describe("Memforge MCP server", () => {
     expect("structuredContent" in result && result.structuredContent).toMatchObject({
       total: 1
     });
+  });
+
+  it("maps activity and workspace search tools onto the Memforge HTTP API contract", async () => {
+    const searchPost = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [{ id: "activity_1", targetNodeId: "node_1", activityType: "agent_run_summary" }],
+        total: 1
+      })
+      .mockResolvedValueOnce({
+        items: [{ resultType: "activity", activity: { id: "activity_1", targetNodeId: "node_1" } }],
+        total: 1
+      });
+    const { client } = await connectTestClient({
+      post: searchPost
+    });
+
+    await client.callTool({
+      name: "memforge_search_activities",
+      arguments: {
+        query: "what changed",
+        filters: {
+          activityTypes: ["agent_run_summary"]
+        }
+      }
+    });
+
+    await client.callTool({
+      name: "memforge_search_workspace",
+      arguments: {
+        query: "cleanup",
+        scopes: ["activities"]
+      }
+    });
+
+    expect(searchPost).toHaveBeenNthCalledWith(
+      1,
+      "/activities/search",
+      expect.objectContaining({
+        query: "what changed",
+        filters: {
+          activityTypes: ["agent_run_summary"]
+        },
+        limit: 10,
+        offset: 0,
+        sort: "relevance"
+      })
+    );
+    expect(searchPost).toHaveBeenNthCalledWith(
+      2,
+      "/search",
+      expect.objectContaining({
+        query: "cleanup",
+        scopes: ["activities"],
+        limit: 10,
+        offset: 0,
+        sort: "relevance"
+      })
+    );
   });
 
   it("fills default provenance when create_node omits source", async () => {
@@ -159,6 +223,44 @@ describe("Memforge MCP server", () => {
         targetNodeId: "node_1",
         activityType: "agent_run_summary",
         body: "Summarized the latest task outcome.",
+        metadata: {},
+        source: expect.objectContaining({
+          actorType: "agent",
+          actorLabel: "Memforge MCP",
+          toolName: "memforge-mcp"
+        })
+      })
+    );
+  });
+
+  it("fills default provenance when append_search_feedback omits source", async () => {
+    const appendPost = vi.fn().mockResolvedValue({
+      event: {
+        id: "sfe_1"
+      }
+    });
+    const { client } = await connectTestClient({
+      post: appendPost
+    });
+
+    await client.callTool({
+      name: "memforge_append_search_feedback",
+      arguments: {
+        resultType: "node",
+        resultId: "node_1",
+        verdict: "useful",
+        query: "cleanup notes"
+      }
+    });
+
+    expect(appendPost).toHaveBeenCalledWith(
+      "/search-feedback-events",
+      expect.objectContaining({
+        resultType: "node",
+        resultId: "node_1",
+        verdict: "useful",
+        query: "cleanup notes",
+        confidence: 1,
         metadata: {},
         source: expect.objectContaining({
           actorType: "agent",
@@ -466,7 +568,6 @@ describe("Memforge MCP server", () => {
       "/context/bundles",
       expect.objectContaining({
         target: {
-          type: "node",
           id: "node_1"
         }
       })

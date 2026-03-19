@@ -232,7 +232,7 @@ function collectGeneratedCandidates(
   for (const candidateId of repository.listSharedProjectMemberNodeIds(target.id, MAX_CANDIDATES)) {
     if (!candidateMap.has(candidateId)) {
       const candidate = repository.getNode(candidateId);
-      if (candidate.status === "active" || candidate.status === "review") {
+      if (candidate.status === "active" || candidate.status === "contested") {
         candidateMap.set(candidate.id, candidate);
       }
     }
@@ -240,7 +240,7 @@ function collectGeneratedCandidates(
   for (const candidateId of repository.listNodesSharingArtifactPaths(target.id, MAX_CANDIDATES)) {
     if (!candidateMap.has(candidateId)) {
       const candidate = repository.getNode(candidateId);
-      if (candidate.status === "active" || candidate.status === "review") {
+      if (candidate.status === "active" || candidate.status === "contested") {
         candidateMap.set(candidate.id, candidate);
       }
     }
