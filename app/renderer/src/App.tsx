@@ -54,13 +54,16 @@ type SemanticIssueFilter = 'all' | 'failed' | 'stale' | 'pending';
 type SearchScope = 'nodes' | 'activities';
 
 const navigation: { id: NavView; label: string; hint: string }[] = [
-  { id: 'home', label: 'Home', hint: 're-entry' },
-  { id: 'search', label: 'Search', hint: 'retrieval' },
-  { id: 'projects', label: 'Projects', hint: 'core nodes' },
-  { id: 'recent', label: 'Recent', hint: 'latest work' },
-  { id: 'governance', label: 'Governance', hint: 'automation' },
-  { id: 'graph', label: 'Graph', hint: 'secondary' },
-  { id: 'settings', label: 'Settings', hint: 'workspace' },
+  { id: 'home', label: 'Home', hint: 'landing' },
+  { id: 'search', label: 'API', hint: 'local access' },
+  { id: 'projects', label: 'MCP Tools', hint: 'agent route' },
+  { id: 'recent', label: 'Notes', hint: 'reading' },
+  { id: 'settings', label: 'Workspace', hint: 'scope' },
+];
+
+const utilityNavigation: { id: NavView; label: string }[] = [
+  { id: 'graph', label: 'Graph' },
+  { id: 'governance', label: 'Governance' },
 ];
 
 const DEFAULT_SEMANTIC_COUNTS = {
@@ -340,6 +343,25 @@ function getGovernanceEventLabel(event: GovernanceEventRecord) {
   return [event.eventType, event.nextState, formatTime(event.createdAt)].join(' · ');
 }
 
+function getViewTitle(view: NavView) {
+  switch (view) {
+    case 'search':
+      return 'API';
+    case 'projects':
+      return 'MCP Tools';
+    case 'recent':
+      return 'Notes';
+    case 'settings':
+      return 'Workspace';
+    case 'governance':
+      return 'Governance';
+    case 'graph':
+      return 'Graph';
+    default:
+      return 'Home';
+  }
+}
+
 type DesktopIntegrationInfo = {
   apiBase: string;
   healthUrl: string;
@@ -357,6 +379,22 @@ type DesktopIntegrationInfo = {
 
 type DesktopActionPayload = {
   type: 'quick-capture' | 'open-search';
+};
+
+type GuideSection = {
+  id: string;
+  label: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  points: string[];
+  note?: string;
+  code?: string;
+  stats?: Array<{
+    label: string;
+    value: string;
+    description: string;
+  }>;
 };
 
 function getDesktopIntegrationInfo(): DesktopIntegrationInfo | null {
@@ -440,6 +478,8 @@ export default function App() {
   const [workspaceNameInput, setWorkspaceNameInput] = useState('');
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
+  const [apiGuideSectionId, setApiGuideSectionId] = useState('overview');
+  const [mcpGuideSectionId, setMcpGuideSectionId] = useState('overview');
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatusSummary | null>(null);
   const [semanticIssues, setSemanticIssues] = useState<SemanticIssueItem[]>([]);
   const [semanticIssueFilter, setSemanticIssueFilter] = useState<SemanticIssueFilter>('all');
@@ -581,13 +621,13 @@ export default function App() {
     const unsubscribe =
       bridge.onAction((payload) => {
         if (payload.type === 'open-search') {
-          setView('search');
-          focusAfterPaint('#search-input');
+          setView('recent');
+          focusAfterPaint('#notes-search-input');
           return;
         }
 
         if (payload.type === 'quick-capture') {
-          setView('home');
+          setView('recent');
           setCaptureType('note');
           setCaptureTitle('');
           setCaptureBody('');
@@ -774,7 +814,28 @@ export default function App() {
       snapshot ? snapshot.pinnedProjectIds.map((id) => nodeMap.get(id)).filter((node): node is Node => Boolean(node)) : [],
     [nodeMap, snapshot],
   );
+  const noteNodes = useMemo(() => {
+    const candidates = snapshot?.nodes ?? [];
+    const normalizedQuery = query.trim().toLowerCase();
+    const filtered = normalizedQuery
+      ? candidates.filter((node) =>
+          [node.title, node.summary, node.body, node.tags.join(' ')]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedQuery),
+        )
+      : candidates;
+
+    return filtered
+      .slice()
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title));
+  }, [query, snapshot]);
   const summaryLifecycle = useMemo(() => getSummaryLifecycle(detailNode), [detailNode]);
+  const activeNoteNode = useMemo(
+    () => noteNodes.find((node) => node.id === selectedNodeId) ?? null,
+    [noteNodes, selectedNodeId],
+  );
+  const notePreviewNode = detail.node?.id === activeNoteNode?.id ? detail.node : activeNoteNode;
 
   useEffect(() => {
     if (!snapshot) return;
@@ -863,6 +924,204 @@ export default function App() {
   const apiExample = `curl${apiAuthHeader} ${apiBase}
 curl${apiAuthHeader} ${desktopInfo?.healthUrl ?? `${apiBase}/health`}
 curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
+  const apiGuideSections: GuideSection[] = [
+    {
+      id: 'overview',
+      label: 'Overview',
+      eyebrow: 'Entry point',
+      title: 'Start with the local base URL.',
+      body: 'This page should feel like a quick reference, not a wall of docs. Use the local API when you want direct loopback access into the current Memforge workspace.',
+      points: [
+        `Base URL: ${apiBase}`,
+        workspace?.authMode === 'bearer' ? 'Bearer auth is enabled for this workspace.' : 'Local mode is available without extra auth friction.',
+        'Use this route for health, workspace inspection, and bootstrap calls before deeper integration.',
+      ],
+      stats: [
+        {
+          label: 'Base URL',
+          value: apiBase,
+          description: 'Primary endpoint for local integrations.',
+        },
+        {
+          label: 'Auth mode',
+          value: workspace?.authMode === 'bearer' ? 'Bearer auth' : 'Loopback-first',
+          description: workspace?.authMode === 'bearer' ? 'Include the Authorization header.' : 'No extra auth header in local mode.',
+        },
+      ],
+    },
+    {
+      id: 'routes',
+      label: 'Core routes',
+      eyebrow: 'Starter routes',
+      title: 'Keep the first three routes in easy reach.',
+      body: 'Most sessions only need a small route set. These are the ones worth surfacing first before expanding into deeper API docs.',
+      points: [
+        '/health for service status and the currently active workspace.',
+        '/workspace for the current workspace metadata and scope details.',
+        '/bootstrap for the starting index when a client needs to discover service capabilities.',
+      ],
+      stats: [
+        {
+          label: '/health',
+          value: 'Check',
+          description: 'Service status and active workspace.',
+        },
+        {
+          label: '/workspace',
+          value: 'Inspect',
+          description: 'Current workspace details.',
+        },
+        {
+          label: '/bootstrap',
+          value: 'Begin',
+          description: 'Service entry for clients.',
+        },
+      ],
+    },
+    {
+      id: 'examples',
+      label: 'Examples',
+      eyebrow: 'Quick example',
+      title: 'Copy the local calls and move on.',
+      body: 'Examples should stay compact here. The goal is to let someone make the first successful request without digging through a dense reference page.',
+      points: [
+        'Use curl for the quickest local verification loop.',
+        'Keep the Authorization header only when bearer mode is enabled.',
+        'Treat this screen as a launchpad, then move detailed API usage elsewhere.',
+      ],
+      code: apiExample,
+    },
+    {
+      id: 'paths',
+      label: 'Workspace paths',
+      eyebrow: 'Local paths',
+      title: 'Know where the current workspace lives.',
+      body: 'This is useful when you need to inspect the underlying local store, database, or artifacts without jumping through another admin page.',
+      points: [
+        `Workspace root: ${workspaceRoot || 'Unavailable'}`,
+        `Database: ${workspaceDbPath || 'Unavailable'}`,
+        `Artifacts: ${artifactsPath || 'Unavailable'}`,
+      ],
+      stats: [
+        {
+          label: 'Workspace root',
+          value: workspaceRoot || 'Unavailable',
+          description: 'Current workspace directory.',
+        },
+        {
+          label: 'Database',
+          value: workspaceDbPath || 'Unavailable',
+          description: 'Primary local store.',
+        },
+        {
+          label: 'Artifacts',
+          value: artifactsPath || 'Unavailable',
+          description: 'Generated files and attachments.',
+        },
+      ],
+    },
+  ];
+  const activeApiGuideSection =
+    apiGuideSections.find((section) => section.id === apiGuideSectionId) ?? apiGuideSections[0];
+  const mcpGuideSections: GuideSection[] = [
+    {
+      id: 'overview',
+      label: 'Overview',
+      eyebrow: 'Agent route',
+      title: 'Use MCP when the client is an agent, not a human clicking around.',
+      body: 'This page should surface the core agent workflow first. Keep it clear which tools are used for broad recall, precise recall, soft capture, and anchored context.',
+      points: [
+        'Search broad with memforge_search_workspace when the target is still unclear.',
+        'Search precise with memforge_search_nodes, especially for type=project checks.',
+        'Keep capture soft first, then anchor with targetId only when the project or node is genuinely known.',
+      ],
+      stats: [
+        {
+          label: 'Search broad',
+          value: 'memforge_search_workspace',
+          description: 'Mixed recall across nodes and activities.',
+        },
+        {
+          label: 'Search precise',
+          value: 'memforge_search_nodes',
+          description: 'Project and durable node checks.',
+        },
+      ],
+    },
+    {
+      id: 'connect',
+      label: 'Connection',
+      eyebrow: 'Launch',
+      title: 'Start from the MCP launcher configuration.',
+      body: 'Keep the connection instructions visible, but compact. Most users need either the mcpServers block or the local launcher command, not a long setup essay.',
+      points: [
+        'Use the launcher config when wiring Memforge into an agent client.',
+        'Use the local command when testing the MCP server directly.',
+        'Keep the API target pointed at the active local workspace service.',
+      ],
+      code: `${genericMcpConfig}\n\n${mcpCommand}`,
+    },
+    {
+      id: 'flow',
+      label: 'Search flow',
+      eyebrow: 'Recommended flow',
+      title: 'Search first, then decide whether to anchor.',
+      body: 'The page should make the order obvious so agents do not jump straight into project creation or over-specific retrieval too early.',
+      points: [
+        '1. Check the current workspace context first.',
+        '2. Use memforge_search_nodes with type=project when you are checking for an existing project.',
+        '3. Expand to memforge_search_workspace when you need broader recall across nodes and activities.',
+      ],
+      stats: [
+        {
+          label: 'Step 1',
+          value: 'Check workspace',
+          description: 'Stay in current scope by default.',
+        },
+        {
+          label: 'Step 2',
+          value: 'Search first',
+          description: 'Avoid guessing a project.',
+        },
+        {
+          label: 'Step 3',
+          value: 'Anchor later',
+          description: 'Bundle only when the target is known.',
+        },
+      ],
+    },
+    {
+      id: 'capture',
+      label: 'Capture',
+      eyebrow: 'Write path',
+      title: 'Write lightly unless the target is already clear.',
+      body: 'This is the part that prevents over-structuring. Use the default write path for general notes or conversation outcomes, then move into stronger anchoring only when it helps.',
+      points: [
+        'memforge_capture_memory is the safe default when work is not yet tied to a specific project or node.',
+        'memforge_append_activity is best for routine summaries and work logs.',
+        'memforge_context_bundle should include targetId only after the project or node is truly known.',
+      ],
+      stats: [
+        {
+          label: 'Default write',
+          value: 'memforge_capture_memory',
+          description: 'Low-friction capture path.',
+        },
+        {
+          label: 'Routine logging',
+          value: 'memforge_append_activity',
+          description: 'Progress and execution notes.',
+        },
+        {
+          label: 'Anchored context',
+          value: 'memforge_context_bundle',
+          description: 'Use targetId only when ready.',
+        },
+      ],
+    },
+  ];
+  const activeMcpGuideSection =
+    mcpGuideSections.find((section) => section.id === mcpGuideSectionId) ?? mcpGuideSections[0];
   const graphDistinctNodes = useMemo(
     () => Array.from(new Map(graphConnections.map((item) => [item.node.id, item.node])).values()),
     [graphConnections],
@@ -875,6 +1134,38 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       }, {}),
     [graphConnections],
   );
+  const graphRelationGroups = useMemo(
+    () =>
+      Object.entries(graphRelationCounts)
+        .map(([relationType, count]) => ({
+          relationType,
+          count,
+        }))
+        .sort((left, right) => right.count - left.count || left.relationType.localeCompare(right.relationType)),
+    [graphRelationCounts],
+  );
+  const graphIncomingCount = useMemo(
+    () => graphConnections.filter((item) => item.direction === 'incoming').length,
+    [graphConnections],
+  );
+  const graphOutgoingCount = useMemo(
+    () => graphConnections.filter((item) => item.direction === 'outgoing').length,
+    [graphConnections],
+  );
+  const graphSuggestedCount = useMemo(
+    () => graphConnections.filter((item) => item.relation.status === 'suggested').length,
+    [graphConnections],
+  );
+  const governanceStateCounts = useMemo(
+    () =>
+      governanceIssues.reduce<Record<string, number>>((acc, item) => {
+        acc[item.state] = (acc[item.state] ?? 0) + 1;
+        return acc;
+      }, {}),
+    [governanceIssues],
+  );
+  const activeGovernanceNode =
+    activeGovernanceIssue?.entityType === 'node' ? nodeMap.get(activeGovernanceIssue.entityId) ?? null : null;
 
   async function handleSemanticIssueFilterChange(nextFilter: SemanticIssueFilter) {
     try {
@@ -1124,367 +1415,548 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     focusNode(nodeId, 'graph');
   }
 
-  const centerContent = (() => {
+  const pageContent = (() => {
     if (isLoading) {
       return (
-        <Section title="Loading workspace" subtitle="Opening the local knowledge layer.">
-          <div className="empty-state">Fetching seed workspace and renderer mock data...</div>
-        </Section>
+        <section className="page-section page-section--centered">
+          <div className="empty-state">Opening the local memory field...</div>
+        </section>
       );
     }
 
     if (loadError && !snapshot) {
       return (
-        <Section title="Workspace error" subtitle="The renderer could not load the live workspace.">
+        <section className="page-section page-section--centered">
           <div className="empty-state">{loadError}</div>
-        </Section>
+        </section>
       );
     }
 
     if (authRequired && !snapshot) {
       return (
-        <Section title="Renderer authentication" subtitle="This workspace requires a bearer token before the live API can be used.">
-          <form className="capture-form" onSubmit={(event) => void handleAuthSubmit(event)}>
-            <label className="search-box" htmlFor="memforge-token">
-              <span>API token</span>
-              <input
-                id="memforge-token"
-                type="password"
-                value={authTokenInput}
-                onChange={(event) => setAuthTokenInput(event.target.value)}
-                placeholder="Paste MEMFORGE_API_TOKEN"
-              />
-            </label>
-            {authError ? <div className="empty-state">{authError}</div> : null}
-            <div className="action-row">
-              <button type="submit" disabled={isLoading}>
-                {isLoading ? 'Connecting...' : 'Connect renderer'}
-              </button>
+        <section className="page-section page-section--centered">
+          <div className="card auth-card">
+            <div className="page-copy">
+              <span className="eyebrow">Renderer authentication</span>
+              <h2>Connect to continue</h2>
+              <p>This workspace requires a bearer token before the renderer can use the live API.</p>
             </div>
-          </form>
-        </Section>
+            <form className="capture-form" onSubmit={(event) => void handleAuthSubmit(event)}>
+              <label className="search-box" htmlFor="memforge-token">
+                <span>API token</span>
+                <input
+                  id="memforge-token"
+                  type="password"
+                  value={authTokenInput}
+                  onChange={(event) => setAuthTokenInput(event.target.value)}
+                  placeholder="Paste MEMFORGE_API_TOKEN"
+                />
+              </label>
+              {authError ? <div className="empty-state compact">{authError}</div> : null}
+              <div className="action-row">
+                <button type="submit" disabled={isLoading}>
+                  {isLoading ? 'Connecting...' : 'Connect renderer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
       );
     }
 
     if (view === 'search') {
       return (
-        <>
-          {loadError ? (
-            <Section title="Connection warning" subtitle="Live API data is currently unavailable.">
-              <div className="empty-state">{loadError}</div>
-            </Section>
-          ) : null}
-          <Section title="Search" subtitle={getSearchScopeSummary(searchScopes)}>
-            <label className="search-box" htmlFor="search-input">
-              <span>Query</span>
-              <input
-                id="search-input"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search Memforge"
-              />
-            </label>
-            <div className="chip-row">
-              {SEARCH_SCOPE_OPTIONS.map((option) => {
-                const active =
-                  option.scopes.length === searchScopes.length &&
-                  option.scopes.every((scope) => searchScopes.includes(scope));
-                return (
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Local access</span>
+            <h2>The loopback API, simplified.</h2>
+            <p>Use the left menu like a normal guide page. Keep the surface compact and reveal detail only when needed.</p>
+          </div>
+          <div className="guide-layout">
+            <aside className="card guide-nav">
+              <div className="page-copy compact-copy">
+                <span className="eyebrow">API guide</span>
+                <h3>Sections</h3>
+              </div>
+              <div className="guide-nav-list">
+                {apiGuideSections.map((section) => (
                   <button
-                    key={option.id}
+                    key={section.id}
                     type="button"
-                    className={`tool-chip ${active ? 'tool-chip--active' : ''}`}
-                    onClick={() => setSearchScopes(option.scopes)}
-                    aria-pressed={active}
+                    className={`guide-nav-item ${activeApiGuideSection.id === section.id ? 'active' : ''}`}
+                    onClick={() => setApiGuideSectionId(section.id)}
                   >
-                    {option.label}
+                    <strong>{section.label}</strong>
+                    <span>{section.eyebrow}</span>
                   </button>
-                );
-              })}
-            </div>
-            <p className="settings-copy">
-              Scope is currently <strong>{getSearchScopeMode(searchScopes)}</strong>. Node results surface durable knowledge;
-              activity results surface operational history with target-node context.
-            </p>
-          </Section>
-          <Section
-            title={`Results ${searchResults.length ? `(${searchResults.length})` : ''}`}
-            subtitle="Select a result to inspect the node, governance state, and nearby context."
-          >
-            <div className="stack">
-              {searchResults.map((item) => {
-                const nodeId = getSearchResultNodeId(item);
-                const meta = getSearchResultMeta(item);
-                return (
-                  <button
-                    key={getSearchResultKey(item)}
-                    type="button"
-                    className={`result-card ${nodeId && selectedNodeId === nodeId ? 'selected' : ''}`}
-                    disabled={!nodeId}
-                    onClick={() => {
-                      if (nodeId) {
-                        focusNode(nodeId, 'search');
-                      }
-                    }}
-                  >
-                    <span className="eyebrow">{getSearchResultEyebrow(item)}</span>
-                    <div className="result-card__top">
-                      <strong>{getSearchResultTitle(item)}</strong>
-                      <span className={`pill ${badgeTone(getSearchResultStatus(item))}`}>{getSearchResultBadge(item)}</span>
-                    </div>
-                    <p>{getSearchResultSummary(item)}</p>
-                    <div className="meta-row">
-                      <span>{getSearchResultSecondaryMeta(item)}</span>
-                      <span>{meta.source}</span>
-                    </div>
-                    <div className="meta-row">
-                      <span>{item.resultType === 'node' ? 'durable retrieval' : 'activity recall'}</span>
-                      <span>{formatTime(meta.updatedAt)}</span>
-                    </div>
-                    {getSearchResultMatchReason(item) ? (
-                      <div className="chip-row">
-                        <span className="pill tone-info">{getSearchResultMatchReason(item)}</span>
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })}
-              {!searchResults.length ? <div className="empty-state">No matches for this query.</div> : null}
-            </div>
-          </Section>
-        </>
-      );
-    }
-
-    if (view === 'governance') {
-      return (
-        <Section title="Governance" subtitle="Automatic governance highlights contested and low-confidence entities.">
-          <div className="stack">
-            {governanceIssues.map((item) => (
-              <article
-                key={`${item.entityType}:${item.entityId}`}
-                className={`governance-card ${selectedGovernanceId === item.entityId ? 'selected' : ''}`}
-                onClick={() => setSelectedGovernanceId(item.entityId)}
-              >
-                <span className="eyebrow">{item.entityType === 'node' ? 'Node issue' : 'Relation issue'}</span>
-                <div className="result-card__top">
-                  <strong>{item.title}</strong>
-                  <span className={`pill ${badgeTone(item.state)}`}>{item.state}</span>
-                </div>
-                <p>{item.subtitle || getGovernanceStateSummary(item.state)}</p>
-                <div className="meta-row">
-                  <span>{item.entityType}:{item.entityId}</span>
-                  <span>confidence {formatConfidence(item.confidence)}</span>
-                </div>
-                <div className="chip-row">
-                  {item.reasons.slice(0, 3).map((reason) => (
-                    <span key={reason} className="chip">
-                      {reason}
-                    </span>
+                ))}
+              </div>
+            </aside>
+            <section className="card guide-detail">
+              <div className="page-copy">
+                <span className="eyebrow">{activeApiGuideSection.eyebrow}</span>
+                <h3>{activeApiGuideSection.title}</h3>
+                <p>{activeApiGuideSection.body}</p>
+              </div>
+              {activeApiGuideSection.stats?.length ? (
+                <div className={`info-grid ${activeApiGuideSection.stats.length >= 3 ? 'three' : 'two'}`}>
+                  {activeApiGuideSection.stats.map((item) => (
+                    <article key={item.label} className="info-block">
+                      <span className="info-label">{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <p>{item.description}</p>
+                    </article>
                   ))}
                 </div>
-                <div className="action-row">
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={item.entityType !== 'node'}
-                    onClick={() => {
-                      if (item.entityType === 'node') {
-                        focusNode(item.entityId, 'governance');
-                      }
-                    }}
-                  >
-                    {getGovernanceActionLabel(item)}
-                  </button>
-                </div>
-              </article>
-            ))}
-            {!governanceIssues.length ? <div className="empty-state">No governance issues are currently surfaced.</div> : null}
+              ) : null}
+              <div className="guide-points">
+                {activeApiGuideSection.points.map((point) => (
+                  <article key={point} className="route-card">
+                    <div>
+                      <strong>{point}</strong>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              {activeApiGuideSection.code ? <pre className="code-block">{activeApiGuideSection.code}</pre> : null}
+            </section>
           </div>
-        </Section>
+        </section>
       );
     }
 
     if (view === 'projects') {
       return (
-        <Section title="Projects" subtitle="Canonical project nodes and their local context.">
-          <div className="stack">
-              {pinnedNodes.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
-                  onClick={() => {
-                    focusNode(node.id, 'projects');
-                  }}
-                >
-                <div className="result-card__top">
-                  <strong>{node.title}</strong>
-                  <span className={`pill ${badgeTone(node.status)}`}>{node.status}</span>
-                </div>
-                <p>{node.summary}</p>
-              </button>
-            ))}
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Agent-native route</span>
+            <h2>MCP tools, with less noise.</h2>
+            <p>Use the left menu to move through the setup and workflow, the way a normal guide page would.</p>
           </div>
-        </Section>
+          <div className="guide-layout">
+            <aside className="card guide-nav">
+              <div className="page-copy compact-copy">
+                <span className="eyebrow">MCP guide</span>
+                <h3>Sections</h3>
+              </div>
+              <div className="guide-nav-list">
+                {mcpGuideSections.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={`guide-nav-item ${activeMcpGuideSection.id === section.id ? 'active' : ''}`}
+                    onClick={() => setMcpGuideSectionId(section.id)}
+                  >
+                    <strong>{section.label}</strong>
+                    <span>{section.eyebrow}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+            <section className="card guide-detail">
+              <div className="page-copy">
+                <span className="eyebrow">{activeMcpGuideSection.eyebrow}</span>
+                <h3>{activeMcpGuideSection.title}</h3>
+                <p>{activeMcpGuideSection.body}</p>
+              </div>
+              {activeMcpGuideSection.stats?.length ? (
+                <div className={`info-grid ${activeMcpGuideSection.stats.length >= 3 ? 'three' : 'two'}`}>
+                  {activeMcpGuideSection.stats.map((item) => (
+                    <article key={item.label} className="info-block">
+                      <span className="info-label">{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <p>{item.description}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+              <div className="guide-points">
+                {activeMcpGuideSection.points.map((point) => (
+                  <article key={point} className="route-card">
+                    <div>
+                      <strong>{point}</strong>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              {activeMcpGuideSection.code ? <pre className="code-block">{activeMcpGuideSection.code}</pre> : null}
+            </section>
+          </div>
+        </section>
+      );
+    }
+
+    if (view === 'governance') {
+      return (
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Governance</span>
+            <h2>Governance explorer</h2>
+            <p>Use this as a triage surface for contested and low-confidence memory. It should make issue state, cause, and next action easy to scan.</p>
+          </div>
+          <div className="governance-layout">
+            <aside className="card governance-list">
+              <div className="section-head section-head--compact">
+                <div>
+                  <span className="eyebrow">Issue queue</span>
+                  <h3>Current surfaced items</h3>
+                </div>
+                <span className="pill tone-muted">{governanceIssues.length}</span>
+              </div>
+              <div className="info-grid three">
+                <article className="info-block">
+                  <span className="info-label">Contested</span>
+                  <strong>{governanceStateCounts.contested ?? 0}</strong>
+                  <p>Highest-priority contradictions or repeated negative signals.</p>
+                </article>
+                <article className="info-block">
+                  <span className="info-label">Low confidence</span>
+                  <strong>{governanceStateCounts.low_confidence ?? 0}</strong>
+                  <p>Items that need stronger repeated confirmation.</p>
+                </article>
+                <article className="info-block">
+                  <span className="info-label">Healthy</span>
+                  <strong>{governanceStateCounts.healthy ?? 0}</strong>
+                  <p>Stable states that are currently not in the issue queue.</p>
+                </article>
+              </div>
+              <div className="card-stack">
+                {governanceIssues.map((item) => (
+                  <button
+                    key={`${item.entityType}:${item.entityId}`}
+                    type="button"
+                    className={`result-card governance-card ${selectedGovernanceId === item.entityId ? 'selected' : ''}`}
+                    onClick={() => setSelectedGovernanceId(item.entityId)}
+                  >
+                    <span className="eyebrow">{item.entityType === 'node' ? 'Node issue' : 'Relation issue'}</span>
+                    <div className="result-card__top">
+                      <strong>{item.title}</strong>
+                      <span className={`pill ${badgeTone(item.state)}`}>{item.state}</span>
+                    </div>
+                    <p>{item.subtitle || getGovernanceStateSummary(item.state)}</p>
+                    <div className="meta-row">
+                      <span>{item.entityType}:{item.entityId}</span>
+                      <span>confidence {formatConfidence(item.confidence)}</span>
+                    </div>
+                  </button>
+                ))}
+                {!governanceIssues.length ? <div className="empty-state">No governance issues are currently surfaced.</div> : null}
+              </div>
+            </aside>
+
+            <section className="card governance-detail">
+              {activeGovernanceIssue ? (
+                <>
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">{activeGovernanceIssue.entityType === 'node' ? 'Selected node issue' : 'Selected relation issue'}</span>
+                      <h3>{activeGovernanceIssue.title}</h3>
+                    </div>
+                    <span className={`pill ${badgeTone(activeGovernanceIssue.state)}`}>{activeGovernanceIssue.state}</span>
+                  </div>
+                  <div className="info-grid three">
+                    <article className="info-block">
+                      <span className="info-label">Confidence</span>
+                      <strong>{formatConfidence(activeGovernanceIssue.confidence)}</strong>
+                      <p>Current trust level for the selected issue.</p>
+                    </article>
+                    <article className="info-block">
+                      <span className="info-label">Action</span>
+                      <strong>{getGovernanceActionLabel(activeGovernanceIssue)}</strong>
+                      <p>{getGovernanceStateSummary(activeGovernanceIssue.state)}</p>
+                    </article>
+                    <article className="info-block">
+                      <span className="info-label">Last transition</span>
+                      <strong>{formatTime(activeGovernanceIssue.lastTransitionAt)}</strong>
+                      <p>Most recent governance state change.</p>
+                    </article>
+                  </div>
+                  <div className="governance-detail-grid">
+                    <article className="card governance-detail-card">
+                      <div className="page-copy compact-copy">
+                        <span className="eyebrow">Why this surfaced</span>
+                        <h3>Reason summary</h3>
+                      </div>
+                      <div className="card-stack compact-stack">
+                        {activeGovernanceIssue.reasons.map((reason) => (
+                          <article key={reason} className="mini-card">
+                            <strong>{reason}</strong>
+                          </article>
+                        ))}
+                        {!activeGovernanceIssue.reasons.length ? (
+                          <div className="empty-state compact">No explicit governance reasons were attached to this issue.</div>
+                        ) : null}
+                      </div>
+                    </article>
+
+                    <article className="card governance-detail-card">
+                      <div className="page-copy compact-copy">
+                        <span className="eyebrow">Context</span>
+                        <h3>Selected entity</h3>
+                      </div>
+                      {activeGovernanceNode ? (
+                        <div className="card-stack compact-stack">
+                          <article className="mini-card">
+                            <strong>{activeGovernanceNode.title}</strong>
+                            <p>{activeGovernanceNode.summary}</p>
+                          </article>
+                          <div className="chip-row">
+                            <span className="chip chip-static">{activeGovernanceNode.type}</span>
+                            <span className="chip chip-static">{activeGovernanceNode.status}</span>
+                            <span className="chip chip-static">{activeGovernanceNode.sourceLabel}</span>
+                          </div>
+                          <div className="action-row">
+                            <button type="button" onClick={() => focusNode(activeGovernanceNode.id, 'recent')}>
+                              Open in notes
+                            </button>
+                            <button type="button" className="ghost" onClick={() => focusNode(activeGovernanceNode.id, 'graph')}>
+                              Open in graph
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="empty-state compact">
+                          This issue is not currently attached to a visible node card in the active workspace view.
+                        </div>
+                      )}
+                    </article>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state">No governance issue is selected.</div>
+              )}
+            </section>
+          </div>
+        </section>
       );
     }
 
     if (view === 'graph') {
       return (
-        <Section title="Graph" subtitle="Secondary inspection surface for a user-chosen focus node neighborhood.">
-          <div className="graph-toolbar">
-            <label className="search-box">
-              <span>Focus node</span>
-              <select
-                value={selectedNode?.id ?? ''}
-                onChange={(event) => {
-                  if (event.target.value) {
-                    focusNode(event.target.value);
-                  }
-                }}
-              >
-                {graphFocusableNodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {node.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="chip-row">
-              <button
-                type="button"
-                className={`tool-chip ${graphRadius === 1 ? 'tool-chip--active' : ''}`}
-                onClick={() => setGraphRadius(1)}
-              >
-                1 hop
-              </button>
-              <button
-                type="button"
-                className={`tool-chip ${graphRadius === 2 ? 'tool-chip--active' : ''}`}
-                onClick={() => setGraphRadius(2)}
-              >
-                2 hops
-              </button>
-            </div>
-            <p className="settings-copy">Pick a focus node, then inspect local density and relation quality without turning this into the main workflow.</p>
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Graph</span>
+            <h2>Relationship explorer</h2>
+            <p>Use this as a focused secondary view for connected memory. It should explain what is linked, what is missing, and what to inspect next.</p>
           </div>
-
-          <div className="graph-summary-grid">
-            <article className="graph-focus graph-focus-card">
-              <span className="eyebrow">Focus node</span>
-              <strong>{selectedNode?.title}</strong>
-              <p>{selectedNode?.summary}</p>
-              <div className="chip-row">
-                <span className={`pill ${badgeTone(selectedNode?.status ?? 'active')}`}>{selectedNode?.status ?? 'active'}</span>
-                <span className="pill tone-muted">{selectedNode?.type ?? 'node'}</span>
-                <span className="pill tone-muted">{graphRadius}-hop radius</span>
-              </div>
-              <div className="meta-row">
-                <span>{selectedNode?.sourceLabel ?? 'unknown source'}</span>
-                <span>{selectedNode ? `updated ${formatTime(selectedNode.updatedAt)}` : 'no focus node'}</span>
-              </div>
-            </article>
-
-            <article className="mini-card">
-              <span className="eyebrow">Neighborhood</span>
-              <strong>{graphDistinctNodes.length} nodes</strong>
-              <p>{graphConnections.length} visible relation path{graphConnections.length === 1 ? '' : 's'} around the current focus.</p>
-            </article>
-
-            <article className="mini-card">
-              <span className="eyebrow">Relation density</span>
-              <strong>{Object.keys(graphRelationCounts).length} relation types</strong>
-              <p>{graphConnections.filter((item) => item.relation.status === 'suggested').length} suggested links need extra scrutiny.</p>
-            </article>
-          </div>
-
-          {Object.keys(graphRelationCounts).length ? (
-            <div className="graph-legend">
-              {Object.entries(graphRelationCounts)
-                .sort((a, b) => b[1] - a[1])
-                .map(([relationType, count]) => (
-                  <span key={relationType} className={`chip relation-chip ${relationToneClass(relationType as GraphConnection['relation']['relationType'])}`}>
-                    {relationLabel(relationType)} · {count}
-                  </span>
-                ))}
-            </div>
-          ) : null}
-
-          {graphError ? <div className="empty-state">{graphError}</div> : null}
-
-          <div className="graph-shell">
-            {isGraphLoading ? <div className="empty-state">Loading graph neighborhood...</div> : null}
-            {!isGraphLoading && !graphConnections.length ? (
-              <div className="empty-state">No related nodes in this neighborhood yet.</div>
-            ) : null}
-              {graphConnections.map((item) => (
-                <button
-                  key={`${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'focus'}`}
-                  type="button"
-                  className={`graph-node graph-node--hop-${item.hop}`}
-                  onClick={() => {
-                    focusNode(item.node.id, 'graph');
+          <section className="card page-card">
+            <div className="graph-toolbar">
+              <label className="search-box">
+                <span>Focus node</span>
+                <select
+                  value={selectedNode?.id ?? ''}
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      focusNode(event.target.value);
+                    }
                   }}
                 >
-                <div className="result-card__top">
-                  <strong>{item.node.title}</strong>
-                  <span className={`pill ${badgeTone(item.node.status)}`}>{item.node.type}</span>
+                  {graphFocusableNodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {`${node.title} · ${node.type}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="chip-row">
+                <button
+                  type="button"
+                  className={`tool-chip ${graphRadius === 1 ? 'tool-chip--active' : ''}`}
+                  onClick={() => setGraphRadius(1)}
+                >
+                  1 hop
+                </button>
+                <button
+                  type="button"
+                  className={`tool-chip ${graphRadius === 2 ? 'tool-chip--active' : ''}`}
+                  onClick={() => setGraphRadius(2)}
+                >
+                  2 hops
+                </button>
+              </div>
+            </div>
+            <div className="graph-summary-grid">
+              <article className="graph-focus graph-focus-card">
+                <span className="eyebrow">Focus node</span>
+                <strong>{selectedNode?.title}</strong>
+                <p>{selectedNode?.summary}</p>
+              </article>
+              <article className="mini-card">
+                <span className="eyebrow">Connected nodes</span>
+                <strong>{graphDistinctNodes.length} nodes</strong>
+                <p>{graphConnections.length} visible paths around the current focus.</p>
+              </article>
+              <article className="mini-card">
+                <span className="eyebrow">Signal mix</span>
+                <strong>{graphRelationGroups.length} relation types</strong>
+                <p>{graphSuggestedCount} suggested links still need review.</p>
+              </article>
+              <article className="mini-card">
+                <span className="eyebrow">Direction</span>
+                <strong>{graphOutgoingCount} out / {graphIncomingCount} in</strong>
+                <p>Shows whether this node mostly points outward or is referenced by others.</p>
+              </article>
+            </div>
+            {graphError ? <div className="empty-state">{graphError}</div> : null}
+            {isGraphLoading ? <div className="empty-state">Loading graph neighborhood...</div> : null}
+            {!isGraphLoading && !graphConnections.length ? (
+              <div className="graph-empty">
+                <div className="empty-state">
+                  No linked memory is visible for this node yet. Create relations first, or inspect nearby context signals below.
                 </div>
-                <p>{item.node.summary}</p>
-                <div className="chip-row">
-                  <span className={`chip relation-chip ${relationToneClass(item.relation.relationType)}`}>
-                    {relationLabel(item.relation.relationType)}
-                  </span>
-                  <span className="chip">{item.direction}</span>
-                  <span className="chip">{item.hop}-hop</span>
-                  <span className={`pill ${badgeTone(item.relation.status)}`}>{item.relation.status}</span>
+                <div className="graph-support-grid">
+                  <article className="mini-card">
+                    <strong>Context bundle signals</strong>
+                    <p>
+                      {detail.bundleItems.length
+                        ? `${detail.bundleItems.length} bundle items are available even though explicit graph links are still missing.`
+                        : 'No context bundle signals are available for this node yet.'}
+                    </p>
+                  </article>
+                  <article className="mini-card">
+                    <strong>Related detail nodes</strong>
+                    <p>
+                      {detail.related.length
+                        ? `${detail.related.length} related nodes were found in node detail and can guide the first relation pass.`
+                        : 'Node detail does not currently expose explicit related nodes for this focus.'}
+                    </p>
+                  </article>
                 </div>
-                <div className="meta-row">
-                  <span>{item.viaNodeTitle ? `via ${item.viaNodeTitle}` : 'direct link'}</span>
-                  <span>{item.relation.sourceLabel}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </Section>
+              </div>
+            ) : null}
+            {!!graphRelationGroups.length ? (
+              <section className="graph-section-grid">
+                <article className="card relation-group-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Relation groups</span>
+                      <h3>What kind of links exist?</h3>
+                    </div>
+                  </div>
+                  <div className="relation-group-grid">
+                    {graphRelationGroups.map((item) => (
+                      <article key={item.relationType} className="mini-card">
+                        <span className={`chip relation-chip ${relationToneClass(item.relationType as GraphConnection['relation']['relationType'])}`}>
+                          {relationLabel(item.relationType)}
+                        </span>
+                        <strong>{item.count} links</strong>
+                        <p>Visible in the current {graphRadius}-hop neighborhood.</p>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="card relation-group-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Connected memory</span>
+                      <h3>Open another node from here</h3>
+                    </div>
+                  </div>
+                  <div className="graph-related-grid">
+                    {graphConnections.map((item) => (
+                      <button
+                        key={`${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'focus'}`}
+                        type="button"
+                        className={`graph-node graph-node--hop-${item.hop}`}
+                        onClick={() => {
+                          focusNode(item.node.id, 'graph');
+                        }}
+                      >
+                        <div className="result-card__top">
+                          <strong>{item.node.title}</strong>
+                          <span className={`pill ${badgeTone(item.node.status)}`}>{item.node.type}</span>
+                        </div>
+                        <p>{item.node.summary}</p>
+                        <div className="chip-row">
+                          <span className={`chip relation-chip ${relationToneClass(item.relation.relationType)}`}>
+                            {relationLabel(item.relation.relationType)}
+                          </span>
+                          <span className="chip chip-static">{item.direction}</span>
+                          <span className="chip chip-static">{item.hop} hop</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+            {(detail.bundleItems.length || detail.activities.length) && !isGraphLoading ? (
+              <section className="graph-section-grid">
+                <article className="card relation-group-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Context signals</span>
+                      <h3>Suggested nearby memory</h3>
+                    </div>
+                  </div>
+                  <div className="card-stack compact-stack">
+                    {detail.bundleItems.slice(0, 3).map((item) => (
+                      <button
+                        key={item.nodeId}
+                        type="button"
+                        className="mini-card mini-card--interactive"
+                        onClick={() => void handleBundlePreviewClick(item)}
+                      >
+                        <strong>{item.title ?? item.nodeId}</strong>
+                        <p>{item.reason}</p>
+                      </button>
+                    ))}
+                    {!detail.bundleItems.length ? <div className="empty-state compact">No bundle signals for this focus yet.</div> : null}
+                  </div>
+                </article>
+                <article className="card relation-group-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Recent activity</span>
+                      <h3>Latest movement around this node</h3>
+                    </div>
+                  </div>
+                  <div className="card-stack compact-stack">
+                    {detail.activities.slice(0, 3).map((activity) => (
+                      <article key={activity.id} className="mini-card">
+                        <strong>{activity.activityType}</strong>
+                        <p>{activity.body}</p>
+                      </article>
+                    ))}
+                    {!detail.activities.length ? <div className="empty-state compact">No recent activity on this node yet.</div> : null}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+          </section>
+        </section>
       );
     }
 
     if (view === 'settings') {
       return (
-        <Section title="Settings" subtitle="Workspace identity and local integration boundaries.">
-          <div className="settings-grid">
-            <section className="settings-card">
-              <div className="settings-head">
-                <div>
-                  <span className="eyebrow">Workspace</span>
-                  <h3>Current workspace</h3>
-                  <p className="settings-copy">Switch or create a workspace without leaving settings.</p>
-                </div>
-                <span className={`pill ${workspace?.authMode === 'bearer' ? 'tone-warn' : 'tone-good'}`}>
-                  {workspace?.authMode === 'bearer' ? 'Bearer auth' : 'Local access'}
-                </span>
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Current workspace</span>
+            <h2>Scope management, not clutter.</h2>
+            <p>Workspace switching stays user-directed. Projects stay inside the current workspace instead of replacing it.</p>
+          </div>
+          <div className="two-column-grid">
+            <section className="card page-card">
+              <div className="info-grid three">
+                <article className="info-block">
+                  <span className="info-label">Active</span>
+                  <strong>{workspaceName}</strong>
+                  <p>Primary local workspace and default scope for recall.</p>
+                </article>
+                <article className="info-block">
+                  <span className="info-label">Mode</span>
+                  <strong>Workspace-first</strong>
+                  <p>Projects stay inside the current workspace instead of becoming it.</p>
+                </article>
+                <article className="info-block">
+                  <span className="info-label">API bind</span>
+                  <strong>{workspace?.apiBind ?? '127.0.0.1:8787'}</strong>
+                  <p>Local integration boundary for this workspace.</p>
+                </article>
               </div>
-              <div className="meta-grid">
-                <div>
-                  <span className="eyebrow">Workspace</span>
-                  <p>{workspaceName}</p>
-                </div>
-                <div>
-                  <span className="eyebrow">Root</span>
-                  <p>{workspace?.rootPath}</p>
-                </div>
-                <div>
-                  <span className="eyebrow">Schema version</span>
-                  <p>{workspace?.schemaVersion}</p>
-                </div>
-                <div>
-                  <span className="eyebrow">API bind</span>
-                  <p>{workspace?.apiBind}</p>
-                </div>
-              </div>
-              <form className="capture-form" onSubmit={(event) => void handleCreateWorkspace(event)}>
+              <form className="capture-form compact-form" onSubmit={(event) => void handleCreateWorkspace(event)}>
                 <label className="search-box">
                   <span>Workspace root</span>
                   <input
@@ -1498,10 +1970,10 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                   <input
                     value={workspaceNameInput}
                     onChange={(event) => setWorkspaceNameInput(event.target.value)}
-                    placeholder="Optional display name for new workspace"
+                    placeholder="Optional display name"
                   />
                 </label>
-                {workspaceActionError ? <div className="empty-state">{workspaceActionError}</div> : null}
+                {workspaceActionError ? <div className="empty-state compact">{workspaceActionError}</div> : null}
                 <div className="action-row">
                   <button type="submit" disabled={isSwitchingWorkspace}>
                     {isSwitchingWorkspace ? 'Switching...' : 'Create and switch'}
@@ -1517,590 +1989,295 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 </div>
               </form>
             </section>
-
-            <section className="settings-card">
-              <div className="settings-head">
-                <div>
-                  <span className="eyebrow">Automatic governance</span>
-                  <h3>Deterministic promotion and contest rules</h3>
-                  <p className="settings-copy">Memforge v2 no longer requires manual review actions. Governance is derived from local confidence, contradiction signals, and usage feedback.</p>
-                </div>
-                <div className="settings-head-meta">
-                  <span className="pill tone-good">manual review removed</span>
-                  <span className="pill tone-info">{governanceIssues.length} live issue{governanceIssues.length === 1 ? '' : 's'}</span>
-                </div>
+            <aside className="card page-card">
+              <div className="page-copy">
+                <span className="eyebrow">Recent workspaces</span>
+                <h3>Resume another memory field</h3>
               </div>
-              <div className="settings-block">
-                <div className="chip-row">
-                  <span className="pill tone-good">Search feedback reranks results</span>
-                  <span className="pill tone-warn">Contradictions can contest content</span>
-                  <span className="pill tone-info">Suggested notes can auto-promote</span>
-                </div>
-                <p className="settings-copy">
-                  Confidence is derived from local source trust, search feedback, relation usage, contradiction signals,
-                  and stability over time. Contested entities stay searchable but rank below healthier peers until local
-                  evidence improves.
-                </p>
-                <p className="settings-copy">
-                  Use the Governance tab to inspect low-confidence or contested entities. MCP and CLI surfaces expose
-                  recompute and issue listing for operational workflows, while `review.*` settings remain legacy
-                  compatibility inputs only.
-                </p>
-              </div>
-            </section>
-
-            <section className="settings-card settings-card--wide">
-              <div className="settings-head">
-                <div>
-                  <span className="eyebrow">Recent workspaces</span>
-                  <h3>Previously opened roots</h3>
-                  <p className="settings-copy">Jump back to a workspace with one click.</p>
-                </div>
-              </div>
-              <div className="stack">
+              <div className="card-stack">
                 {workspaceCatalog.map((item) => (
                   <button
                     key={item.rootPath}
                     type="button"
-                    className="result-card"
+                    className="route-card"
                     disabled={isSwitchingWorkspace || item.isCurrent}
                     onClick={() => {
                       setWorkspaceRootInput(item.rootPath);
                       void handleOpenWorkspace(item.rootPath);
                     }}
                   >
-                    <div className="result-card__top">
+                    <div>
                       <strong>{item.name}</strong>
-                      <span className={`pill ${item.isCurrent ? 'tone-good' : 'tone-muted'}`}>{item.isCurrent ? 'current' : 'available'}</span>
+                      <span>{item.rootPath}</span>
                     </div>
-                    <p>{item.rootPath}</p>
+                    <em>{item.isCurrent ? 'Current' : 'Open'}</em>
                   </button>
                 ))}
               </div>
-            </section>
+            </aside>
           </div>
-        </Section>
+        </section>
       );
     }
 
     if (view === 'recent') {
       return (
-        <Section title="Recent" subtitle="Recently touched nodes and activity.">
-          <div className="stack">
-            {recentNodes.map((node) => (
-              <button
-                key={node.id}
-                type="button"
-                className={`result-card ${selectedNodeId === node.id ? 'selected' : ''}`}
-                onClick={() => {
-                  focusNode(node.id, 'recent');
-                }}
-              >
-                <div className="result-card__top">
-                  <strong>{node.title}</strong>
-                  <span className={`pill ${badgeTone(node.status)}`}>{node.status}</span>
-                </div>
-                <p>{node.summary}</p>
-              </button>
-            ))}
+        <section className="page-section">
+          <div className="page-heading">
+            <span className="eyebrow">Notes</span>
+            <h2>Memory cards for the current workspace.</h2>
+            <p>Use the board to scan quickly, then open a card for the full note. Keep the surface lighter than the old wide reading layout.</p>
           </div>
-        </Section>
-      );
-    }
-
-    return (
-      <>
-        {loadError ? (
-          <Section title="Connection warning" subtitle="Some live workspace requests are failing.">
-            <div className="empty-state">{loadError}</div>
-          </Section>
-        ) : null}
-        <Section title="Home" subtitle="Fast re-entry point for search, governance, and pinned context.">
-          <div className="home-grid">
-            <div className="hero-card">
-              <span className="eyebrow">Workspace</span>
-              <h3>{workspaceName}</h3>
-              <p>
-                Retrieve compact context quickly, inspect provenance, and let automatic governance
-                keep durable content healthy.
-              </p>
-              <form
-                className="hero-search"
-                onSubmit={(event) =>
-                  handleSearchSubmit(event, {
-                    query,
-                    onSelectSearch: () => selectView('search'),
-                  })
-                }
-              >
+          <div className="notes-toolbar">
+            <section className="card notes-toolbar-card">
+              <div className="page-copy compact-copy">
+                <span className="eyebrow">Search</span>
+                <h3>Find cards</h3>
+              </div>
+              <label className="search-box" htmlFor="notes-search-input">
+                <span>Query</span>
                 <input
+                  id="notes-search-input"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search Memforge"
-                  aria-label="Quick search"
+                  placeholder="Search memory field"
                 />
-                <button type="submit">Search</button>
+              </label>
+              <div className="chip-row">
+                <span className="chip chip-static">{noteNodes.length} visible</span>
+                <span className="chip chip-static">{workspaceName}</span>
+              </div>
+            </section>
+
+            <section className="card notes-toolbar-card">
+              <div className="page-copy compact-copy">
+                <span className="eyebrow">Quick note</span>
+                <h3>Create a new card</h3>
+              </div>
+              <form className="capture-form notes-capture-form" onSubmit={(event) => void handleCreateNode(event)}>
+                <label className="search-box">
+                  <span>Type</span>
+                  <select value={captureType} onChange={(event) => setCaptureType(event.target.value as Node['type'])}>
+                    <option value="note">note</option>
+                    <option value="idea">idea</option>
+                    <option value="question">question</option>
+                    <option value="decision">decision</option>
+                    <option value="reference">reference</option>
+                    <option value="project">project</option>
+                  </select>
+                </label>
+                <label className="search-box">
+                  <span>Title</span>
+                  <input
+                    id="capture-title-input"
+                    value={captureTitle}
+                    onChange={(event) => setCaptureTitle(event.target.value)}
+                    placeholder="Note title"
+                  />
+                </label>
+                <label className="search-box notes-capture-body">
+                  <span>Body</span>
+                  <textarea
+                    value={captureBody}
+                    onChange={(event) => setCaptureBody(event.target.value)}
+                    placeholder="Write a concise note."
+                    rows={3}
+                  />
+                </label>
+                <div className="action-row">
+                  <button type="submit" disabled={isSavingCapture}>
+                    {isSavingCapture ? 'Saving...' : 'Create note'}
+                  </button>
+                </div>
               </form>
-            </div>
-            <div className="mini-card">
-              <span className="eyebrow">Pinned</span>
-              <strong>{pinnedNodes[0]?.title ?? 'None'}</strong>
-              <p>{pinnedNodes[0]?.summary}</p>
-            </div>
-            <div className="mini-card">
-              <span className="eyebrow">Governance</span>
-              <strong>{governanceIssues.length} surfaced issues</strong>
-              <p>Contested or low-confidence entities are available for inspection in one place.</p>
-            </div>
+              {captureError ? <div className="empty-state compact">{captureError}</div> : null}
+              {captureNotice ? <div className="notice">{captureNotice}</div> : null}
+            </section>
           </div>
-        </Section>
-        <Section title="API & MCP" subtitle="Connection examples and local file locations for the current app session.">
-          <div className="integration-grid">
-            <article className="mini-card">
-              <span className="eyebrow">HTTP API</span>
-              <strong>{apiBase}</strong>
-              <p>
-                Use the loopback API for bootstrap, health checks, and direct local integration.
-                {workspace?.authMode === 'bearer' ? ' Bearer mode is active, so include the Authorization header.' : ''}
-              </p>
-              <pre className="code-block">{apiExample}</pre>
-            </article>
-            <article className="mini-card">
-              <span className="eyebrow">Stdio MCP</span>
-              <strong>{mcpLauncherPath || 'node dist/server/app/mcp/index.js --api …'}</strong>
-              <p>
-                JetBrains AI Assistant and similar GUI MCP clients should use the JSON block below
-                with the stable launcher path. The direct command underneath is better suited to
-                shell-based clients.
-              </p>
-              <pre className="code-block">{genericMcpConfig}</pre>
-              <pre className="code-block">{mcpCommand}</pre>
-            </article>
-            <article className="mini-card">
-              <span className="eyebrow">Semantic indexing</span>
-              <strong>{semanticStatus?.enabled ? 'Enabled' : 'Disabled'}</strong>
-              <p>
-                Provider {semanticStatus?.provider ?? 'disabled'} · model {semanticStatus?.model ?? 'none'} · chunks{' '}
-                {semanticStatus?.chunkEnabled ? 'on' : 'off'}
-              </p>
-              <div className="chip-row">
-                <span className="pill tone-info">pending {semanticCounts.pending}</span>
-                <span className="pill tone-muted">processing {semanticCounts.processing}</span>
-                <span className="pill tone-warn">stale {semanticCounts.stale}</span>
-                <span className="pill tone-good">ready {semanticCounts.ready}</span>
-                <span className="pill tone-muted">failed {semanticCounts.failed}</span>
-              </div>
-              <p>Last workspace reindex: {formatMaybeTime(semanticStatus?.lastBackfillAt ?? null)}</p>
-              <div className="chip-row">
-                {SEMANTIC_ISSUE_FILTERS.map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    className={`tool-chip ${semanticIssueFilter === filter ? 'tool-chip--active' : ''}`}
-                    onClick={() => void handleSemanticIssueFilterChange(filter)}
-                  >
-                    {filter === 'all' ? 'All issues' : filter}
-                  </button>
-                ))}
-              </div>
-              <p className="semantic-issue-summary">
-                Showing {semanticIssues.length} {semanticIssueFilterLabel(semanticIssueFilter)}
-                {semanticIssuesNextCursor ? ' with more available.' : '.'}
-              </p>
-              {semanticIssues.length ? (
-                <div className="semantic-issue-list">
-                  {semanticIssues.map((issue) => (
-                    <p key={`${issue.nodeId}:${issue.embeddingStatus}:${issue.updatedAt}`}>
-                      <strong>{issue.title ?? issue.nodeId}</strong> · {issue.embeddingStatus}
-                      {issue.staleReason ? ` · ${issue.staleReason}` : ''}
-                    </p>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state compact">{semanticIssueEmptyState(semanticIssueFilter)}</div>
-              )}
-              <div className="action-row">
-                <button type="button" onClick={() => void handleQueueSemanticReindex()} disabled={isReindexingSemantic}>
-                  {isReindexingSemantic ? 'Queueing reindex...' : 'Reindex workspace'}
-                </button>
-                {semanticIssuesNextCursor ? (
-                  <button type="button" className="ghost" onClick={() => void handleLoadMoreSemanticIssues()}>
-                    Load more issues
-                  </button>
-                ) : null}
-              </div>
-              {semanticNotice ? <p>{semanticNotice}</p> : null}
-              {semanticError ? <p>{semanticError}</p> : null}
-            </article>
-          </div>
-          <div className="integration-grid">
-            <article className="mini-card">
-              <span className="eyebrow">File locations</span>
-              <div className="path-list">
-                <div>
-                  <strong>Memforge home</strong>
-                  <code>{workspaceHome || 'Unavailable'}</code>
-                </div>
-                <div>
-                  <strong>Workspace root</strong>
-                  <code>{workspaceRoot || 'Unavailable'}</code>
-                </div>
-                <div>
-                  <strong>Database</strong>
-                  <code>{workspaceDbPath || 'Unavailable'}</code>
-                </div>
-                <div>
-                  <strong>Artifacts</strong>
-                  <code>{artifactsPath || 'Unavailable'}</code>
-                </div>
-              </div>
-            </article>
-            <article className="mini-card">
-              <span className="eyebrow">App paths</span>
-              <div className="path-list">
-                <div>
-                  <strong>CLI shim</strong>
-                  <code>{commandShimPath || 'Unavailable'}</code>
-                </div>
-                <div>
-                  <strong>MCP launcher</strong>
-                  <code>{mcpLauncherPath || 'Unavailable'}</code>
-                </div>
-                <div>
-                  <strong>Direct MCP command</strong>
-                  <code>{mcpCommand || defaultMcpCommand}</code>
-                </div>
-                <div>
-                  <strong>{executableLabel}</strong>
-                  <code>{executableDisplay}</code>
-                </div>
-                <div>
-                  <strong>Mode</strong>
-                  <code>{desktopInfo?.isPackaged ? 'packaged desktop shell' : 'development shell'}</code>
-                </div>
-              </div>
-            </article>
-          </div>
-        </Section>
-        <Section title="Quick capture" subtitle="Write a durable node into the local workspace.">
-          <form className="capture-form" onSubmit={(event) => void handleCreateNode(event)}>
-            <label className="search-box">
-              <span>Type</span>
-              <select value={captureType} onChange={(event) => setCaptureType(event.target.value as Node['type'])}>
-                <option value="note">note</option>
-                <option value="project">project</option>
-                <option value="idea">idea</option>
-                <option value="question">question</option>
-                <option value="decision">decision</option>
-                <option value="reference">reference</option>
-              </select>
-            </label>
-            <label className="search-box">
-              <span>Title</span>
-              <input
-                id="capture-title-input"
-                value={captureTitle}
-                onChange={(event) => setCaptureTitle(event.target.value)}
-                placeholder="Memforge retrieval rule"
-              />
-            </label>
-            <label className="search-box">
-              <span>Body</span>
-              <textarea
-                value={captureBody}
-                onChange={(event) => setCaptureBody(event.target.value)}
-                placeholder="Add a concise durable summary, question, or decision."
-                rows={5}
-              />
-            </label>
-            {captureError ? <div className="empty-state">{captureError}</div> : null}
-            {captureNotice ? <p>{captureNotice}</p> : null}
-            <div className="action-row">
-              <button type="submit" disabled={isSavingCapture}>
-                {isSavingCapture ? 'Saving...' : 'Create node'}
-              </button>
-            </div>
-          </form>
-        </Section>
-        <Section title="Recent activity" subtitle="A compact activity trail for quick re-entry.">
-          <div className="stack">
-            {homeActivities.map((activity) => (
-              <article key={activity.id} className="activity-card">
-                <div className="result-card__top">
-                  <strong>{activity.activityType}</strong>
-                  <span>{formatTime(activity.createdAt)}</span>
-                </div>
-                <p>{activity.body}</p>
-              </article>
-            ))}
-          </div>
-        </Section>
-      </>
-    );
-  })();
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark" />
-          <div>
-            <strong>{workspaceName}</strong>
-            <p>Local knowledge substrate</p>
-          </div>
-        </div>
-        <button className="capture-button" type="button" onClick={() => selectView('home')}>
-          Quick capture
-        </button>
-        <nav className="nav-list" aria-label="Main navigation">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`nav-item ${view === item.id ? 'active' : ''}`}
-              onClick={() => selectView(item.id)}
-            >
-              <span>{item.label}</span>
-              <small>{item.hint}</small>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-block">
-          <span className="eyebrow">Pinned projects</span>
-          {pinnedNodes.map((node) => (
-            <button
-              key={node.id}
-              type="button"
-              className="sidebar-link"
-              onClick={() => {
-                focusNode(node.id, 'projects');
-              }}
-            >
-              {node.title}
-            </button>
-          ))}
-        </div>
-        <div className="sidebar-block">
-          <span className="eyebrow">Recent nodes</span>
-          {recentNodes.slice(0, 3).map((node) => (
-            <button
-              key={node.id}
-              type="button"
-              className="sidebar-link"
-              onClick={() => {
-                focusNode(node.id, 'recent');
-              }}
-            >
-              {node.title}
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      <main className="workspace">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">Memforge v2</span>
-            <h1>{view.charAt(0).toUpperCase() + view.slice(1)}</h1>
-          </div>
-          <div className="topbar-meta">
-            <span>{workspace?.apiBind ?? '127.0.0.1'}</span>
-            <span>{workspace?.integrationModes.join(' / ')}</span>
-          </div>
-        </header>
-
-        <div className="content-grid">
-          <section className="center-pane">{centerContent}</section>
-
-          <aside className="detail-pane">
-            <Section title="Node detail" subtitle="Selected node and its local context.">
-              {detailNode ? (
-                <div className="detail-stack">
-                  <div className="detail-title">
-                    <strong>{detailNode.title}</strong>
-                    <span className={`pill ${badgeTone(detailNode.status)}`}>{detailNode.type}</span>
-                    {summaryLifecycle.isStale ? <span className="pill tone-warn">summary stale</span> : null}
+          {noteNodes.length ? (
+            <section className="notes-board">
+              {noteNodes.map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={`note-tile ${activeNoteNode?.id === node.id ? 'selected' : ''}`}
+                  onClick={() => focusNode(node.id, 'recent')}
+                >
+                  <div className="result-card__top">
+                    <span className={`pill ${badgeTone(node.status)}`}>{node.type}</span>
+                    <span className="note-tile-time">{formatTime(node.updatedAt)}</span>
                   </div>
-                  <p>{detailNode.summary}</p>
-                  <div className="action-row">
-                    <button type="button" onClick={() => openNodeInGraph(detailNode.id)}>
-                      Inspect in Graph
-                    </button>
-                    <button type="button" onClick={() => void handleRefreshSummary()} disabled={isRefreshingSummary}>
-                      {isRefreshingSummary ? 'Refreshing summary...' : 'Refresh summary'}
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => void handleQueueSelectedNodeSemanticReindex()}
-                      disabled={isReindexingSelectedNode}
-                    >
-                      {isReindexingSelectedNode ? 'Queueing node reindex...' : 'Reindex selected node'}
-                    </button>
-                  </div>
-                  <div className="body-copy">{detailNode.body}</div>
+                  <strong>{node.title}</strong>
+                  <p>{node.summary || node.body || 'No summary yet.'}</p>
                   <div className="chip-row">
-                    {detailNode.tags.map((tag) => (
+                    {node.tags.slice(0, 3).map((tag) => (
                       <span key={tag} className="chip">
                         {tag}
                       </span>
                     ))}
                   </div>
-                  <div className="meta-grid">
-                    <div>
-                      <span className="eyebrow">Source</span>
-                      <p>{detailNode.sourceLabel}</p>
-                    </div>
-                    <div>
-                      <span className="eyebrow">Canonicality</span>
-                      <p>{detailNode.canonicality}</p>
-                    </div>
-                    <div>
-                      <span className="eyebrow">Summary lifecycle</span>
-                      <p>
-                        {summaryLifecycle.summarySource ?? 'unknown'}
-                        {summaryLifecycle.summaryUpdatedAt ? ` · ${formatTime(summaryLifecycle.summaryUpdatedAt)}` : ''}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="eyebrow">Governance</span>
-                      <p>
-                        {detail.governance.state?.state ?? 'healthy'} ·{' '}
-                        {detail.governance.state ? formatConfidence(detail.governance.state.confidence) : 'n/a'}
-                      </p>
-                    </div>
+                  <div className="meta-row">
+                    <span>{node.sourceLabel}</span>
                   </div>
-                  <div className="stack compact">
-                    <div>
-                      <span className="eyebrow">Governance reasons</span>
-                      <div className="chip-row">
-                        {(detail.governance.state?.reasons ?? ['No governance pressure is currently attached.']).map((reason) => (
-                          <span key={reason} className="chip">
-                            {reason}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="eyebrow">Recent governance events</span>
-                      <div className="stack compact">
-                        {detail.governance.events.slice(0, 3).map((event) => (
-                          <article key={event.id} className="mini-card">
-                            <strong>{getGovernanceEventLabel(event)}</strong>
-                            <p>{event.reason}</p>
-                          </article>
-                        ))}
-                        {!detail.governance.events.length ? (
-                          <div className="empty-state compact">No governance transitions recorded for this node yet.</div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </Section>
+                </button>
+              ))}
+            </section>
+          ) : (
+            <div className="empty-state">
+              {snapshot?.nodes.length
+                ? 'No cards match this query.'
+                : 'There are no saved memory cards in the current workspace yet.'}
+            </div>
+          )}
 
-            <Section title="Context rail" subtitle="Related nodes, activity, artifacts, and provenance.">
-              <div className="stack">
-                <div>
-                  <span className="eyebrow">Related</span>
-                  <div className="stack compact">
-                    {detail.related.map((node) => (
-                      <button
-                        key={node.id}
-                        type="button"
-                        className="sidebar-link"
-                        onClick={() => focusNode(node.id)}
-                      >
-                        {node.title}
-                      </button>
-                    ))}
+          {notePreviewNode ? (
+            <div
+              className="note-overlay"
+              onClick={() => {
+                setSelectedNodeId('');
+              }}
+            >
+              <section
+                className="card note-modal"
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                <div className="section-head section-head--compact">
+                  <div>
+                    <span className="eyebrow">Selected note</span>
+                    <h3>{notePreviewNode.title}</h3>
+                  </div>
+                  <div className="note-modal-actions">
+                    <span className={`pill ${badgeTone(notePreviewNode.status)}`}>{notePreviewNode.type}</span>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        setSelectedNodeId('');
+                      }}
+                    >
+                      Close
+                    </button>
                   </div>
                 </div>
-                <div>
-                  <span className="eyebrow">Bundle preview</span>
-                  <p className="context-hint">Click a preview item to open it and reinforce useful relation context.</p>
-                  <div className="stack compact">
-                    {detail.bundleItems.slice(0, 4).map((item) => (
-                      <button
-                        key={item.nodeId}
-                        type="button"
-                        className="mini-card mini-card--interactive"
-                        onClick={() => void handleBundlePreviewClick(item)}
-                      >
-                        <div className="result-card__top">
-                          <strong>{item.title ?? item.nodeId}</strong>
-                          <div className="bundle-preview-actions">
-                            <span className="pill tone-muted">{item.type}</span>
-                            <span className="bundle-preview-open">Open</span>
-                          </div>
-                        </div>
-                        <p>{item.summary ?? item.reason}</p>
-                        <p className="bundle-preview-meta">
-                          {[
-                            item.relationSource,
-                            item.relationType,
-                            typeof item.semanticSimilarity === 'number' ? `semantic ${item.semanticSimilarity.toFixed(2)}` : null,
-                            typeof item.retrievalRank === 'number' ? `rank ${item.retrievalRank.toFixed(1)}` : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ') || 'Context preview'}
-                        </p>
-                        <p className="context-reason">{item.reason}</p>
-                      </button>
-                    ))}
-                    {!detail.bundleItems.length ? <div className="empty-state">No bundle preview items yet.</div> : null}
-                  </div>
+                <div className="note-reading-pane">{notePreviewNode.body || notePreviewNode.summary}</div>
+                <div className="chip-row">
+                  {notePreviewNode.tags.map((tag) => (
+                    <span key={tag} className="chip">
+                      {tag}
+                    </span>
+                  ))}
                 </div>
-                <div>
-                  <span className="eyebrow">Recent activity</span>
-                  <div className="stack compact">
-                    {detail.activities.map((activity) => (
-                      <article key={activity.id} className="mini-card">
-                        <strong>{activity.activityType}</strong>
-                        <p>{activity.body}</p>
-                      </article>
-                    ))}
-                  </div>
+                <div className="action-row">
+                  <button type="button" onClick={() => openNodeInGraph(notePreviewNode.id)}>
+                    Inspect in graph
+                  </button>
+                  <button type="button" className="ghost" onClick={() => void handleRefreshSummary()} disabled={isRefreshingSummary}>
+                    {isRefreshingSummary ? 'Refreshing...' : 'Refresh summary'}
+                  </button>
                 </div>
-                <div>
-                  <span className="eyebrow">Artifacts</span>
-                  <div className="stack compact">
-                    {detail.artifacts.map((artifact) => (
-                      <article key={artifact.id} className="mini-card">
-                        <strong>{artifact.path}</strong>
-                        <p>{artifact.mimeType}</p>
-                      </article>
-                    ))}
-                  </div>
+                <div className="card-stack compact-stack">
+                  {detail.bundleItems.slice(0, 2).map((item) => (
+                    <button
+                      key={item.nodeId}
+                      type="button"
+                      className="mini-card mini-card--interactive"
+                      onClick={() => void handleBundlePreviewClick(item)}
+                    >
+                      <strong>{item.title ?? item.nodeId}</strong>
+                      <p>{item.reason}</p>
+                    </button>
+                  ))}
+                  {detail.activities.slice(0, 2).map((activity) => (
+                    <article key={activity.id} className="mini-card">
+                      <strong>{activity.activityType}</strong>
+                      <p>{activity.body}</p>
+                    </article>
+                  ))}
                 </div>
-              </div>
-            </Section>
+              </section>
+            </div>
+          ) : null}
+        </section>
+      );
+    }
 
-            <Section title="Governance focus" subtitle="Highlighted automatic governance issue.">
-              {activeGovernanceIssue ? (
-                <div className="mini-card">
-                  <span className="eyebrow">{activeGovernanceIssue.entityType === 'node' ? 'Node issue' : 'Relation issue'}</span>
-                  <strong>{activeGovernanceIssue.title}</strong>
-                  <p>{activeGovernanceIssue.subtitle || getGovernanceStateSummary(activeGovernanceIssue.state)}</p>
-                  <div className="chip-row">
-                    <span className={`pill ${badgeTone(activeGovernanceIssue.state)}`}>{activeGovernanceIssue.state}</span>
-                    <span className="pill tone-muted">confidence {formatConfidence(activeGovernanceIssue.confidence)}</span>
-                  </div>
-                  <div className="chip-row">
-                    {activeGovernanceIssue.reasons.slice(0, 3).map((reason) => (
-                      <span key={reason} className="chip">
-                        {reason}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="empty-state">No governance issues are currently surfaced.</div>
-              )}
-            </Section>
-          </aside>
+    return (
+      <section className="page-section home-section">
+        <div className="home-hero">
+          <span className="eyebrow">Memforge</span>
+          <h2>Local API and MCP access.</h2>
+          <p>Start here. Open the rest from the top menu.</p>
+          <div className="hero-actions">
+            <button type="button" className="hero-button hero-button--primary" onClick={() => selectView('search')}>
+              Open API
+            </button>
+            <button type="button" className="hero-button hero-button--secondary" onClick={() => selectView('projects')}>
+              Open MCP Tools
+            </button>
+          </div>
+          <div className="info-grid two">
+            <article className="info-block">
+              <span className="info-label">Local API</span>
+              <strong>Health, workspace, bootstrap.</strong>
+              <p>Direct local endpoints.</p>
+            </article>
+            <article className="info-block">
+              <span className="info-label">MCP Tools</span>
+              <strong>Search, capture, bundle.</strong>
+              <p>Agent-native access.</p>
+            </article>
+          </div>
         </div>
+      </section>
+    );
+  })();
+
+  return (
+    <div className="app-shell">
+      <main className="workspace">
+        <header className="topbar">
+          <div className="brand">
+            <span className="brand-mark" />
+            <div>
+              <strong>{workspaceName}</strong>
+              <p>{getViewTitle(view)}</p>
+            </div>
+          </div>
+          <nav className="nav-list nav-list--top" aria-label="Main navigation">
+            {navigation.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item ${view === item.id ? 'active' : ''}`}
+                onClick={() => selectView(item.id)}
+              >
+                <span>{item.label}</span>
+                <small>{item.hint}</small>
+              </button>
+            ))}
+          </nav>
+          <div className="topbar-meta">
+            <div className="utility-nav" aria-label="Utility navigation">
+              {utilityNavigation.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`utility-nav-item ${view === item.id ? 'active' : ''}`}
+                  onClick={() => selectView(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <span>{workspace?.apiBind ?? '127.0.0.1:8787'}</span>
+            <span>{workspace?.integrationModes.join(' / ') || 'local / append-only'}</span>
+          </div>
+        </header>
+        {loadError && snapshot ? <div className="banner">{loadError}</div> : null}
+        <div className="workspace-body">{pageContent}</div>
       </main>
     </div>
   );
