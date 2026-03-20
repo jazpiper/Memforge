@@ -42,12 +42,19 @@ import type {
   UpdateNodeInput,
   WorkspaceSearchInput
 } from "../shared/contracts.js";
+import { getSqliteVecExtensionRuntime } from "./db.js";
 import { AppError, assertPresent } from "./errors.js";
 import { appendCurrentTelemetryDetails } from "./observability.js";
 import { computeMaintainedScores } from "./relation-scoring.js";
 import { buildSemanticChunks, buildSemanticDocumentText, normalizeTagList } from "./semantic/chunker.js";
 import { embedSemanticQueryText, normalizeSemanticProviderConfig, resolveSemanticEmbeddingProvider } from "./semantic/provider.js";
 import type { SemanticChunkRecord } from "./semantic/types.js";
+import {
+  createVectorIndexStore,
+  type SemanticIndexBackend,
+  type VectorIndexStore,
+  VectorIndexStoreError
+} from "./semantic/vector-store.js";
 import { checksumText, createId, isPathWithinRoot, nowIso, parseJson, stableSummary } from "./utils.js";
 
 function normalizeArtifactPath(value: string): string {
@@ -85,6 +92,10 @@ type SemanticStatusSummary = {
   enabled: boolean;
   provider: string | null;
   model: string | null;
+  indexBackend: SemanticIndexBackend;
+  configuredIndexBackend: SemanticIndexBackend;
+  extensionStatus: "loaded" | "fallback" | "disabled";
+  extensionLoadError: string | null;
   chunkEnabled: boolean;
   lastBackfillAt: string | null;
   counts: Record<SemanticIndexStatus, number>;
@@ -199,13 +210,30 @@ type SemanticIndexSettings = {
   enabled: boolean;
   provider: string | null;
   model: string | null;
+  configuredIndexBackend: SemanticIndexBackend;
+  indexBackend: SemanticIndexBackend;
+  extensionStatus: "loaded" | "fallback" | "disabled";
+  extensionLoadError: string | null;
   chunkEnabled: boolean;
   chunkAggregation: SemanticChunkAggregation;
+  workspaceFallbackEnabled: boolean;
 };
 
 type SemanticAugmentationSettings = {
   minSimilarity: number;
   maxBonus: number;
+};
+
+type WorkspaceSearchTelemetry = {
+  semanticFallbackEligible: boolean;
+  semanticFallbackAttempted: boolean;
+  semanticFallbackUsed: boolean;
+  semanticFallbackCandidateCount: number;
+  semanticFallbackResultCount: number;
+  semanticFallbackBackend: SemanticIndexBackend | null;
+  semanticFallbackConfiguredBackend: SemanticIndexBackend | null;
+  semanticFallbackSkippedReason: string | null;
+  semanticFallbackQueryLengthBucket: "short" | "medium" | "long" | null;
 };
 
 type PendingSemanticIndexRow = {
@@ -257,16 +285,46 @@ function readNumberSetting(settings: Record<string, unknown>, key: string, fallb
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function readSemanticIndexSettingSnapshot(settings: Record<string, unknown>) {
+function normalizeSemanticIndexBackend(value: unknown): SemanticIndexBackend {
+  return value === "sqlite-vec" ? "sqlite-vec" : "sqlite";
+}
+
+function resolveActiveSemanticIndexBackend(configuredBackend: SemanticIndexBackend, sqliteVecLoaded: boolean): SemanticIndexBackend {
+  if (configuredBackend === "sqlite-vec" && sqliteVecLoaded) {
+    return "sqlite-vec";
+  }
+  return "sqlite";
+}
+
+function resolveSemanticExtensionStatus(
+  configuredBackend: SemanticIndexBackend,
+  sqliteVecLoaded: boolean
+): "loaded" | "fallback" | "disabled" {
+  if (configuredBackend !== "sqlite-vec") {
+    return "disabled";
+  }
+
+  return sqliteVecLoaded ? "loaded" : "fallback";
+}
+
+function readSemanticIndexSettingSnapshot(
+  settings: Record<string, unknown>,
+  runtime: { sqliteVecLoaded: boolean; sqliteVecLoadError: string | null }
+) {
   const normalizedProvider = normalizeSemanticProviderConfig({
     provider: readStringSetting(settings, "search.semantic.provider"),
     model: readStringSetting(settings, "search.semantic.model")
   });
+  const configuredIndexBackend = normalizeSemanticIndexBackend(settings["search.semantic.indexBackend"]);
 
   return {
     enabled: readBooleanSetting(settings, "search.semantic.enabled", false),
     provider: normalizedProvider.provider,
     model: normalizedProvider.model,
+    configuredIndexBackend,
+    indexBackend: resolveActiveSemanticIndexBackend(configuredIndexBackend, runtime.sqliteVecLoaded),
+    extensionStatus: resolveSemanticExtensionStatus(configuredIndexBackend, runtime.sqliteVecLoaded),
+    extensionLoadError: configuredIndexBackend === "sqlite-vec" && !runtime.sqliteVecLoaded ? runtime.sqliteVecLoadError : null,
     chunkEnabled: readBooleanSetting(settings, "search.semantic.chunk.enabled", false)
   };
 }
@@ -369,6 +427,29 @@ function aggregateChunkSimilarities(similarities: number[], aggregation: Semanti
   }
 
   return Math.max(...similarities);
+}
+
+function normalizeSemanticBonusSimilarity(similarity: number, minSimilarity: number): number {
+  if (!Number.isFinite(similarity) || similarity < minSimilarity || minSimilarity >= 1) {
+    return 0;
+  }
+
+  return Math.min(1, Math.max(0, similarity - minSimilarity) / (1 - minSimilarity));
+}
+
+function computeSemanticRetrievalRank(similarity: number, settings: SemanticAugmentationSettings): number {
+  const normalizedSimilarity = normalizeSemanticBonusSimilarity(similarity, settings.minSimilarity);
+  return Number((normalizedSimilarity * settings.maxBonus).toFixed(4));
+}
+
+function bucketSemanticQueryLength(length: number): "short" | "medium" | "long" {
+  if (length <= 12) {
+    return "short";
+  }
+  if (length <= 32) {
+    return "medium";
+  }
+  return "long";
 }
 
 function mapNode(row: Record<string, unknown>): NodeRecord {
@@ -575,7 +656,33 @@ function mapIntegration(row: Record<string, unknown>): IntegrationRecord {
 const RELATION_USAGE_ROLLUP_STATE_ID = "bootstrap";
 
 export class MemforgeRepository {
-  constructor(private readonly db: DatabaseSync, private readonly workspaceRoot: string) {}
+  private readonly workspaceKey: string;
+
+  private readonly sqliteVectorIndexStore: VectorIndexStore;
+
+  private readonly sqliteVecVectorIndexStore: VectorIndexStore;
+
+  private readonly sqliteVecRuntime: ReturnType<typeof getSqliteVecExtensionRuntime>;
+
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly workspaceRoot: string
+  ) {
+    this.workspaceKey = checksumText(path.resolve(workspaceRoot));
+    this.sqliteVecRuntime = getSqliteVecExtensionRuntime(db);
+    this.sqliteVectorIndexStore = createVectorIndexStore(db, {
+      backend: "sqlite",
+      workspaceKey: this.workspaceKey
+    });
+    this.sqliteVecVectorIndexStore = createVectorIndexStore(db, {
+      backend: "sqlite-vec",
+      workspaceKey: this.workspaceKey
+    });
+  }
+
+  private resolveVectorIndexStore(backend: SemanticIndexBackend): VectorIndexStore {
+    return backend === "sqlite-vec" ? this.sqliteVecVectorIndexStore : this.sqliteVectorIndexStore;
+  }
 
   private runInTransaction<T>(operation: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -736,12 +843,18 @@ export class MemforgeRepository {
       "search.semantic.enabled",
       "search.semantic.provider",
       "search.semantic.model",
+      "search.semantic.indexBackend",
       "search.semantic.chunk.enabled",
-      "search.semantic.chunk.aggregation"
+      "search.semantic.chunk.aggregation",
+      "search.semantic.workspaceFallback.enabled"
     ]);
     return {
-      ...readSemanticIndexSettingSnapshot(settings),
-      chunkAggregation: normalizeSemanticChunkAggregation(settings["search.semantic.chunk.aggregation"])
+      ...readSemanticIndexSettingSnapshot(settings, {
+        sqliteVecLoaded: this.sqliteVecRuntime.isLoaded,
+        sqliteVecLoadError: this.sqliteVecRuntime.loadError
+      }),
+      chunkAggregation: normalizeSemanticChunkAggregation(settings["search.semantic.chunk.aggregation"]),
+      workspaceFallbackEnabled: readBooleanSetting(settings, "search.semantic.workspaceFallback.enabled", false)
     };
   }
 
@@ -804,18 +917,21 @@ export class MemforgeRepository {
 
   private replaceSemanticEmbeddings(
     nodeId: string,
-    chunks: SemanticChunkRecord[],
     params: {
       provider: string;
-      model: string;
+      model: string | null;
       version: string | null;
       contentHash: string;
-      vectors: number[][];
+      rows: Array<{
+        chunkOrdinal: number;
+        vectorRef: string | null;
+        vectorBlob: Uint8Array | null;
+      }>;
       updatedAt: string;
     }
   ): void {
     this.db.prepare(`DELETE FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`).run(nodeId);
-    if (!chunks.length || !params.vectors.length) {
+    if (!params.rows.length) {
       return;
     }
 
@@ -826,17 +942,12 @@ export class MemforgeRepository {
        ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
     );
 
-    for (const chunk of chunks) {
-      const vector = params.vectors[chunk.ordinal];
-      if (!vector) {
-        continue;
-      }
-      const vectorBlob = new Uint8Array(new Float32Array(vector).buffer);
+    for (const row of params.rows) {
       insertStatement.run(
         nodeId,
-        chunk.ordinal,
-        null,
-        vectorBlob,
+        row.chunkOrdinal,
+        row.vectorRef,
+        row.vectorBlob,
         params.provider,
         params.model,
         params.version,
@@ -847,8 +958,42 @@ export class MemforgeRepository {
     }
   }
 
+  private async syncSemanticDelete(
+    vectorIndexStore: VectorIndexStore,
+    nodeId: string,
+    finishedAt: string,
+    params: {
+      contentHash: string;
+      embeddingProvider: string | null;
+      embeddingModel: string | null;
+      embeddingVersion?: string | null;
+      status: SemanticIndexStatus;
+      staleReason: string | null;
+      clearChunks: boolean;
+    }
+  ): Promise<void> {
+    await vectorIndexStore.deleteNode(nodeId);
+    this.runInTransaction(() => {
+      if (params.clearChunks) {
+        this.db.prepare(`DELETE FROM node_chunks WHERE node_id = ?`).run(nodeId);
+      }
+      this.db.prepare(`DELETE FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`).run(nodeId);
+      this.upsertSemanticIndexState({
+        nodeId,
+        status: params.status,
+        staleReason: params.staleReason,
+        contentHash: params.contentHash,
+        embeddingProvider: params.embeddingProvider,
+        embeddingModel: params.embeddingModel,
+        embeddingVersion: params.embeddingVersion,
+        updatedAt: finishedAt
+      });
+    });
+  }
+
   async processPendingSemanticIndex(limit = 25) {
     const settings = this.readSemanticIndexSettings();
+    const vectorIndexStore = this.resolveVectorIndexStore(settings.indexBackend);
     const provider = resolveSemanticEmbeddingProvider({
       provider: settings.provider,
       model: settings.model
@@ -897,48 +1042,55 @@ export class MemforgeRepository {
               )
             : [];
         const finishedAt = nowIso();
+        if (node.status === "archived") {
+          await this.syncSemanticDelete(vectorIndexStore, node.id, finishedAt, {
+            clearChunks: true,
+            contentHash,
+            embeddingProvider: settings.provider,
+            embeddingModel: settings.model,
+            status: "ready",
+            staleReason: null
+          });
+          readyNodeIds.push(node.id);
+          processedNodeIds.push(row.nodeId);
+          continue;
+        }
 
-        this.runInTransaction(() => {
-          if (node.status === "archived") {
-            this.db.prepare(`DELETE FROM node_chunks WHERE node_id = ?`).run(node.id);
-            this.db.prepare(`DELETE FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`).run(node.id);
-            this.upsertSemanticIndexState({
-              nodeId: node.id,
-              status: "ready",
-              staleReason: null,
-              contentHash,
-              embeddingProvider: settings.provider,
-              embeddingModel: settings.model,
-              updatedAt: finishedAt
-            });
-            readyNodeIds.push(node.id);
-            return;
-          }
+        this.replaceSemanticChunks(node.id, chunks, finishedAt);
 
-          this.replaceSemanticChunks(node.id, chunks, finishedAt);
+        if (!settings.enabled || settings.provider === "disabled" || settings.model === "none" || !settings.provider || !settings.model) {
+          await this.syncSemanticDelete(vectorIndexStore, node.id, finishedAt, {
+            clearChunks: false,
+            contentHash,
+            embeddingProvider: settings.provider,
+            embeddingModel: settings.model,
+            status: "ready",
+            staleReason: null
+          });
+          readyNodeIds.push(node.id);
+          processedNodeIds.push(row.nodeId);
+          continue;
+        }
 
-          if (!settings.enabled || settings.provider === "disabled" || settings.model === "none" || !settings.provider || !settings.model) {
-            this.db.prepare(`DELETE FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`).run(node.id);
-            this.upsertSemanticIndexState({
-              nodeId: node.id,
-              status: "ready",
-              staleReason: null,
-              contentHash,
-              embeddingProvider: settings.provider,
-              embeddingModel: settings.model,
-              updatedAt: finishedAt
-            });
-            readyNodeIds.push(node.id);
-            return;
-          }
+        if (provider && embeddingResults.length === chunks.length) {
+          const ledgerRows = await vectorIndexStore.upsertNodeChunks({
+            nodeId: node.id,
+            chunks,
+            embeddings: embeddingResults,
+            contentHash,
+            embeddingProvider: provider.provider,
+            embeddingModel: provider.model ?? settings.model,
+            embeddingVersion: provider.version,
+            updatedAt: finishedAt
+          });
 
-          if (provider && embeddingResults.length === chunks.length) {
-            this.replaceSemanticEmbeddings(node.id, chunks, {
+          this.runInTransaction(() => {
+            this.replaceSemanticEmbeddings(node.id, {
               provider: provider.provider,
               model: provider.model ?? settings.model,
               version: provider.version,
               contentHash,
-              vectors: embeddingResults.map((item) => item.vector),
+              rows: ledgerRows,
               updatedAt: finishedAt
             });
             this.upsertSemanticIndexState({
@@ -951,27 +1103,28 @@ export class MemforgeRepository {
               embeddingVersion: provider.version,
               updatedAt: finishedAt
             });
-            readyNodeIds.push(node.id);
-            return;
-          }
-
-          this.db.prepare(`DELETE FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`).run(node.id);
-          this.upsertSemanticIndexState({
-            nodeId: node.id,
-            status: "failed",
-            staleReason: `embedding.provider_not_implemented:${settings.provider}`,
-            contentHash,
-            embeddingProvider: settings.provider,
-            embeddingModel: settings.model,
-            updatedAt: finishedAt
           });
-          failedNodeIds.push(node.id);
+          readyNodeIds.push(node.id);
+          processedNodeIds.push(row.nodeId);
+          continue;
+        }
+
+        await this.syncSemanticDelete(vectorIndexStore, node.id, finishedAt, {
+          clearChunks: false,
+          contentHash,
+          embeddingProvider: settings.provider,
+          embeddingModel: settings.model,
+          status: "failed",
+          staleReason: `embedding.provider_not_implemented:${settings.provider}`
         });
-      } catch {
+        failedNodeIds.push(node.id);
+      } catch (error) {
+        const staleReason =
+          error instanceof VectorIndexStoreError ? error.code : "embedding.node_not_found";
         this.upsertSemanticIndexState({
           nodeId: row.nodeId,
           status: "failed",
-          staleReason: "embedding.node_not_found",
+          staleReason,
           contentHash: row.contentHash,
           embeddingProvider: settings.provider,
           embeddingModel: settings.model
@@ -1084,10 +1237,14 @@ export class MemforgeRepository {
       "search.semantic.enabled",
       "search.semantic.provider",
       "search.semantic.model",
+      "search.semantic.indexBackend",
       "search.semantic.chunk.enabled",
       "search.semantic.last_backfill_at"
     ]);
-    const semanticSettings = readSemanticIndexSettingSnapshot(settings);
+    const semanticSettings = readSemanticIndexSettingSnapshot(settings, {
+      sqliteVecLoaded: this.sqliteVecRuntime.isLoaded,
+      sqliteVecLoadError: this.sqliteVecRuntime.loadError
+    });
     const counts = Object.fromEntries(
       SEMANTIC_INDEX_STATUS_VALUES.map((status) => [status, 0])
     ) as Record<SemanticIndexStatus, number>;
@@ -1204,42 +1361,28 @@ export class MemforgeRepository {
       return new Map();
     }
 
-    const rows = this.db
-      .prepare(
-        `SELECT owner_id, vector_blob
-         FROM node_embeddings
-         WHERE owner_type = 'node'
-           AND status = 'ready'
-           AND embedding_provider = ?
-           AND embedding_model = ?
-           AND owner_id IN (${candidateNodeIds.map(() => "?").join(", ")})`
-      )
-      .all(settings.provider, settings.model, ...candidateNodeIds) as Array<Record<string, unknown>>;
-
     const similarityByNode = new Map<string, number[]>();
-    for (const row of rows) {
-      if (!(row.vector_blob instanceof Uint8Array)) {
-        continue;
-      }
-      const nodeId = String(row.owner_id);
-      const similarity = computeCosineSimilarity(queryEmbedding.vector, decodeVectorBlob(row.vector_blob));
-      if (!Number.isFinite(similarity)) {
-        continue;
-      }
-      const similarities = similarityByNode.get(nodeId) ?? [];
-      similarities.push(similarity);
-      similarityByNode.set(nodeId, similarities);
+    const matches = await this.resolveVectorIndexStore(settings.indexBackend).searchCandidates({
+      queryVector: queryEmbedding.vector,
+      candidateNodeIds,
+      embeddingProvider: settings.provider,
+      embeddingModel: settings.model
+    }).catch(() => []);
+    for (const match of matches) {
+      const similarities = similarityByNode.get(match.nodeId) ?? [];
+      similarities.push(match.similarity);
+      similarityByNode.set(match.nodeId, similarities);
     }
 
-    const matches = new Map<string, SemanticCandidateSimilarity>();
+    const rankedMatches = new Map<string, SemanticCandidateSimilarity>();
     for (const [nodeId, similarities] of similarityByNode.entries()) {
-      matches.set(nodeId, {
+      rankedMatches.set(nodeId, {
         similarity: aggregateChunkSimilarities(similarities, settings.chunkAggregation),
         matchedChunks: similarities.length
       });
     }
 
-    return matches;
+    return rankedMatches;
   }
 
   listNodes(limit = 20): SearchResultItem[] {
@@ -1424,12 +1567,121 @@ export class MemforgeRepository {
     return result;
   }
 
-  searchWorkspace(input: WorkspaceSearchInput): { items: WorkspaceSearchResultItem[]; total: number } {
+  private listWorkspaceSemanticFallbackCandidateNodeIds(
+    filters: WorkspaceSearchInput["nodeFilters"],
+    settings: Pick<SemanticIndexSettings, "provider" | "model">,
+    limit: number
+  ): string[] {
+    if (!settings.provider || !settings.model) {
+      return [];
+    }
+
+    const where = [
+      `n.status IN (${(filters?.status?.length ? filters.status : ["active", "draft"]).map(() => "?").join(", ")})`,
+      `nis.embedding_status = 'ready'`,
+      `nis.embedding_provider = ?`,
+      `nis.embedding_model = ?`
+    ];
+    const whereValues: SqlValue[] = [
+      ...((filters?.status?.length ? filters.status : ["active", "draft"]) as SqlValue[]),
+      settings.provider,
+      settings.model
+    ];
+
+    if (filters?.types?.length) {
+      where.push(`n.type IN (${filters.types.map(() => "?").join(", ")})`);
+      whereValues.push(...(filters.types as SqlValue[]));
+    }
+
+    if (filters?.sourceLabels?.length) {
+      where.push(`n.source_label IN (${filters.sourceLabels.map(() => "?").join(", ")})`);
+      whereValues.push(...(filters.sourceLabels as SqlValue[]));
+    }
+
+    if (filters?.tags?.length) {
+      for (const tag of normalizeTagList(filters.tags)) {
+        where.push("EXISTS (SELECT 1 FROM node_tags nt WHERE nt.node_id = n.id AND nt.tag = ?)");
+        whereValues.push(tag);
+      }
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT n.id
+         FROM nodes n
+         JOIN node_index_state nis ON nis.node_id = n.id
+         WHERE ${where.join(" AND ")}
+         ORDER BY n.updated_at DESC
+         LIMIT ?`
+      )
+      .all(...whereValues, limit) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => String(row.id));
+  }
+
+  private buildWorkspaceSemanticFallbackNodeItems(
+    candidateNodeIds: string[],
+    semanticMatches: Map<string, SemanticCandidateSimilarity>,
+    settings: SemanticAugmentationSettings
+  ): SearchResultItem[] {
+    type RankedSemanticSearchResultItem = SearchResultItem & {
+      matchReason: SearchMatchReason;
+      semanticSimilarity: number;
+      semanticRetrievalRank: number;
+    };
+
+    const rankedItems: RankedSemanticSearchResultItem[] = [];
+    for (const nodeId of candidateNodeIds) {
+        const semanticMatch = semanticMatches.get(nodeId);
+        if (!semanticMatch) {
+          continue;
+        }
+
+        const retrievalRank = computeSemanticRetrievalRank(semanticMatch.similarity, settings);
+        if (retrievalRank <= 0) {
+          continue;
+        }
+
+        const node = this.getNode(nodeId);
+        rankedItems.push({
+          id: node.id,
+          type: node.type,
+          title: node.title,
+          summary: node.summary,
+          status: node.status,
+          canonicality: node.canonicality,
+          sourceLabel: node.sourceLabel,
+          updatedAt: node.updatedAt,
+          tags: node.tags,
+          matchReason: buildSearchMatchReason("semantic", ["semantic"]),
+          semanticSimilarity: Number(semanticMatch.similarity.toFixed(4)),
+          semanticRetrievalRank: retrievalRank
+        });
+    }
+
+    return rankedItems
+      .sort(
+        (left, right) =>
+          right.semanticRetrievalRank - left.semanticRetrievalRank || right.updatedAt.localeCompare(left.updatedAt)
+      )
+      .map(({ semanticSimilarity: _semanticSimilarity, semanticRetrievalRank: _semanticRetrievalRank, ...item }) => item);
+  }
+
+  async searchWorkspace(
+    input: WorkspaceSearchInput,
+    options: {
+      runSemanticFallbackSpan?: <T>(
+        details: JsonMap,
+        callback: () => Promise<T>
+      ) => Promise<T>;
+    } = {}
+  ): Promise<{ items: WorkspaceSearchResultItem[]; total: number; telemetry: WorkspaceSearchTelemetry }> {
     const includeNodes = input.scopes.includes("nodes");
     const includeActivities = input.scopes.includes("activities");
     const requestedWindow = Math.min(input.limit + input.offset + SEARCH_FEEDBACK_WINDOW_PADDING, SEARCH_FEEDBACK_MAX_WINDOW);
     const queryPresent = Boolean(input.query.trim());
     const searchSort = input.sort === "smart" ? (queryPresent ? "relevance" : "updated_at") : input.sort;
+    const normalizedQuery = input.query.trim();
     const nodeResults = includeNodes
       ? this.searchNodes({
           query: input.query,
@@ -1464,22 +1716,136 @@ export class MemforgeRepository {
       input.sort
     );
 
-    const result = {
+    const deterministicResult = {
       total:
         fallbackTokens.length >= 2
           ? merged.length
           : resolvedNodeResults.total + resolvedActivityResults.total,
       items: merged.slice(input.offset, input.offset + input.limit)
     };
-    appendCurrentTelemetryDetails({
-      candidateCount: requestedWindow,
-      nodeCandidateCount: resolvedNodeResults.items.length,
-      activityCandidateCount: resolvedActivityResults.items.length,
-      resultCount: result.items.length,
-      totalCount: result.total,
-      fallbackTokenCount: fallbackTokens.length
-    });
-    return result;
+    const semanticSettings = this.readSemanticIndexSettings();
+    const telemetry: WorkspaceSearchTelemetry = {
+      semanticFallbackEligible: false,
+      semanticFallbackAttempted: false,
+      semanticFallbackUsed: false,
+      semanticFallbackCandidateCount: 0,
+      semanticFallbackResultCount: 0,
+      semanticFallbackBackend: null,
+      semanticFallbackConfiguredBackend: semanticSettings.configuredIndexBackend,
+      semanticFallbackSkippedReason: null,
+      semanticFallbackQueryLengthBucket: queryPresent ? bucketSemanticQueryLength(normalizedQuery.length) : null
+    };
+    const appendWorkspaceSearchTelemetry = (result: { items: WorkspaceSearchResultItem[]; total: number }) => {
+      appendCurrentTelemetryDetails({
+        candidateCount: requestedWindow,
+        nodeCandidateCount: resolvedNodeResults.items.length,
+        activityCandidateCount: resolvedActivityResults.items.length,
+        resultCount: result.items.length,
+        totalCount: result.total,
+        fallbackTokenCount: fallbackTokens.length,
+        semanticFallbackEligible: telemetry.semanticFallbackEligible,
+        semanticFallbackAttempted: telemetry.semanticFallbackAttempted,
+        semanticFallbackUsed: telemetry.semanticFallbackUsed,
+        semanticFallbackCandidateCount: telemetry.semanticFallbackCandidateCount,
+        semanticFallbackResultCount: telemetry.semanticFallbackResultCount,
+        semanticFallbackBackend: telemetry.semanticFallbackBackend,
+        semanticFallbackConfiguredBackend: telemetry.semanticFallbackConfiguredBackend,
+        semanticFallbackSkippedReason: telemetry.semanticFallbackSkippedReason
+      });
+    };
+
+    const shouldAttemptSemanticFallback =
+      includeNodes &&
+      semanticSettings.workspaceFallbackEnabled &&
+      queryPresent &&
+      normalizedQuery.length >= 6 &&
+      deterministicResult.total === 0 &&
+      semanticSettings.enabled &&
+      Boolean(semanticSettings.provider && semanticSettings.model);
+
+    if (!includeNodes) {
+      telemetry.semanticFallbackSkippedReason = "nodes_scope_disabled";
+    } else if (!queryPresent) {
+      telemetry.semanticFallbackSkippedReason = "query_empty";
+    } else if (normalizedQuery.length < 6) {
+      telemetry.semanticFallbackSkippedReason = "query_too_short";
+    } else if (!semanticSettings.workspaceFallbackEnabled) {
+      telemetry.semanticFallbackSkippedReason = "workspace_fallback_disabled";
+    } else if (deterministicResult.total > 0) {
+      telemetry.semanticFallbackSkippedReason = "deterministic_results_present";
+    } else if (!semanticSettings.enabled) {
+      telemetry.semanticFallbackSkippedReason = "semantic_disabled";
+    } else if (!semanticSettings.provider || !semanticSettings.model) {
+      telemetry.semanticFallbackSkippedReason = "semantic_provider_unconfigured";
+    }
+
+    if (shouldAttemptSemanticFallback) {
+      const candidateNodeIds = this.listWorkspaceSemanticFallbackCandidateNodeIds(
+        input.nodeFilters ?? {},
+        semanticSettings,
+        200
+      );
+      telemetry.semanticFallbackEligible = true;
+      telemetry.semanticFallbackCandidateCount = candidateNodeIds.length;
+      telemetry.semanticFallbackBackend = semanticSettings.indexBackend;
+
+      if (!candidateNodeIds.length) {
+        telemetry.semanticFallbackSkippedReason = "candidate_pool_empty";
+      } else {
+        telemetry.semanticFallbackAttempted = true;
+        const runSemanticFallback = async () => {
+          const semanticMatches = await this.rankSemanticCandidates(normalizedQuery, candidateNodeIds);
+          const items = this.buildWorkspaceSemanticFallbackNodeItems(
+            candidateNodeIds,
+            semanticMatches,
+            this.getSemanticAugmentationSettings()
+          ).map((node) => ({ resultType: "node" as const, node }));
+          return {
+            items,
+            resultCount: items.length
+          };
+        };
+
+        try {
+          const semanticResult = options.runSemanticFallbackSpan
+            ? await options.runSemanticFallbackSpan(
+                {
+                  semanticFallbackCandidateCount: candidateNodeIds.length,
+                  semanticFallbackBackend: semanticSettings.indexBackend,
+                  semanticFallbackConfiguredBackend: semanticSettings.configuredIndexBackend,
+                  semanticFallbackQueryLengthBucket: telemetry.semanticFallbackQueryLengthBucket
+                },
+                runSemanticFallback
+              )
+            : await runSemanticFallback();
+          telemetry.semanticFallbackResultCount = semanticResult.resultCount;
+
+          if (semanticResult.resultCount > 0) {
+            telemetry.semanticFallbackUsed = true;
+            const semanticWorkspaceResult = {
+              total: semanticResult.resultCount,
+              items: semanticResult.items
+            };
+            appendWorkspaceSearchTelemetry(semanticWorkspaceResult);
+            return {
+              ...semanticWorkspaceResult,
+              telemetry
+            };
+          }
+
+          telemetry.semanticFallbackSkippedReason = "semantic_no_matches";
+        } catch (error) {
+          telemetry.semanticFallbackSkippedReason =
+            error instanceof VectorIndexStoreError ? error.code : "semantic_fallback_error";
+        }
+      }
+    }
+
+    appendWorkspaceSearchTelemetry(deterministicResult);
+    return {
+      ...deterministicResult,
+      telemetry
+    };
   }
 
   private searchWorkspaceNodeFallback(

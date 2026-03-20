@@ -37,4 +37,3 @@ export function workspaceInfo(rootPath: string, config: ServerConfig, authMode: 
     authMode
   };
 }
-

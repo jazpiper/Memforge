@@ -632,6 +632,7 @@ Search nodes and activities together through one agent-friendly entry point.
 - `smart` is the recommended mixed-search sort because it combines source-local ranking with recency and contested penalties
 - activity results are capped per target node to avoid timeline spam
 - if an initial multi-token mixed search returns zero results, the server may retry with bounded token fallback and mark those results with `matchReason.strategy = "fallback_token"`
+- when `search.semantic.workspaceFallback.enabled=true`, `scopes` includes `nodes`, and deterministic mixed search still returns `0` items, the server may do one bounded semantic retry against recent semantic-ready nodes and mark recovered node results with `matchReason.strategy = "semantic"`
 
 ---
 
@@ -729,7 +730,7 @@ Optional scout-stage ranking primitive.
 
 ### Note
 The default path stays deterministic-first.
-When semantic indexing is enabled and there is no strong exact lexical candidate match, the endpoint may add a bounded local `local-ngram` bonus from indexed node embeddings.
+When semantic indexing is enabled and there is no strong exact lexical candidate match, the endpoint may add a bounded semantic bonus from the configured local vector-index backend (`sqlite-vec` when loaded, otherwise `sqlite`).
 The current request-time tuning knobs are:
 - `search.semantic.augmentation.minSimilarity` with a default of `0.2`
 - `search.semantic.augmentation.maxBonus` with a default of `18`
@@ -739,7 +740,7 @@ The current request-time tuning knobs are:
 - `retrievalRank` is the request-time ranking value
 - `score` and `retrievalRank` currently carry the same number for this endpoint
 - relation-derived ranking is folded into the request-time rank; persisted `inferred_relations.final_score` is not renamed here
-- `semanticSimilarity` is optional and only appears when local semantic augmentation contributed to the request-time rank
+- `semanticSimilarity` is optional and only appears when semantic augmentation contributed to the request-time rank
 
 ### Example response
 ```json
@@ -808,7 +809,7 @@ Context bundles are a core primitive.
 
 ### Notes
 - deterministic related-context signals still rank first
-- when semantic indexing is enabled and target text does not already have a strong lexical candidate match, bundle ordering may add a bounded `local-ngram` bonus
+- when semantic indexing is enabled and target text does not already have a strong lexical candidate match, bundle ordering may add a bounded semantic bonus from the active local vector-index backend
 - `semanticSimilarity` is optional and only appears on items that benefited from that bonus
 - `relationId` is optional and only appears on relation-backed bundle items so UI and agents can attribute follow-up usage signals precisely
 
@@ -1020,6 +1021,7 @@ Semantic indexing is optional and currently operates as a background-maintained 
 - writes mark nodes as `pending` or `stale`
 - reindex endpoints only queue work; they do not generate embeddings inline
 - `enabled` can stay `false` even while queue metadata and index-state tables exist
+- `provider` chooses embedding generation while `indexBackend` chooses vector storage and search
 
 ## 18.1 Get semantic indexing status
 ### HTTP
@@ -1029,6 +1031,10 @@ Semantic indexing is optional and currently operates as a background-maintained 
 - `enabled`
 - `provider`
 - `model`
+- `indexBackend`
+- `configuredIndexBackend`
+- `extensionStatus`
+- `extensionLoadError`
 - `chunkEnabled`
 - `lastBackfillAt`
 - `counts.pending`
@@ -1040,6 +1046,10 @@ Semantic indexing is optional and currently operates as a background-maintained 
 Notes:
 - `provider=disabled` keeps semantic work in chunk-only mode
 - `provider=local-ngram` is the built-in local provider for end-to-end validation without an external API
+- `configuredIndexBackend=sqlite-vec` is the default local-first preference
+- `indexBackend=sqlite-vec` means the extension loaded and bounded vector math is running inside SQLite
+- `indexBackend=sqlite` means Memforge is using the fallback app-calculated similarity path
+- `extensionStatus=loaded` means `sqlite-vec` is active, `fallback` means Memforge downgraded to `sqlite`, and `disabled` means the workspace is explicitly configured to stay on plain `sqlite`
 - `search.semantic.chunk.aggregation=max` remains the default request-time chunk aggregation strategy
 - `search.semantic.chunk.aggregation=topk_mean` averages the top semantic chunk matches for each node without changing write-time indexing
 

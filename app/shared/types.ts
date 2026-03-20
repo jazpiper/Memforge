@@ -59,6 +59,10 @@ export interface SemanticStatusSummary {
   enabled: boolean;
   provider: string | null;
   model: string | null;
+  indexBackend: "sqlite" | "sqlite-vec";
+  configuredIndexBackend: "sqlite" | "sqlite-vec";
+  extensionStatus: "loaded" | "fallback" | "disabled";
+  extensionLoadError: string | null;
   chunkEnabled: boolean;
   lastBackfillAt: string | null;
   counts: {
@@ -305,7 +309,7 @@ export interface WorkspaceSearchResultItem {
 }
 
 export interface SearchMatchReason {
-  strategy: "fts" | "like" | "fallback_token" | "browse";
+  strategy: "fts" | "like" | "fallback_token" | "semantic" | "browse";
   matchedFields: string[];
 }
 
@@ -428,6 +432,13 @@ export interface TelemetrySummaryResponse {
     usedCount: number;
     sampleCount: number;
     ratio: number | null;
+  };
+  semanticFallbackRate: {
+    eligibleCount: number;
+    attemptedCount: number;
+    hitCount: number;
+    attemptRatio: number | null;
+    hitRatio: number | null;
   };
   autoJobStats: Array<{
     operation: string;

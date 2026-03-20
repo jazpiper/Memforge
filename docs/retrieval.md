@@ -118,9 +118,11 @@ The scout is optimized for:
 
 ### Current semantic fallback
 - deterministic retrieval remains first
-- local semantic augmentation is currently bounded and local-only via `local-ngram` / `chargram-v1`
+- semantic augmentation is bounded and optional, with `sqlite-vec` preferred and `sqlite` as the automatic fallback backend
+- `provider` still refers to embedding generation; `local-ngram` / `chargram-v1` remains the built-in validation provider
 - request-time tuning is limited to `search.semantic.augmentation.minSimilarity`, `search.semantic.augmentation.maxBonus`, and `search.semantic.chunk.aggregation`
 - semantic bonuses are skipped when there is already a strong lexical exact match
+- mixed workspace search may optionally do a final bounded semantic retry only after deterministic search and token fallback both return `0` results; this is off by default and node-only
 
 ### Scout non-goals
 The scout should not:

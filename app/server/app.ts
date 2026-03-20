@@ -1675,13 +1675,35 @@ export function createMemforgeApp(params: {
         sort: input.sort,
         scopes: input.scopes
       },
-      (span) => {
-        const searchResult = currentRepository().searchWorkspace(input);
+      async (span) => {
+        const searchResult = await currentRepository().searchWorkspace(input, {
+          runSemanticFallbackSpan: async (details, callback) =>
+            runObservedSpan("workspace.search.semantic_fallback", {
+              ...details,
+              mcpTool: request.header("x-memforge-mcp-tool") ?? null
+            }, async (semanticSpan) => {
+              const semanticResult = await callback();
+              if (
+                semanticResult &&
+                typeof semanticResult === "object" &&
+                "resultCount" in semanticResult &&
+                typeof semanticResult.resultCount === "number"
+              ) {
+                semanticSpan.addDetails({
+                  semanticFallbackResultCount: semanticResult.resultCount
+                });
+              }
+              return semanticResult;
+            })
+        });
         span.addDetails({
           resultCount: searchResult.items.length,
           totalCount: searchResult.total
         });
-        return searchResult;
+        return {
+          items: searchResult.items,
+          total: searchResult.total
+        };
       }
     );
     response.json(envelope(response.locals.requestId, result));

@@ -290,6 +290,8 @@ function getSearchResultMatchReason(item: SearchResultItem) {
       return `String match${suffix}`;
     case 'fallback_token':
       return `Fallback token match${suffix}`;
+    case 'semantic':
+      return 'Semantic fallback match';
     default:
       return null;
   }

@@ -1,7 +1,19 @@
 import { DatabaseSync } from "node:sqlite";
+import { load as loadSqliteVec } from "sqlite-vec";
 import type { WorkspacePaths } from "./workspace.js";
 
 const schemaVersion = 7;
+const sqliteVecStateByDb = new WeakMap<DatabaseSync, SqliteVecExtensionRuntime>();
+
+export type SqliteVecExtensionRuntime = {
+  isLoaded: boolean;
+  version: string | null;
+  loadError: string | null;
+};
+
+export type OpenDatabaseOptions = {
+  sqliteVecLoader?: (db: DatabaseSync) => void;
+};
 
 function execMigration(db: DatabaseSync): void {
   db.exec(`
@@ -353,8 +365,46 @@ function execMigration(db: DatabaseSync): void {
   `);
 }
 
-export function openDatabase(paths: WorkspacePaths): DatabaseSync {
-  const db = new DatabaseSync(paths.dbPath);
+function detectSqliteVecVersion(db: DatabaseSync): string | null {
+  try {
+    const row = db.prepare(`SELECT vec_version() AS version`).get() as Record<string, unknown> | undefined;
+    return typeof row?.version === "string" ? row.version : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getSqliteVecExtensionRuntime(db: DatabaseSync): SqliteVecExtensionRuntime {
+  return sqliteVecStateByDb.get(db) ?? {
+    isLoaded: false,
+    version: null,
+    loadError: null
+  };
+}
+
+export function openDatabase(paths: WorkspacePaths, options: OpenDatabaseOptions = {}): DatabaseSync {
+  const db = new DatabaseSync(paths.dbPath, { allowExtension: true });
+  const runtime: SqliteVecExtensionRuntime = {
+    isLoaded: false,
+    version: null,
+    loadError: null
+  };
+
+  try {
+    (options.sqliteVecLoader ?? loadSqliteVec)(db);
+    runtime.isLoaded = true;
+    runtime.version = detectSqliteVecVersion(db);
+  } catch (error) {
+    runtime.loadError = error instanceof Error ? error.message : String(error);
+  } finally {
+    try {
+      db.enableLoadExtension(false);
+    } catch {
+      // Keep startup resilient even if the runtime does not expose toggling.
+    }
+    sqliteVecStateByDb.set(db, runtime);
+  }
+
   execMigration(db);
 
   return db;

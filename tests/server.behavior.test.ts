@@ -2,10 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemforgeApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
-import { openDatabase } from "../app/server/db.js";
+import { getSqliteVecExtensionRuntime, openDatabase } from "../app/server/db.js";
 import { MemforgeRepository } from "../app/server/repositories.js";
 import { embedSemanticQueryText } from "../app/server/semantic/provider.js";
 import { isPathWithinRoot } from "../app/server/utils.js";
@@ -43,16 +43,33 @@ async function waitFor<T>(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
-function createRepository() {
+function createRepositoryContext(options: Parameters<typeof openDatabase>[1] = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
   tempRoots.push(root);
   const workspace = ensureWorkspace(root);
-  const db = openDatabase(workspace);
+  const db = openDatabase(workspace, options);
   const repository = new MemforgeRepository(db, root);
   repository.upsertBaseSettings({
     "workspace.name": "Memforge Test"
   });
-  return repository;
+  return {
+    root,
+    db,
+    repository
+  };
+}
+
+function createRepository() {
+  return createRepositoryContext().repository;
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json"
+    }
+  });
 }
 
 function createWorkspaceSessionManager(root: string, authMode: "optional" | "bearer" = "optional") {
@@ -69,7 +86,59 @@ function createWorkspaceSessionManager(root: string, authMode: "optional" | "bea
   );
 }
 
+function encodeVector(vector: number[]) {
+  return new Uint8Array(new Float32Array(vector).buffer);
+}
+
+async function seedSemanticEmbeddings(params: {
+  db: ReturnType<typeof openDatabase>;
+  repository: MemforgeRepository;
+  query: string;
+  relatedNodeId: string;
+  distractorNodeId: string;
+}) {
+  const queryEmbedding = await embedSemanticQueryText({
+    provider: "local-ngram",
+    model: "chargram-v1",
+    text: params.query
+  });
+  if (!queryEmbedding?.vector.length) {
+    throw new Error("Expected local-ngram query embedding to be available");
+  }
+
+  const distractorVector = queryEmbedding.vector.map((value, index) => {
+    const basis = index % 2 === 0 ? -0.15 : 0.12;
+    return value * 0.05 + basis;
+  });
+  const now = "2026-03-20T00:00:00.000Z";
+  const insertEmbedding = params.db.prepare(
+    `INSERT INTO node_embeddings (
+       owner_type, owner_id, chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model,
+       embedding_version, content_hash, status, created_at, updated_at
+     ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
+  );
+  const upsertReadyState = params.db.prepare(
+    `INSERT INTO node_index_state (
+       node_id, content_hash, embedding_status, embedding_provider, embedding_model, embedding_version, stale_reason, updated_at
+     ) VALUES (?, ?, 'ready', ?, ?, ?, NULL, ?)
+     ON CONFLICT(node_id) DO UPDATE SET
+       content_hash = excluded.content_hash,
+       embedding_status = excluded.embedding_status,
+       embedding_provider = excluded.embedding_provider,
+       embedding_model = excluded.embedding_model,
+       embedding_version = excluded.embedding_version,
+       stale_reason = excluded.stale_reason,
+       updated_at = excluded.updated_at`
+  );
+
+  insertEmbedding.run(params.relatedNodeId, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-related", now, now);
+  insertEmbedding.run(params.distractorNodeId, 0, null, encodeVector(distractorVector), "local-ngram", "chargram-v1", "1", "hash-distractor", now, now);
+  upsertReadyState.run(params.relatedNodeId, "hash-related", "local-ngram", "chargram-v1", "1", now);
+  upsertReadyState.run(params.distractorNodeId, "hash-distractor", "local-ngram", "chargram-v1", "1", now);
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   while (tempRoots.length) {
     const root = tempRoots.pop();
     if (root) {
@@ -1127,8 +1196,11 @@ describe("semantic skeleton", () => {
         enabled: false,
         provider: "disabled",
         model: "none",
+        configuredIndexBackend: "sqlite-vec",
         chunkEnabled: false
       });
+      expect(["sqlite", "sqlite-vec"]).toContain(bootstrapBody.data.semantic.indexBackend);
+      expect(["loaded", "fallback"]).toContain(bootstrapBody.data.semantic.extensionStatus);
       expect(bootstrapBody.data.autoSemanticIndex).toMatchObject({
         enabled: true,
         batchLimit: 20,
@@ -1389,6 +1461,7 @@ describe("semantic skeleton", () => {
 
     expect(status.provider).toBe("local-ngram");
     expect(status.model).toBe("chargram-v1");
+    expect(status.indexBackend).toBe("sqlite");
     expect(result.readyCount).toBe(1);
     expect(state?.embedding_status).toBe("ready");
     expect(state?.embedding_provider).toBe("local-ngram");
@@ -1436,6 +1509,100 @@ describe("semantic skeleton", () => {
     expect(state?.stale_reason).toBe("embedding.provider_not_implemented:openai");
     expect(state?.embedding_provider).toBe("openai");
     expect(state?.embedding_model).toBe("text-embedding-3-small");
+  });
+
+  it("activates sqlite-vec when available while keeping sqlite as the semantic ledger", async () => {
+    const { db, repository } = createRepositoryContext();
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.indexBackend": "sqlite-vec",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const node = repository.createNode({
+      type: "note",
+      title: "sqlite-vec target",
+      body: "Semantic vectors should stay in sqlite while sqlite-vec handles bounded similarity math.",
+      tags: ["semantic", "sqlite-vec"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    const result = await repository.processPendingSemanticIndex(10);
+    const state = db
+      .prepare(`SELECT embedding_status, embedding_provider, embedding_model FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    const ledgerRows = db
+      .prepare(`SELECT chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model, status FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`)
+      .all(node.id) as Array<Record<string, unknown>>;
+    const status = repository.getSemanticStatus();
+    const runtime = getSqliteVecExtensionRuntime(db);
+
+    expect(result.readyCount).toBe(1);
+    expect(runtime.isLoaded).toBe(true);
+    expect(state?.embedding_status).toBe("ready");
+    expect(status.indexBackend).toBe("sqlite-vec");
+    expect(status.configuredIndexBackend).toBe("sqlite-vec");
+    expect(status.extensionStatus).toBe("loaded");
+    expect(status.extensionLoadError).toBeNull();
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0]?.vector_ref ?? null).toBeNull();
+    expect(ledgerRows[0]?.vector_blob).toBeInstanceOf(Uint8Array);
+  });
+
+  it("falls back to sqlite when sqlite-vec fails to load", async () => {
+    const { db, repository } = createRepositoryContext({
+      sqliteVecLoader: () => {
+        throw new Error("simulated sqlite-vec load failure");
+      }
+    });
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.indexBackend": "sqlite-vec",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const node = repository.createNode({
+      type: "note",
+      title: "Fallback me",
+      body: "If sqlite-vec does not load, semantic indexing should keep working with sqlite fallback.",
+      tags: ["semantic", "fallback"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    const initialStatus = repository.getSemanticStatus();
+    const archiveResult = await repository.processPendingSemanticIndex(10);
+    const ledgerRows = db
+      .prepare(`SELECT owner_id, vector_ref, vector_blob FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ?`)
+      .all(node.id) as Array<Record<string, unknown>>;
+    const runtime = getSqliteVecExtensionRuntime(db);
+
+    expect(archiveResult.readyCount).toBe(1);
+    expect(runtime.isLoaded).toBe(false);
+    expect(initialStatus.indexBackend).toBe("sqlite");
+    expect(initialStatus.configuredIndexBackend).toBe("sqlite-vec");
+    expect(initialStatus.extensionStatus).toBe("fallback");
+    expect(initialStatus.extensionLoadError).toContain("simulated sqlite-vec load failure");
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0]?.vector_ref ?? null).toBeNull();
+    expect(ledgerRows[0]?.vector_blob).toBeInstanceOf(Uint8Array);
   });
 });
 
@@ -3448,6 +3615,324 @@ describe("inferred relation API integration", () => {
     }
   });
 
+  it("uses semantic fallback for workspace search when deterministic results are empty", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const { repository, db } = workspaceSessionManager.getCurrent();
+    repository.setSetting("search.semantic.enabled", true);
+    repository.setSetting("search.semantic.provider", "local-ngram");
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    repository.setSetting("search.semantic.indexBackend", "sqlite-vec");
+    repository.setSetting("search.semantic.workspaceFallback.enabled", true);
+    repository.setSetting("observability.enabled", true);
+    repository.setSetting("observability.slowRequestMs", 1);
+
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    const relatedNode = repository.createNode({
+      type: "note",
+      title: "Alpha operations memo",
+      body: "Durable operations note with no direct overlap.",
+      source,
+      tags: ["ops"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const distractorNode = repository.createNode({
+      type: "note",
+      title: "Visual polish scratchpad",
+      body: "Design notes with different meaning.",
+      source,
+      tags: ["design"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const semanticQuery = "service rollback recovery restart sequencing";
+    await seedSemanticEmbeddings({
+      db,
+      repository,
+      query: semanticQuery,
+      relatedNodeId: relatedNode.id,
+      distractorNodeId: distractorNode.id
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const response = await fetch(`${baseUrl}/search`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-memforge-mcp-tool": "memforge_search_workspace"
+        },
+        body: JSON.stringify({
+          query: semanticQuery,
+          scopes: ["nodes", "activities"],
+          limit: 10,
+          offset: 0,
+          sort: "smart",
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.items).toHaveLength(1);
+      expect(payload.data.items[0]?.resultType).toBe("node");
+      expect(payload.data.items[0]?.node?.id).toBe(relatedNode.id);
+      expect(payload.data.items[0]?.node?.matchReason).toEqual({
+        strategy: "semantic",
+        matchedFields: ["semantic"]
+      });
+
+      const summaryPayload = await waitFor(async () => {
+        const summaryResponse = await fetch(`${baseUrl}/observability/summary?since=24h`);
+        const summary = await summaryResponse.json();
+        const childSpan = summary.data?.operationSummaries?.find((item: { operation: string }) => item.operation === "workspace.search.semantic_fallback");
+        return childSpan ? summary : null;
+      });
+
+      expect(summaryPayload.data.semanticFallbackRate).toEqual({
+        eligibleCount: 1,
+        attemptedCount: 1,
+        hitCount: 1,
+        attemptRatio: 1,
+        hitRatio: 1
+      });
+      expect(summaryPayload.data.operationSummaries.some((item: { operation: string }) => item.operation === "workspace.search.semantic_fallback")).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("uses sqlite semantic fallback when sqlite-vec is not the active backend", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const { repository, db } = workspaceSessionManager.getCurrent();
+    repository.setSetting("search.semantic.enabled", true);
+    repository.setSetting("search.semantic.provider", "local-ngram");
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    repository.setSetting("search.semantic.indexBackend", "sqlite");
+    repository.setSetting("search.semantic.workspaceFallback.enabled", true);
+
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    const relatedNode = repository.createNode({
+      type: "note",
+      title: "Ops archive",
+      body: "No lexical overlap here either.",
+      source,
+      tags: ["ops"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const distractorNode = repository.createNode({
+      type: "note",
+      title: "Design archive",
+      body: "Unrelated design content.",
+      source,
+      tags: ["design"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const semanticQuery = "service rollback recovery restart sequencing";
+    await seedSemanticEmbeddings({
+      db,
+      repository,
+      query: semanticQuery,
+      relatedNodeId: relatedNode.id,
+      distractorNodeId: distractorNode.id
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const response = await fetch(`${baseUrl}/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: semanticQuery,
+          scopes: ["nodes"],
+          limit: 10,
+          offset: 0,
+          sort: "smart",
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.items).toHaveLength(1);
+      expect(payload.data.items[0]?.node?.id).toBe(relatedNode.id);
+      expect(payload.data.items[0]?.node?.matchReason?.strategy).toBe("semantic");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("skips workspace semantic fallback when deterministic results already exist", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const repository = workspaceSessionManager.getCurrent().repository;
+    repository.setSetting("search.semantic.enabled", true);
+    repository.setSetting("search.semantic.provider", "local-ngram");
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    repository.setSetting("search.semantic.workspaceFallback.enabled", true);
+    repository.setSetting("observability.enabled", true);
+
+    const source = {
+      actorType: "agent" as const,
+      actorLabel: "Codex",
+      toolName: "codex",
+    };
+    repository.createNode({
+      type: "note",
+      title: "Incident cleanup guide",
+      body: "Direct lexical overlap should win without semantic fallback.",
+      source,
+      tags: ["ops"],
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const response = await fetch(`${baseUrl}/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: "incident cleanup",
+          scopes: ["nodes", "activities"],
+          limit: 10,
+          offset: 0,
+          sort: "smart",
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.items[0]?.node?.matchReason?.strategy).toBe("fts");
+
+      const summaryPayload = await waitFor(async () => {
+        const summaryResponse = await fetch(`${baseUrl}/observability/summary?since=24h`);
+        const summary = await summaryResponse.json();
+        return summary.data?.semanticFallbackRate ? summary : null;
+      });
+
+      expect(summaryPayload.data.semanticFallbackRate).toEqual({
+        eligibleCount: 0,
+        attemptedCount: 0,
+        hitCount: 0,
+        attemptRatio: null,
+        hitRatio: null
+      });
+      expect(summaryPayload.data.operationSummaries.some((item: { operation: string }) => item.operation === "workspace.search.semantic_fallback")).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("skips workspace semantic fallback for short queries", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const repository = workspaceSessionManager.getCurrent().repository;
+    repository.setSetting("search.semantic.enabled", true);
+    repository.setSetting("search.semantic.provider", "local-ngram");
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    repository.setSetting("search.semantic.workspaceFallback.enabled", true);
+    repository.setSetting("observability.enabled", true);
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const response = await fetch(`${baseUrl}/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: "abc",
+          scopes: ["nodes", "activities"],
+          limit: 10,
+          offset: 0,
+          sort: "smart",
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.data.items).toHaveLength(0);
+
+      const summaryPayload = await waitFor(async () => {
+        const summaryResponse = await fetch(`${baseUrl}/observability/summary?since=24h`);
+        const summary = await summaryResponse.json();
+        return summary.data?.semanticFallbackRate ? summary : null;
+      });
+
+      expect(summaryPayload.data.semanticFallbackRate).toEqual({
+        eligibleCount: 0,
+        attemptedCount: 0,
+        hitCount: 0,
+        attemptRatio: null,
+        hitRatio: null
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   it("uses smart sort to keep recent activity near the top of mixed search results", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
@@ -4154,6 +4639,172 @@ describe("inferred relation API integration", () => {
       steadyChunkNode.id
     ]);
     expect(topKMatches.get(steadyChunkNode.id)?.similarity).toBeGreaterThan(topKMatches.get(exactChunkNode.id)?.similarity ?? 0);
+  });
+
+  it("filters sqlite-vec semantic searches to the bounded candidate set and aggregates chunk scores", async () => {
+    const { db, repository } = createRepositoryContext();
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.indexBackend": "sqlite-vec",
+      "search.semantic.chunk.enabled": true,
+      "search.semantic.chunk.aggregation": "max",
+    });
+
+    const queryEmbedding = await embedSemanticQueryText({
+      provider: "local-ngram",
+      model: "chargram-v1",
+      text: "rollback runbook service restart"
+    });
+    if (!queryEmbedding?.vector.length) {
+      throw new Error("Expected local-ngram query embedding to be available");
+    }
+
+    const encodeVector = (vector: number[]) => new Uint8Array(new Float32Array(vector).buffer);
+    const blendVector = (weight: number) =>
+      queryEmbedding.vector.map((value, index) => {
+        const basis = index === 0 ? 1 : index === 1 ? 0.8 : 0.05 * ((index % 3) + 1);
+        return value * weight + basis * (1 - weight);
+      });
+    const insertEmbedding = db.prepare(
+      `INSERT INTO node_embeddings (
+         owner_type, owner_id, chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model,
+         embedding_version, content_hash, status, created_at, updated_at
+       ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
+    );
+    const setReadyState = db.prepare(
+      `INSERT INTO node_index_state (
+         node_id, content_hash, embedding_status, embedding_provider, embedding_model, embedding_version, stale_reason, updated_at
+       ) VALUES (?, ?, 'ready', ?, ?, ?, NULL, ?)
+       ON CONFLICT(node_id) DO UPDATE SET
+         content_hash = excluded.content_hash,
+         embedding_status = excluded.embedding_status,
+         embedding_provider = excluded.embedding_provider,
+         embedding_model = excluded.embedding_model,
+         embedding_version = excluded.embedding_version,
+         stale_reason = excluded.stale_reason,
+         updated_at = excluded.updated_at`
+    );
+    const now = new Date().toISOString();
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const exactChunkNode = repository.createNode({
+      type: "note",
+      title: "Exact blend",
+      body: "Candidate A",
+      tags: ["semantic"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const steadyChunkNode = repository.createNode({
+      type: "note",
+      title: "Steady blend",
+      body: "Candidate B",
+      tags: ["semantic"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const filteredOutNode = repository.createNode({
+      type: "note",
+      title: "Filtered out",
+      body: "Candidate C",
+      tags: ["semantic"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    insertEmbedding.run(exactChunkNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-a", now, now);
+    insertEmbedding.run(exactChunkNode.id, 1, null, encodeVector(blendVector(0.1)), "local-ngram", "chargram-v1", "1", "hash-a", now, now);
+    insertEmbedding.run(steadyChunkNode.id, 0, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
+    insertEmbedding.run(steadyChunkNode.id, 1, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
+    insertEmbedding.run(filteredOutNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-c", now, now);
+    setReadyState.run(exactChunkNode.id, "hash-a", "local-ngram", "chargram-v1", "1", now);
+    setReadyState.run(steadyChunkNode.id, "hash-b", "local-ngram", "chargram-v1", "1", now);
+    setReadyState.run(filteredOutNode.id, "hash-c", "local-ngram", "chargram-v1", "1", now);
+
+    const maxMatches = await repository.rankSemanticCandidates("rollback runbook service restart", [
+      exactChunkNode.id,
+      steadyChunkNode.id
+    ]);
+    repository.setSetting("search.semantic.chunk.aggregation", "topk_mean");
+    const topKMatches = await repository.rankSemanticCandidates("rollback runbook service restart", [
+      exactChunkNode.id,
+      steadyChunkNode.id
+    ]);
+
+    expect(maxMatches.get(exactChunkNode.id)?.similarity).toBeGreaterThan(maxMatches.get(steadyChunkNode.id)?.similarity ?? 0);
+    expect(topKMatches.get(steadyChunkNode.id)?.similarity).toBeGreaterThan(topKMatches.get(exactChunkNode.id)?.similarity ?? 0);
+    expect(maxMatches.has(filteredOutNode.id)).toBe(false);
+    expect(topKMatches.has(filteredOutNode.id)).toBe(false);
+  });
+
+  it("skips sqlite-vec semantic lookups when a strong lexical candidate match already exists", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const semanticRankSpy = vi.spyOn(repository, "rankSemanticCandidates");
+    repository.setSetting("search.semantic.enabled", true);
+    repository.setSetting("search.semantic.provider", "local-ngram");
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    repository.setSetting("search.semantic.indexBackend", "sqlite-vec");
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const source = {
+        actorType: "agent" as const,
+        actorLabel: "Codex",
+        toolName: "codex",
+      };
+      const exactNode = repository.createNode({
+        type: "note",
+        title: "Incident guide checklist",
+        body: "Lexical overlap should be enough to skip semantic augmentation.",
+        source,
+        tags: ["ops"],
+        metadata: {},
+        resolvedCanonicality: "canonical",
+        resolvedStatus: "active",
+      });
+
+      const response = await fetch(`${baseUrl}/retrieval/rank-candidates`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: "incident guide",
+          candidateNodeIds: [exactNode.id],
+          preset: "for-assistant"
+        })
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(semanticRankSpy).not.toHaveBeenCalled();
+      expect(body.data.items[0]?.semanticSimilarity ?? null).toBeNull();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   it("recomputes inferred relation scores through the HTTP API", async () => {

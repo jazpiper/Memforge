@@ -481,6 +481,9 @@ export class ObservabilityWriter {
     let ftsSampleCount = 0;
     let semanticUsedCount = 0;
     let semanticSampleCount = 0;
+    let semanticFallbackEligibleCount = 0;
+    let semanticFallbackAttemptedCount = 0;
+    let semanticFallbackHitCount = 0;
 
     for (const event of events) {
       if (typeof event.details.ftsFallback === "boolean") {
@@ -493,6 +496,21 @@ export class ObservabilityWriter {
         semanticSampleCount += 1;
         if (event.details.semanticUsed) {
           semanticUsedCount += 1;
+        }
+      }
+      if (typeof event.details.semanticFallbackEligible === "boolean") {
+        if (event.details.semanticFallbackEligible) {
+          semanticFallbackEligibleCount += 1;
+        }
+      }
+      if (typeof event.details.semanticFallbackAttempted === "boolean") {
+        if (event.details.semanticFallbackAttempted) {
+          semanticFallbackAttemptedCount += 1;
+        }
+      }
+      if (typeof event.details.semanticFallbackUsed === "boolean") {
+        if (event.details.semanticFallbackUsed) {
+          semanticFallbackHitCount += 1;
         }
       }
 
@@ -570,6 +588,19 @@ export class ObservabilityWriter {
         usedCount: semanticUsedCount,
         sampleCount: semanticSampleCount,
         ratio: semanticSampleCount > 0 ? Number((semanticUsedCount / semanticSampleCount).toFixed(4)) : null
+      },
+      semanticFallbackRate: {
+        eligibleCount: semanticFallbackEligibleCount,
+        attemptedCount: semanticFallbackAttemptedCount,
+        hitCount: semanticFallbackHitCount,
+        attemptRatio:
+          semanticFallbackEligibleCount > 0
+            ? Number((semanticFallbackAttemptedCount / semanticFallbackEligibleCount).toFixed(4))
+            : null,
+        hitRatio:
+          semanticFallbackAttemptedCount > 0
+            ? Number((semanticFallbackHitCount / semanticFallbackAttemptedCount).toFixed(4))
+            : null
       },
       autoJobStats: [...autoJobs.entries()].map(([operation, durations]) => ({
         operation,

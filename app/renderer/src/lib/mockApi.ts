@@ -126,6 +126,10 @@ function defaultSemanticStatus(): SemanticStatusSummary {
     enabled: false,
     provider: 'disabled',
     model: 'none',
+    indexBackend: 'sqlite',
+    configuredIndexBackend: 'sqlite-vec',
+    extensionStatus: 'fallback',
+    extensionLoadError: null,
     chunkEnabled: false,
     lastBackfillAt: null,
     counts: {
@@ -145,6 +149,13 @@ function mapSemanticStatus(raw: any): SemanticStatusSummary {
     enabled: typeof raw?.enabled === 'boolean' ? raw.enabled : fallback.enabled,
     provider: typeof raw?.provider === 'string' ? raw.provider : fallback.provider,
     model: typeof raw?.model === 'string' ? raw.model : fallback.model,
+    indexBackend: raw?.indexBackend === 'sqlite-vec' ? 'sqlite-vec' : fallback.indexBackend,
+    configuredIndexBackend: raw?.configuredIndexBackend === 'sqlite' ? 'sqlite' : fallback.configuredIndexBackend,
+    extensionStatus:
+      raw?.extensionStatus === 'loaded' || raw?.extensionStatus === 'disabled' || raw?.extensionStatus === 'fallback'
+        ? raw.extensionStatus
+        : fallback.extensionStatus,
+    extensionLoadError: typeof raw?.extensionLoadError === 'string' ? raw.extensionLoadError : fallback.extensionLoadError,
     chunkEnabled: typeof raw?.chunkEnabled === 'boolean' ? raw.chunkEnabled : fallback.chunkEnabled,
     lastBackfillAt: typeof raw?.lastBackfillAt === 'string' ? raw.lastBackfillAt : fallback.lastBackfillAt,
     counts: {

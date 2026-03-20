@@ -97,6 +97,16 @@ describe("observability writer", () => {
         semanticUsed: true
       }
     });
+    await writer.recordEvent({
+      surface: "api",
+      operation: "workspace.search",
+      durationMs: 16,
+      details: {
+        semanticFallbackEligible: true,
+        semanticFallbackAttempted: true,
+        semanticFallbackUsed: true
+      }
+    });
     await writer.recordError({
       surface: "mcp",
       operation: "memforge_search_nodes",
@@ -116,11 +126,18 @@ describe("observability writer", () => {
       limit: 10
     });
 
-    expect(summary.totalEvents).toBe(3);
+    expect(summary.totalEvents).toBe(4);
     expect(summary.operationSummaries.some((item) => item.operation === "nodes.search")).toBe(true);
     expect(summary.mcpToolFailures).toEqual([{ operation: "memforge_search_nodes", count: 1 }]);
     expect(summary.ftsFallbackRate.fallbackCount).toBe(1);
     expect(summary.semanticAugmentationRate.usedCount).toBe(1);
+    expect(summary.semanticFallbackRate).toEqual({
+      eligibleCount: 1,
+      attemptedCount: 1,
+      hitCount: 1,
+      attemptRatio: 1,
+      hitRatio: 1
+    });
     expect(errors.items).toHaveLength(1);
     expect(errors.items[0]?.operation).toBe("memforge_search_nodes");
   });

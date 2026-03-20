@@ -90,13 +90,13 @@ Repository guidance was also tightened so coding agents treat Memforge as the pr
 - Phase 4 append-first write-back is live through durable node creation, relation creation, activities, artifacts, provenance, search feedback, and automatic governance.
 - Phase 5 curation is now automatic through governance state/events, governance issue surfaces, provenance-friendly detail flows, and summary refresh/staleness visibility.
 - Phase 6 real cross-tool adoption now includes documented terminal-native `pnw`, raw HTTP bootstrap, and stdio MCP workflows in addition to the local coding-agent path.
-- Phase 7 selective retrieval enhancement now includes deterministic inferred-relation generation from tag/body/activity, project-membership, and shared-artifact signals, plus inferred-relation storage, usage feedback events, explicit/automatic score recompute, and relation-aware ranking; semantic retrieval is still deferred.
+- Phase 7 selective retrieval enhancement now includes deterministic inferred-relation generation from tag/body/activity, project-membership, and shared-artifact signals, inferred-relation storage, usage feedback events, explicit/automatic score recompute, relation-aware ranking, and an optional local semantic sidecar with `sqlite-vec` preferred and `sqlite` fallback execution paths.
 
 ## Current status
 
 Memforge has moved past the docs-only stage into a usable implementation scaffold: one local workspace can now be opened by the renderer, served over the loopback API, queried from the CLI, and reached through an MCP bridge without adding a second storage layer.
 
-The project is now beyond the purely local scaffold stage: the desktop shell can boot the local service, the renderer can expose summary staleness and refresh, and the external-tool workflows are documented against the current implementation. The main work now is product polish: distribution hardening, inferred-link tuning, and deciding how much richer digest materialization is actually worth.
+The project is now beyond the purely local scaffold stage: the desktop shell can boot the local service, the renderer can expose summary staleness and refresh, the semantic worker can maintain a rebuildable vector sidecar, and the external-tool workflows are documented against the current implementation. The main work now is product polish: distribution hardening, inferred-link tuning, and deciding how much richer digest materialization is actually worth.
 
 ## Next focus
 
@@ -137,6 +137,7 @@ npm run build
 - To launch both together after a build, use `npm run start:desktop`. That starts the standalone API on `127.0.0.1:8787` and the desktop shell on `127.0.0.1:8788`.
 - In packaged mode, closing the main window now hides Memforge to the background instead of quitting immediately. Use the menu bar item to reopen the app, copy API/MCP info, or restart the local service, and use `Quit Memforge` to fully stop the desktop shell.
 - The default workspace root is `~/.memforge/{workspaceName}`. Existing repo-local `.memforge-workspace` data is copied into the new home-directory root the first time the new default is used.
+- Semantic indexing stays local. Memforge now tries to load `sqlite-vec` on startup for bounded vector math and automatically falls back to the existing SQLite/app-calculated path if the extension is unavailable.
 
 ## Using Memforge From Other Coding Agents
 

@@ -579,6 +579,8 @@ The `settings` table stores workspace-level configuration.
 - `api.bind`
 - `api.auth.mode`
 - `search.semantic.enabled`
+- `search.semantic.indexBackend`
+- `search.semantic.workspaceFallback.enabled`
 - `review.autoApproveLowRisk` (legacy compatibility only)
 - `review.trustedSourceToolNames` (legacy compatibility only)
 - `relations.autoRecompute.enabled`
@@ -679,11 +681,14 @@ Use this table to:
 - store rebuildable vector sidecar data
 - attach embeddings to node-level or chunk-level owners
 - keep provider-specific payloads outside canonical tables
+- keep `vector_ref` available for future index metadata without making it canonical
 
 ### Notes
 - the product must still function when these tables are empty or stale
 - writes should mark semantic state dirty, not generate embeddings inline
 - embeddings and chunks can be rebuilt from node content and settings
+- `vector_blob` remains the rebuildable local vector payload for both the plain `sqlite` path and the preferred `sqlite-vec` path
+- `vector_ref` is currently optional metadata and is not required for local semantic retrieval
 
 ---
 

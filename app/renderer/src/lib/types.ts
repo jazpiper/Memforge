@@ -51,6 +51,10 @@ export interface SemanticStatusSummary {
   enabled: boolean;
   provider: string | null;
   model: string | null;
+  indexBackend: 'sqlite' | 'sqlite-vec';
+  configuredIndexBackend: 'sqlite' | 'sqlite-vec';
+  extensionStatus: 'loaded' | 'fallback' | 'disabled';
+  extensionLoadError: string | null;
   chunkEnabled: boolean;
   lastBackfillAt: string | null;
   counts: {
@@ -125,7 +129,7 @@ export interface GovernancePayload {
 }
 
 export interface SearchMatchReason {
-  strategy: 'fts' | 'like' | 'fallback_token' | 'browse';
+  strategy: 'fts' | 'like' | 'fallback_token' | 'semantic' | 'browse';
   matchedFields: string[];
 }
 
