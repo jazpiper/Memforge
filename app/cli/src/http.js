@@ -1,4 +1,4 @@
-import { buildApiRequestInit, buildApiUrl } from "../../shared/request-runtime.js";
+import { buildApiRequestInit, buildApiUrl, parseApiJsonBody } from "../../shared/request-runtime.js";
 
 const DEFAULT_API_BASE = "http://127.0.0.1:8787/api/v1";
 
@@ -21,7 +21,13 @@ export async function requestJson(apiBase, path, { method = "GET", token, body }
     buildApiRequestInit({ method, token, body }),
   );
 
-  const { payload, parseError } = await readApiJsonPayload(response);
+  let payload = null;
+  let parseError = null;
+  try {
+    payload = await parseApiJsonBody(response);
+  } catch (error) {
+    parseError = error;
+  }
 
   if (!response.ok) {
     const error = payload?.error;
@@ -40,17 +46,4 @@ export async function requestJson(apiBase, path, { method = "GET", token, body }
   }
 
   return payload ?? {};
-}
-
-async function readApiJsonPayload(response) {
-  const text = await response.text();
-  if (!text) {
-    return { payload: null, parseError: null };
-  }
-
-  try {
-    return { payload: JSON.parse(text), parseError: null };
-  } catch (error) {
-    return { payload: null, parseError: error };
-  }
 }

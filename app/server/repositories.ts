@@ -435,6 +435,31 @@ function aggregateChunkSimilarities(similarities: number[], aggregation: Semanti
   return Math.max(...similarities);
 }
 
+type SemanticSimilarityAccumulator = {
+  matchedChunks: number;
+  maxSimilarity: number;
+  topSimilarities: number[];
+};
+
+function updateSemanticSimilarityAccumulator(
+  accumulator: SemanticSimilarityAccumulator,
+  similarity: number,
+  aggregation: SemanticChunkAggregation
+) {
+  accumulator.matchedChunks += 1;
+  accumulator.maxSimilarity = Math.max(accumulator.maxSimilarity, similarity);
+
+  if (aggregation !== "topk_mean") {
+    return;
+  }
+
+  accumulator.topSimilarities.push(similarity);
+  accumulator.topSimilarities.sort((left, right) => right - left);
+  if (accumulator.topSimilarities.length > SEMANTIC_TOP_K_CHUNK_COUNT) {
+    accumulator.topSimilarities.length = SEMANTIC_TOP_K_CHUNK_COUNT;
+  }
+}
+
 function normalizeSemanticBonusSimilarity(similarity: number, minSimilarity: number): number {
   if (!Number.isFinite(similarity) || similarity < minSimilarity || minSimilarity >= 1) {
     return 0;
@@ -1367,7 +1392,7 @@ export class MemforgeRepository {
       return new Map();
     }
 
-    const similarityByNode = new Map<string, number[]>();
+    const similarityByNode = new Map<string, SemanticSimilarityAccumulator>();
     const matches = await this.resolveVectorIndexStore(settings.indexBackend).searchCandidates({
       queryVector: queryEmbedding.vector,
       candidateNodeIds,
@@ -1375,16 +1400,22 @@ export class MemforgeRepository {
       embeddingModel: settings.model
     }).catch(() => []);
     for (const match of matches) {
-      const similarities = similarityByNode.get(match.nodeId) ?? [];
-      similarities.push(match.similarity);
-      similarityByNode.set(match.nodeId, similarities);
+      const accumulator = similarityByNode.get(match.nodeId) ?? {
+        matchedChunks: 0,
+        maxSimilarity: Number.NEGATIVE_INFINITY,
+        topSimilarities: []
+      };
+      updateSemanticSimilarityAccumulator(accumulator, match.similarity, settings.chunkAggregation);
+      similarityByNode.set(match.nodeId, accumulator);
     }
 
     const rankedMatches = new Map<string, SemanticCandidateSimilarity>();
-    for (const [nodeId, similarities] of similarityByNode.entries()) {
+    for (const [nodeId, accumulator] of similarityByNode.entries()) {
+      const similarities =
+        settings.chunkAggregation === "topk_mean" ? accumulator.topSimilarities : [accumulator.maxSimilarity];
       rankedMatches.set(nodeId, {
         similarity: aggregateChunkSimilarities(similarities, settings.chunkAggregation),
-        matchedChunks: similarities.length
+        matchedChunks: accumulator.matchedChunks
       });
     }
 
@@ -1974,33 +2005,31 @@ export class MemforgeRepository {
     filters: WorkspaceSearchInput["nodeFilters"],
     limit: number
   ): { items: SearchResultItem[]; total: number } {
-    const merged = new Map<string, SearchResultItem>();
-
-    for (const token of tokens) {
-      const result = this.searchNodes({
-        query: token,
-        filters: filters ?? {},
-        limit,
-        offset: 0,
-        sort: "relevance"
-      });
-      for (const item of result.items) {
-        const existing = merged.get(item.id);
-        if (existing) {
-          existing.matchReason = mergeMatchReasons(existing.matchReason, item.matchReason, "fallback_token");
-          continue;
-        }
-        merged.set(item.id, {
-          ...item,
-          matchReason: mergeMatchReasons(undefined, item.matchReason, "fallback_token")
-        });
-      }
+    if (!tokens.length) {
+      return { total: 0, items: [] };
     }
 
-    return {
-      total: merged.size,
-      items: [...merged.values()]
-    };
+    const queryLikes = tokens.map((token) => `%${token}%`);
+    const tokenWhere = tokens
+      .map(
+        () =>
+          `(lower(coalesce(n.title, '')) LIKE lower(?) OR lower(coalesce(n.body, '')) LIKE lower(?) OR lower(coalesce(n.summary, '')) LIKE lower(?))`
+      )
+      .join(" OR ");
+
+    return this.runSearchQuery(
+      "nodes n",
+      [`(${tokenWhere})`],
+      queryLikes.flatMap((token) => [token, token, token]),
+      "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, n.updated_at DESC",
+      [],
+      limit,
+      0,
+      filters ?? {},
+      false,
+      tokens.join(" "),
+      "fallback_token"
+    );
   }
 
   private searchWorkspaceActivityFallback(
@@ -2008,33 +2037,35 @@ export class MemforgeRepository {
     filters: WorkspaceSearchInput["activityFilters"],
     limit: number
   ): { items: ActivitySearchResultItem[]; total: number } {
-    const merged = new Map<string, ActivitySearchResultItem>();
+    if (!tokens.length) {
+      return { total: 0, items: [] };
+    }
 
-    for (const token of tokens) {
-      const result = this.searchActivities({
-        query: token,
+    const queryLikes = tokens.map((token) => `%${token}%`);
+    const initialWhere = [
+      `(${tokens
+        .map(
+          () =>
+            `(lower(coalesce(a.body, '')) LIKE lower(?) OR lower(coalesce(n.title, '')) LIKE lower(?) OR lower(coalesce(a.activity_type, '')) LIKE lower(?) OR lower(coalesce(a.source_label, '')) LIKE lower(?))`
+        )
+        .join(" OR ")})`
+    ];
+
+    return this.runActivitySearchQuery({
+      from: "activities a JOIN nodes n ON n.id = a.target_node_id",
+      initialWhere,
+      initialWhereValues: queryLikes.flatMap((token) => [token, token, token, token]),
+      orderBy: "CASE WHEN n.status = 'contested' THEN 1 ELSE 0 END, a.created_at DESC",
+      orderValues: [],
+      input: {
+        query: tokens.join(" "),
         filters: filters ?? {},
         limit,
         offset: 0,
-        sort: "relevance"
-      });
-      for (const item of result.items) {
-        const existing = merged.get(item.id);
-        if (existing) {
-          existing.matchReason = mergeMatchReasons(existing.matchReason, item.matchReason, "fallback_token");
-          continue;
-        }
-        merged.set(item.id, {
-          ...item,
-          matchReason: mergeMatchReasons(undefined, item.matchReason, "fallback_token")
-        });
-      }
-    }
-
-    return {
-      total: merged.size,
-      items: [...merged.values()]
-    };
+        sort: "updated_at"
+      },
+      strategy: "fallback_token"
+    });
   }
 
   private mergeWorkspaceSearchResults(
@@ -2042,7 +2073,8 @@ export class MemforgeRepository {
     activityItems: ActivitySearchResultItem[],
     sort: WorkspaceSearchInput["sort"]
   ): WorkspaceSearchResultItem[] {
-    const nowMs = Date.now();
+    const includeSmartScore = sort === "smart";
+    const nowMs = includeSmartScore ? Date.now() : 0;
     const merged = [
       ...nodeItems.map((node, index) => ({
         resultType: "node" as const,
@@ -2051,14 +2083,16 @@ export class MemforgeRepository {
         total: nodeItems.length,
         timestamp: node.updatedAt,
         contested: node.status === "contested",
-        smartScore: computeWorkspaceSmartScore({
-          index,
-          total: nodeItems.length,
-          timestamp: node.updatedAt,
-          resultType: "node",
-          contested: node.status === "contested",
-          nowMs
-        })
+        smartScore: includeSmartScore
+          ? computeWorkspaceSmartScore({
+              index,
+              total: nodeItems.length,
+              timestamp: node.updatedAt,
+              resultType: "node",
+              contested: node.status === "contested",
+              nowMs
+            })
+          : 0
       })),
       ...activityItems.map((activity, index) => ({
         resultType: "activity" as const,
@@ -2067,14 +2101,16 @@ export class MemforgeRepository {
         total: activityItems.length,
         timestamp: activity.createdAt,
         contested: activity.targetNodeStatus === "contested",
-        smartScore: computeWorkspaceSmartScore({
-          index,
-          total: activityItems.length,
-          timestamp: activity.createdAt,
-          resultType: "activity",
-          contested: activity.targetNodeStatus === "contested",
-          nowMs
-        })
+        smartScore: includeSmartScore
+          ? computeWorkspaceSmartScore({
+              index,
+              total: activityItems.length,
+              timestamp: activity.createdAt,
+              resultType: "activity",
+              contested: activity.targetNodeStatus === "contested",
+              nowMs
+            })
+          : 0
       }))
     ];
 
@@ -2191,15 +2227,16 @@ export class MemforgeRepository {
     }
 
     const summaries = this.getSearchFeedbackSummaries("node", items.map((item) => item.id));
-    const baseOrder = new Map(items.map((item, index) => [item.id, items.length - index] as const));
-
-    return [...items].sort((left, right) => {
-      const leftPenalty = left.status === "contested" ? 1 : 0;
-      const rightPenalty = right.status === "contested" ? 1 : 0;
-      const leftScore = (baseOrder.get(left.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(left.id)?.totalDelta ?? 0) * 2 - leftPenalty;
-      const rightScore = (baseOrder.get(right.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(right.id)?.totalDelta ?? 0) * 2 - rightPenalty;
-      return rightScore - leftScore || right.updatedAt.localeCompare(left.updatedAt);
-    });
+    return [...items]
+      .map((item, index) => ({
+        item,
+        score:
+          items.length - index +
+          clampSearchFeedbackDelta(summaries.get(item.id)?.totalDelta ?? 0) * 2 -
+          (item.status === "contested" ? 1 : 0)
+      }))
+      .sort((left, right) => right.score - left.score || right.item.updatedAt.localeCompare(left.item.updatedAt))
+      .map(({ item }) => item);
   }
 
   private applyActivitySearchFeedbackBoost(items: ActivitySearchResultItem[]): ActivitySearchResultItem[] {
@@ -2208,15 +2245,16 @@ export class MemforgeRepository {
     }
 
     const summaries = this.getSearchFeedbackSummaries("activity", items.map((item) => item.id));
-    const baseOrder = new Map(items.map((item, index) => [item.id, items.length - index] as const));
-
-    return [...items].sort((left, right) => {
-      const leftPenalty = left.targetNodeStatus === "contested" ? 1 : 0;
-      const rightPenalty = right.targetNodeStatus === "contested" ? 1 : 0;
-      const leftScore = (baseOrder.get(left.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(left.id)?.totalDelta ?? 0) * 2 - leftPenalty;
-      const rightScore = (baseOrder.get(right.id) ?? 0) + clampSearchFeedbackDelta(summaries.get(right.id)?.totalDelta ?? 0) * 2 - rightPenalty;
-      return rightScore - leftScore || right.createdAt.localeCompare(left.createdAt);
-    });
+    return [...items]
+      .map((item, index) => ({
+        item,
+        score:
+          items.length - index +
+          clampSearchFeedbackDelta(summaries.get(item.id)?.totalDelta ?? 0) * 2 -
+          (item.targetNodeStatus === "contested" ? 1 : 0)
+      }))
+      .sort((left, right) => right.score - left.score || right.item.createdAt.localeCompare(left.item.createdAt))
+      .map(({ item }) => item);
   }
 
   private searchActivitiesWithFts(input: ActivitySearchInput): { items: ActivitySearchResultItem[]; total: number } {
@@ -2947,19 +2985,26 @@ export class MemforgeRepository {
       return new Map();
     }
 
-    this.syncRelationUsageRollups();
-    const rows = this.db
-      .prepare(
-        `SELECT
-           relation_id,
-           total_delta,
-           event_count,
-           last_event_at
-         FROM relation_usage_rollups
-         WHERE relation_id IN (${relationIds.map(() => "?").join(", ")})
-         ORDER BY relation_id`
-      )
-      .all(...relationIds) as Array<Record<string, unknown>>;
+    const uniqueIds = Array.from(new Set(relationIds));
+    const readRows = () =>
+      this.db
+        .prepare(
+          `SELECT
+             relation_id,
+             total_delta,
+             event_count,
+             last_event_at
+           FROM relation_usage_rollups
+           WHERE relation_id IN (${uniqueIds.map(() => "?").join(", ")})
+           ORDER BY relation_id`
+        )
+        .all(...uniqueIds) as Array<Record<string, unknown>>;
+
+    let rows = readRows();
+    if (rows.length < uniqueIds.length) {
+      this.syncRelationUsageRollups();
+      rows = readRows();
+    }
 
     return new Map(
       rows.map((row) => [
@@ -3110,6 +3155,8 @@ export class MemforgeRepository {
   }): GovernanceEventRecord {
     const id = createId("gov");
     const now = nowIso();
+    const confidence = clampConfidence(params.confidence);
+    const metadata = params.metadata ?? {};
     this.db
       .prepare(
         `INSERT INTO governance_events (
@@ -3123,12 +3170,23 @@ export class MemforgeRepository {
         params.eventType,
         params.previousState ?? null,
         params.nextState,
-        clampConfidence(params.confidence),
+        confidence,
         params.reason,
         now,
-        JSON.stringify(params.metadata ?? {})
+        JSON.stringify(metadata)
       );
-    return this.getGovernanceEvent(id);
+    return {
+      id,
+      entityType: params.entityType,
+      entityId: params.entityId,
+      eventType: params.eventType,
+      previousState: params.previousState,
+      nextState: params.nextState,
+      confidence,
+      reason: params.reason,
+      createdAt: now,
+      metadata
+    };
   }
 
   getGovernanceEvent(id: string): GovernanceEventRecord {
@@ -3488,22 +3546,32 @@ export class MemforgeRepository {
     );
 
     let expiredCount = 0;
-    for (const row of rows) {
-      const id = String(row.id);
-      const currentStatus = String(row.status) as InferredRelationRecord["status"];
-      const expiresAt = row.expires_at ? String(row.expires_at) : null;
-      const recomputed = computeMaintainedScores(Number(row.base_score), summaries.get(id), String(row.last_computed_at));
-      const nextStatus = expiresAt && expiresAt <= now ? "expired" : currentStatus;
-      if (nextStatus === "expired") {
-        expiredCount += 1;
+    const items: InferredRelationRecord[] = [];
+    this.runInTransaction(() => {
+      for (const row of rows) {
+        const id = String(row.id);
+        const currentStatus = String(row.status) as InferredRelationRecord["status"];
+        const expiresAt = row.expires_at ? String(row.expires_at) : null;
+        const recomputed = computeMaintainedScores(Number(row.base_score), summaries.get(id), String(row.last_computed_at));
+        const nextStatus = expiresAt && expiresAt <= now ? "expired" : currentStatus;
+        if (nextStatus === "expired") {
+          expiredCount += 1;
+        }
+        updateStatement.run(recomputed.usageScore, recomputed.finalScore, nextStatus, now, id);
+        items.push(mapInferredRelation({
+          ...row,
+          usage_score: recomputed.usageScore,
+          final_score: recomputed.finalScore,
+          status: nextStatus,
+          last_computed_at: now
+        }));
       }
-      updateStatement.run(recomputed.usageScore, recomputed.finalScore, nextStatus, now, id);
-    }
+    });
 
     return {
       updatedCount: rows.length,
       expiredCount,
-      items: relationIds.map((id) => this.getInferredRelation(id))
+      items
     };
   }
 

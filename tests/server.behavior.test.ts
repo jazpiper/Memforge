@@ -63,15 +63,6 @@ function createRepository() {
   return createRepositoryContext().repository;
 }
 
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json"
-    }
-  });
-}
-
 function createWorkspaceSessionManager(root: string, authMode: "optional" | "bearer" = "optional") {
   return new WorkspaceSessionManager(
     {

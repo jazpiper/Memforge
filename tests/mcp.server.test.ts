@@ -25,7 +25,6 @@ describe("Memforge MCP server", () => {
   async function connectTestClient(apiClient?: {
     get?: ReturnType<typeof vi.fn>;
     post?: ReturnType<typeof vi.fn>;
-    patch?: ReturnType<typeof vi.fn>;
   }, options?: {
     getObservabilityState?: () => {
       enabled: boolean;
@@ -47,7 +46,7 @@ describe("Memforge MCP server", () => {
       apiClient: {
         get: apiClient?.get ?? vi.fn(),
         post: apiClient?.post ?? vi.fn(),
-        patch: apiClient?.patch ?? vi.fn()
+        patch: vi.fn()
       },
       getObservabilityState: options?.getObservabilityState
     });

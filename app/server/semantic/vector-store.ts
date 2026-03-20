@@ -90,21 +90,21 @@ class SqliteVectorIndexStore implements VectorIndexStore {
     embeddings: SemanticEmbeddingResult[];
   }): Promise<VectorLedgerRecord[]> {
     const embeddingsByOrdinal = buildEmbeddingByOrdinal(input.embeddings);
-    const ledgerRows: Array<VectorLedgerRecord | null> = input.chunks
-      .map((chunk) => {
-        const embedding = embeddingsByOrdinal.get(chunk.ordinal);
-        if (!embedding) {
-          return null;
-        }
+    const ledgerRows: VectorLedgerRecord[] = [];
+    for (const chunk of input.chunks) {
+      const embedding = embeddingsByOrdinal.get(chunk.ordinal);
+      if (!embedding) {
+        continue;
+      }
 
-        return {
-          chunkOrdinal: chunk.ordinal,
-          vectorRef: null,
-          vectorBlob: encodeVectorBlob(embedding.vector)
-        } satisfies VectorLedgerRecord;
+      ledgerRows.push({
+        chunkOrdinal: chunk.ordinal,
+        vectorRef: null,
+        vectorBlob: encodeVectorBlob(embedding.vector)
       });
+    }
 
-    return ledgerRows.filter((item): item is VectorLedgerRecord => item !== null);
+    return ledgerRows;
   }
 
   async deleteNode(_nodeId: string): Promise<void> {}
@@ -172,21 +172,21 @@ class SqliteVecVectorIndexStore implements VectorIndexStore {
     embeddings: SemanticEmbeddingResult[];
   }): Promise<VectorLedgerRecord[]> {
     const embeddingsByOrdinal = buildEmbeddingByOrdinal(input.embeddings);
-    const ledgerRows: Array<VectorLedgerRecord | null> = input.chunks
-      .map((chunk) => {
-        const embedding = embeddingsByOrdinal.get(chunk.ordinal);
-        if (!embedding) {
-          return null;
-        }
+    const ledgerRows: VectorLedgerRecord[] = [];
+    for (const chunk of input.chunks) {
+      const embedding = embeddingsByOrdinal.get(chunk.ordinal);
+      if (!embedding) {
+        continue;
+      }
 
-        return {
-          chunkOrdinal: chunk.ordinal,
-          vectorRef: null,
-          vectorBlob: encodeVectorBlob(embedding.vector)
-        } satisfies VectorLedgerRecord;
+      ledgerRows.push({
+        chunkOrdinal: chunk.ordinal,
+        vectorRef: null,
+        vectorBlob: encodeVectorBlob(embedding.vector)
       });
+    }
 
-    return ledgerRows.filter((item): item is VectorLedgerRecord => item !== null);
+    return ledgerRows;
   }
 
   async deleteNode(_nodeId: string): Promise<void> {}

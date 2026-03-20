@@ -1,4 +1,3 @@
-export function normalizeApiBaseUrl(baseUrl: string): string;
 export function buildApiUrl(baseUrl: string, path: string): URL;
 export function buildApiRequestInit(input?: {
   method?: string;

@@ -2013,8 +2013,8 @@ export function createMemforgeApp(params: {
 
   app.get("/api/v1/nodes/:id/neighborhood", handleAsyncRoute(async (request, response) => {
     const depth = Number(request.query.depth ?? 1);
-    if (depth !== 1) {
-      throw new AppError(400, "INVALID_INPUT", "Only depth=1 is supported in the hot path.");
+    if (depth !== 1 && depth !== 2) {
+      throw new AppError(400, "INVALID_INPUT", "Only depth=1 or depth=2 is supported in the hot path.");
     }
     const types = parseRelationTypesQuery(request.query.types);
     const includeInferred = request.query.include_inferred === "1" || request.query.include_inferred === "true" || request.query.include_inferred === undefined;
@@ -2024,18 +2024,53 @@ export function createMemforgeApp(params: {
       {
         relationTypeCount: types?.length ?? 0,
         includeInferred,
-        maxInferred
+        maxInferred,
+        depth
       },
       (span) => {
-        const result = buildNeighborhoodItems(currentRepository(), readRequestParam(request.params.id), {
+        const repository = currentRepository();
+        const nodeId = readRequestParam(request.params.id);
+        const result = buildNeighborhoodItems(repository, nodeId, {
           relationTypes: types,
           includeInferred,
           maxInferred
         });
+        const expanded =
+          depth === 2
+            ? (() => {
+                const seen = new Set(result.map((item) => `${item.edge.relationId}:${item.node.id}:1`));
+                const secondHop = result.flatMap((item) =>
+                  buildNeighborhoodItems(repository, item.node.id, {
+                    relationTypes: types,
+                    includeInferred,
+                    maxInferred
+                  })
+                    .filter((nested) => nested.node.id !== nodeId)
+                    .map((nested) => ({
+                      ...nested,
+                      edge: {
+                        ...nested.edge,
+                        hop: 2
+                      },
+                      viaNodeId: item.node.id,
+                      viaNodeTitle: item.node.title
+                    }))
+                    .filter((nested) => {
+                      const key = `${nested.edge.relationId}:${nested.node.id}:${nested.viaNodeId ?? "focus"}`;
+                      if (seen.has(key)) {
+                        return false;
+                      }
+                      seen.add(key);
+                      return true;
+                    })
+                );
+                return [...result, ...secondHop];
+              })()
+            : result;
         span.addDetails({
-          resultCount: result.length
+          resultCount: expanded.length
         });
-        return result;
+        return expanded;
       }
     );
     response.json(envelope(response.locals.requestId, { items }));

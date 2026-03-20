@@ -58,7 +58,6 @@ export interface ContextBundlePreviewItem {
   relationSource?: 'canonical' | 'inferred';
   relationScore?: number;
   retrievalRank?: number;
-  semanticSimilarity?: number;
   generator?: string | null;
 }
 

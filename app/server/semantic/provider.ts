@@ -38,37 +38,37 @@ function normalizeText(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function collectCharacterNgrams(text: string): string[] {
+function forEachCharacterNgram(text: string, callback: (gram: string) => void) {
   const normalized = normalizeText(text);
   if (!normalized) {
-    return [];
+    return;
   }
 
   const source = ` ${normalized} `;
-  const grams: string[] = [];
   for (let size = 2; size <= 4; size += 1) {
     for (let index = 0; index <= source.length - size; index += 1) {
       const gram = source.slice(index, index + size);
       if (gram.trim()) {
-        grams.push(gram);
+        callback(gram);
       }
     }
   }
-  return grams;
 }
 
 function localNgramVector(text: string, dimension: number): number[] {
   const vector = new Array<number>(dimension).fill(0);
-  const grams = collectCharacterNgrams(text);
-  if (!grams.length) {
-    return vector;
-  }
+  let sawGram = false;
 
-  for (const gram of grams) {
+  forEachCharacterNgram(text, (gram) => {
+    sawGram = true;
     const digest = createHash("sha256").update(gram).digest();
     const bucket = digest.readUInt32BE(0) % dimension;
     const sign = digest[4] % 2 === 0 ? 1 : -1;
     vector[bucket] += sign;
+  });
+
+  if (!sawGram) {
+    return vector;
   }
 
   for (let index = 0; index < vector.length; index += 1) {

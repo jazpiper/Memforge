@@ -34,6 +34,22 @@ function estimateTokenCount(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
+function findChunkBoundary(text: string, startOffset: number, endOffset: number): number {
+  for (let index = endOffset; index > startOffset + 300; index -= 1) {
+    if (text[index] === " ") {
+      return index + 1;
+    }
+    if (text[index] === "." && text[index + 1] === " ") {
+      return index + 1;
+    }
+    if (text[index] === "\n" && text[index - 1] === "\n") {
+      return index + 1;
+    }
+  }
+
+  return endOffset;
+}
+
 export function buildSemanticChunks(text: string, chunkEnabled: boolean): SemanticChunkRecord[] {
   const normalized = text.trim();
   if (!normalized) {
@@ -62,14 +78,7 @@ export function buildSemanticChunks(text: string, chunkEnabled: boolean): Semant
   while (startOffset < normalized.length) {
     let endOffset = Math.min(startOffset + maxChars, normalized.length);
     if (endOffset < normalized.length) {
-      const lastBoundary = Math.max(
-        normalized.lastIndexOf("\n\n", endOffset),
-        normalized.lastIndexOf(". ", endOffset),
-        normalized.lastIndexOf(" ", endOffset)
-      );
-      if (lastBoundary > startOffset + 300) {
-        endOffset = lastBoundary + 1;
-      }
+      endOffset = findChunkBoundary(normalized, startOffset, endOffset);
     }
 
     const chunkText = normalized.slice(startOffset, endOffset).trim();

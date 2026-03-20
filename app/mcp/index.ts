@@ -4,11 +4,50 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { MemforgeApiClient } from "./api-client.js";
 import { createMemforgeMcpServer } from "./server.js";
 
+type ObservabilityState = {
+  enabled: boolean;
+  workspaceRoot: string;
+  workspaceName: string;
+  retentionDays: number;
+  slowRequestMs: number;
+  capturePayloadShape: boolean;
+};
+
 function createApiClient() {
   return new MemforgeApiClient(
     process.env.MEMFORGE_API_URL ?? "http://127.0.0.1:8787/api/v1",
     process.env.MEMFORGE_API_TOKEN
   );
+}
+
+function createObservabilityStateReader() {
+  let cachedState: ObservabilityState | null = null;
+  let cachedAt = 0;
+  let inFlight: Promise<ObservabilityState> | null = null;
+  const cacheTtlMs = 5_000;
+
+  return async function readObservabilityState() {
+    const now = Date.now();
+    if (cachedState && now - cachedAt < cacheTtlMs) {
+      return cachedState;
+    }
+
+    if (inFlight) {
+      return inFlight;
+    }
+
+    inFlight = resolveObservabilityState()
+      .then((state) => {
+        cachedState = state;
+        cachedAt = Date.now();
+        return state;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+
+    return inFlight;
+  };
 }
 
 async function resolveObservabilityState() {
@@ -98,9 +137,10 @@ async function main() {
     process.env.MEMFORGE_MCP_TOOL_NAME = args["tool-name"];
   }
 
+  const readObservabilityState = createObservabilityStateReader();
   const server = createMemforgeMcpServer({
-    observabilityState: await resolveObservabilityState(),
-    getObservabilityState: resolveObservabilityState
+    observabilityState: await readObservabilityState(),
+    getObservabilityState: readObservabilityState
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);

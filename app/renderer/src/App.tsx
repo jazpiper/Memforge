@@ -453,7 +453,7 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     const currentNode = selectedNode;
-    if (!currentNode || !selectedNodeKey) return undefined;
+    if (view !== 'graph' || !currentNode || !selectedNodeKey) return undefined;
     const nodeId = selectedNodeKey;
     setDetail({
       ...emptyDetailPanel(),
@@ -524,7 +524,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [graphRadius, selectedNodeKey]);
+  }, [graphRadius, selectedNodeKey, view]);
 
   const [governanceIssues, setGovernanceIssues] = useState<GovernanceIssueItem[]>([]);
   const noteNodes = useMemo(() => {
@@ -554,7 +554,7 @@ export default function App() {
     : null;
 
   useEffect(() => {
-    if (!snapshot || view !== 'governance') return;
+    if (view !== 'governance') return;
 
     let mounted = true;
 
@@ -584,7 +584,7 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [snapshot, view]);
+  }, [view]);
 
   useEffect(() => {
     if (!governanceIssues.length) {
@@ -828,39 +828,43 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   ];
   const activeMcpGuideSection =
     mcpGuideSections.find((section) => section.id === mcpGuideSectionId) ?? mcpGuideSections[0]!;
-  const graphDistinctNodes = useMemo(
-    () => Array.from(new Map(graphConnections.map((item) => [item.node.id, item.node])).values()),
-    [graphConnections],
-  );
-  const graphRelationCounts = useMemo(
-    () =>
-      graphConnections.reduce<Record<string, number>>((acc, item) => {
-        acc[item.relation.relationType] = (acc[item.relation.relationType] ?? 0) + 1;
-        return acc;
-      }, {}),
-    [graphConnections],
-  );
+  const graphSummary = useMemo(() => {
+    const distinctNodes = new Map<string, Node>();
+    const relationCounts: Record<string, number> = {};
+    let incomingCount = 0;
+    let outgoingCount = 0;
+    let suggestedCount = 0;
+
+    for (const item of graphConnections) {
+      distinctNodes.set(item.node.id, item.node);
+      relationCounts[item.relation.relationType] = (relationCounts[item.relation.relationType] ?? 0) + 1;
+      if (item.direction === 'incoming') {
+        incomingCount += 1;
+      } else {
+        outgoingCount += 1;
+      }
+      if (item.relation.status === 'suggested') {
+        suggestedCount += 1;
+      }
+    }
+
+    return {
+      distinctNodes: Array.from(distinctNodes.values()),
+      relationCounts,
+      incomingCount,
+      outgoingCount,
+      suggestedCount,
+    };
+  }, [graphConnections]);
   const graphRelationGroups = useMemo(
     () =>
-      Object.entries(graphRelationCounts)
+      Object.entries(graphSummary.relationCounts)
         .map(([relationType, count]) => ({
           relationType,
           count,
         }))
         .sort((left, right) => right.count - left.count || left.relationType.localeCompare(right.relationType)),
-    [graphRelationCounts],
-  );
-  const graphIncomingCount = useMemo(
-    () => graphConnections.filter((item) => item.direction === 'incoming').length,
-    [graphConnections],
-  );
-  const graphOutgoingCount = useMemo(
-    () => graphConnections.filter((item) => item.direction === 'outgoing').length,
-    [graphConnections],
-  );
-  const graphSuggestedCount = useMemo(
-    () => graphConnections.filter((item) => item.relation.status === 'suggested').length,
-    [graphConnections],
+    [graphSummary.relationCounts],
   );
   const governanceStateCounts = useMemo(
     () =>
@@ -1437,17 +1441,17 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               </article>
               <article className="mini-card">
                 <span className="eyebrow">Connected nodes</span>
-                <strong>{graphDistinctNodes.length} nodes</strong>
+                <strong>{graphSummary.distinctNodes.length} nodes</strong>
                 <p>{graphConnections.length} visible paths around the current focus.</p>
               </article>
               <article className="mini-card">
                 <span className="eyebrow">Signal mix</span>
                 <strong>{graphRelationGroups.length} relation types</strong>
-                <p>{graphSuggestedCount} suggested links still need review.</p>
+                <p>{graphSummary.suggestedCount} suggested links still need review.</p>
               </article>
               <article className="mini-card">
                 <span className="eyebrow">Direction</span>
-                <strong>{graphOutgoingCount} out / {graphIncomingCount} in</strong>
+                <strong>{graphSummary.outgoingCount} out / {graphSummary.incomingCount} in</strong>
                 <p>Shows whether this node mostly points outward or is referenced by others.</p>
               </article>
             </div>

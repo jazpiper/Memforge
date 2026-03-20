@@ -1,4 +1,4 @@
-export function normalizeApiBaseUrl(baseUrl) {
+function normalizeApiBaseUrl(baseUrl) {
   return baseUrl.replace(/\/+$/, "");
 }
 
@@ -7,7 +7,7 @@ export function buildApiUrl(baseUrl, path) {
 }
 
 export function buildApiRequestInit({ method = "GET", token, body, headers } = {}) {
-  const requestHeaders = new Headers(headers ?? {});
+  const requestHeaders = headers instanceof Headers ? headers : new Headers(headers ?? {});
   if (!requestHeaders.has("accept")) {
     requestHeaders.set("accept", "application/json");
   }

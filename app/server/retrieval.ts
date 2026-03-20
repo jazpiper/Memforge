@@ -69,13 +69,100 @@ function prioritizeItems(
   maxItems: number,
   bonuses?: Map<string, number>
 ): SearchResultItem[] {
-  const weighted = [...items].sort((left, right) => {
-    const leftScore = scoreItem(left, preset) + (bonuses?.get(left.id) ?? 0);
-    const rightScore = scoreItem(right, preset) + (bonuses?.get(right.id) ?? 0);
-    return rightScore - leftScore || right.updatedAt.localeCompare(left.updatedAt);
-  });
+  const weighted = items
+    .map((item) => ({
+      item,
+      score: scoreItem(item, preset) + (bonuses?.get(item.id) ?? 0)
+    }))
+    .sort((left, right) => right.score - left.score || right.item.updatedAt.localeCompare(left.item.updatedAt))
+    .map(({ item }) => item);
 
   return weighted.slice(0, maxItems);
+}
+
+function buildNeighborhoodResult(
+  repository: MemforgeRepository,
+  nodeId: string,
+  options?: {
+    relationTypes?: RelationType[];
+    includeInferred?: boolean;
+    maxInferred?: number;
+  }
+) {
+  const canonicalItems: NeighborhoodItem[] = repository.listRelatedNodes(nodeId, 1, options?.relationTypes).map(({ node, relation }) => ({
+    node,
+    edge: {
+      relationId: relation.id,
+      relationType: relation.relationType,
+      relationSource: "canonical" as const,
+      relationStatus: relation.status,
+      relationScore: null,
+      retrievalRank: null,
+      generator: null,
+      reason: `Related via ${relation.relationType}`,
+      direction: relation.fromNodeId === nodeId ? ("outgoing" as const) : ("incoming" as const),
+      hop: 1
+    }
+  }));
+  const seenNodeIds = new Set(canonicalItems.map((item) => item.node.id));
+  const inferredItems: NeighborhoodItem[] =
+    options?.includeInferred && options.maxInferred
+      ? (() => {
+          const relations = repository
+            .listInferredRelationsForNode(nodeId, Math.max(options.maxInferred * 3, options.maxInferred))
+            .filter((relation) => !options.relationTypes?.length || options.relationTypes.includes(relation.relationType));
+          const relatedNodeIds = relations.map((relation) =>
+            relation.fromNodeId === nodeId ? relation.toNodeId : relation.fromNodeId
+          );
+          const relatedNodes = repository.getNodesByIds(relatedNodeIds);
+
+          return relations
+            .flatMap((relation) => {
+              const relatedNodeId = relation.fromNodeId === nodeId ? relation.toNodeId : relation.fromNodeId;
+              const node = relatedNodes.get(relatedNodeId);
+              if (!node) {
+                return [];
+              }
+
+              return [{
+                node,
+                edge: {
+                  relationId: relation.id,
+                  relationType: relation.relationType,
+                  relationSource: "inferred" as const,
+                  relationStatus: relation.status,
+                  relationScore: relation.finalScore,
+                  retrievalRank: relation.finalScore,
+                  generator: relation.generator,
+                  reason: `Inferred via ${relation.relationType} (score ${relation.finalScore.toFixed(2)})`,
+                  direction: relation.fromNodeId === nodeId ? ("outgoing" as const) : ("incoming" as const),
+                  hop: 1
+                }
+              }];
+            })
+            .filter((item) => {
+              if (seenNodeIds.has(item.node.id)) {
+                return false;
+              }
+              seenNodeIds.add(item.node.id);
+              return true;
+            });
+        })()
+      : [];
+
+  const usageSummaries = repository.getRelationUsageSummaries(
+    [...canonicalItems, ...inferredItems].map((item) => item.edge.relationId)
+  );
+  const rankedCanonical = rankNeighborhoodItems(canonicalItems, usageSummaries, neighborhoodRetrievalRankWeights);
+  const rankedInferred =
+    options?.includeInferred && options.maxInferred
+      ? rankNeighborhoodItems(inferredItems, usageSummaries, neighborhoodRetrievalRankWeights, options.maxInferred)
+      : [];
+
+  return {
+    items: [...rankedCanonical, ...rankedInferred],
+    usageSummaries
+  };
 }
 
 function matchesSearchResultFilters(
@@ -278,77 +365,7 @@ export function buildNeighborhoodItems(
     maxInferred?: number;
   }
 ): NeighborhoodItem[] {
-  const canonicalItems: NeighborhoodItem[] = repository.listRelatedNodes(nodeId, 1, options?.relationTypes).map(({ node, relation }) => ({
-    node,
-    edge: {
-      relationId: relation.id,
-      relationType: relation.relationType,
-      relationSource: "canonical" as const,
-      relationStatus: relation.status,
-      relationScore: null,
-      retrievalRank: null,
-      generator: null,
-      reason: `Related via ${relation.relationType}`,
-      direction: relation.fromNodeId === nodeId ? ("outgoing" as const) : ("incoming" as const),
-      hop: 1
-    }
-  }));
-  const seenNodeIds = new Set(canonicalItems.map((item) => item.node.id));
-  const inferredItems: NeighborhoodItem[] =
-    options?.includeInferred && options.maxInferred
-      ? (() => {
-          const relations = repository
-            .listInferredRelationsForNode(nodeId, Math.max(options.maxInferred * 3, options.maxInferred))
-            .filter((relation) => !options.relationTypes?.length || options.relationTypes.includes(relation.relationType));
-          const relatedNodeIds = relations.map((relation) =>
-            relation.fromNodeId === nodeId ? relation.toNodeId : relation.fromNodeId
-          );
-          const relatedNodes = repository.getNodesByIds(relatedNodeIds);
-
-          return relations
-            .flatMap((relation) => {
-              const relatedNodeId = relation.fromNodeId === nodeId ? relation.toNodeId : relation.fromNodeId;
-              const node = relatedNodes.get(relatedNodeId);
-              if (!node) {
-                return [];
-              }
-
-              return [{
-                node,
-                edge: {
-                  relationId: relation.id,
-                  relationType: relation.relationType,
-                  relationSource: "inferred" as const,
-                  relationStatus: relation.status,
-                  relationScore: relation.finalScore,
-                  retrievalRank: relation.finalScore,
-                  generator: relation.generator,
-                  reason: `Inferred via ${relation.relationType} (score ${relation.finalScore.toFixed(2)})`,
-                  direction: relation.fromNodeId === nodeId ? ("outgoing" as const) : ("incoming" as const),
-                  hop: 1
-                }
-              }];
-            })
-            .filter((item) => {
-              if (seenNodeIds.has(item.node.id)) {
-                return false;
-              }
-              seenNodeIds.add(item.node.id);
-              return true;
-            });
-        })()
-      : [];
-
-  const usageSummaries = repository.getRelationUsageSummaries(
-    [...canonicalItems, ...inferredItems].map((item) => item.edge.relationId)
-  );
-  const rankedCanonical = rankNeighborhoodItems(canonicalItems, usageSummaries, neighborhoodRetrievalRankWeights);
-  const rankedInferred =
-    options?.includeInferred && options.maxInferred
-      ? rankNeighborhoodItems(inferredItems, usageSummaries, neighborhoodRetrievalRankWeights, options.maxInferred)
-      : [];
-
-  return [...rankedCanonical, ...rankedInferred];
+  return buildNeighborhoodResult(repository, nodeId, options).items;
 }
 
 export function buildCandidateRelationBonusMap(
@@ -357,11 +374,10 @@ export function buildCandidateRelationBonusMap(
   candidateNodeIds: string[]
 ) {
   const candidateNodeIdSet = new Set(candidateNodeIds);
-  const neighborhood = buildNeighborhoodItems(repository, targetNodeId, {
+  const { items: neighborhood, usageSummaries } = buildNeighborhoodResult(repository, targetNodeId, {
     includeInferred: true,
     maxInferred: Math.max(4, Math.min(candidateNodeIds.length, 10))
   });
-  const usageSummaries = repository.getRelationUsageSummaries(neighborhood.map((item) => item.edge.relationId));
 
   return new Map(
     neighborhood
@@ -475,12 +491,12 @@ export async function buildContextBundle(
   const target = repository.getNode(input.target.id);
   const sharedNeighborhood =
     input.options.includeRelated || input.options.includeDecisions || input.options.includeOpenQuestions
-      ? buildNeighborhoodItems(repository, target.id, {
+      ? buildNeighborhoodResult(repository, target.id, {
           includeInferred: input.options.includeInferred,
           maxInferred: input.options.maxInferred
         })
-      : [];
-  const neighborhood = input.options.includeRelated ? sharedNeighborhood : [];
+      : { items: [], usageSummaries: new Map<string, RelationUsageSummary>() };
+  const neighborhood = input.options.includeRelated ? sharedNeighborhood.items : [];
   const related = neighborhood.map((item) => ({
     nodeId: item.node.id,
     type: item.node.type,
@@ -495,7 +511,7 @@ export async function buildContextBundle(
     retrievalRank: item.edge.retrievalRank ?? undefined,
     generator: item.edge.generator
   }));
-  const retrievalCandidates = buildRetrievalCandidates(target, sharedNeighborhood);
+  const retrievalCandidates = buildRetrievalCandidates(target, sharedNeighborhood.items);
 
   const decisions = input.options.includeDecisions
     ? buildTargetRelatedRetrievalItems(repository, target.id, {
@@ -533,11 +549,10 @@ export async function buildContextBundle(
     updatedAt: item.node.updatedAt,
     tags: item.node.tags
   }));
-  const bundleUsageSummaries = repository.getRelationUsageSummaries(neighborhood.map((item) => item.edge.relationId));
   const relationBonuses = new Map(
     neighborhood.map((item) => [
       item.node.id,
-      computeBundleRelationBoost(item, bundleUsageSummaries.get(item.edge.relationId))
+      computeBundleRelationBoost(item, sharedNeighborhood.usageSummaries.get(item.edge.relationId))
     ])
   );
   const candidateItems = [targetItem, ...relatedItems, ...decisions, ...openQuestions];

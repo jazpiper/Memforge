@@ -70,7 +70,14 @@ function cloneWorkspace(seed: WorkspaceSeed) {
   return structuredClone(seed);
 }
 
-const fallbackState = cloneWorkspace(mockWorkspace);
+let fallbackState: WorkspaceSeed | null = null;
+
+function getFallbackState() {
+  if (!fallbackState) {
+    fallbackState = cloneWorkspace(mockWorkspace);
+  }
+  return fallbackState;
+}
 
 function mapWorkspace(payload: any): Workspace {
   const data = payload?.data ?? payload;
@@ -295,15 +302,16 @@ function buildFallbackGovernanceEvents(node: Node, state: GovernanceStateRecord)
 
 function buildFallbackNodeDetail(node: Node): NodeDetail {
   const governanceState = buildFallbackGovernanceState(node);
+  const fallback = getFallbackState();
   return {
     node,
-    related: fallbackState.relations
+    related: fallback.relations
       .filter((relation) => relation.fromNodeId === node.id || relation.toNodeId === node.id)
       .map((relation) => (relation.fromNodeId === node.id ? relation.toNodeId : relation.fromNodeId))
-      .map((relatedId) => fallbackState.nodes.find((item) => item.id === relatedId))
+      .map((relatedId) => fallback.nodes.find((item) => item.id === relatedId))
       .filter((item): item is Node => Boolean(item)),
-    activities: fallbackState.activities.filter((activity) => activity.targetNodeId === node.id),
-    artifacts: fallbackState.artifacts.filter((artifact) => artifact.nodeId === node.id),
+    activities: fallback.activities.filter((activity) => activity.targetNodeId === node.id),
+    artifacts: fallback.artifacts.filter((artifact) => artifact.nodeId === node.id),
     governance: {
       state: governanceState,
       events: buildFallbackGovernanceEvents(node, governanceState),
@@ -342,7 +350,9 @@ function mapNeighborhoodConnection(targetNodeId: string, raw: any): GraphConnect
     node,
     relation,
     direction: edge.direction === 'incoming' ? 'incoming' : 'outgoing',
-    hop: 1 as const,
+    hop: edge.hop === 2 ? 2 : 1,
+    viaNodeId: typeof raw.viaNodeId === 'string' ? raw.viaNodeId : undefined,
+    viaNodeTitle: typeof raw.viaNodeTitle === 'string' ? raw.viaNodeTitle : undefined,
   };
 }
 
@@ -408,7 +418,7 @@ function buildEventStreamUrl() {
 }
 
 function fallbackSnapshot(): WorkspaceSeed {
-  return cloneWorkspace(fallbackState);
+  return cloneWorkspace(getFallbackState());
 }
 
 export async function getWorkspace(): Promise<Workspace> {
@@ -417,7 +427,7 @@ export async function getWorkspace(): Promise<Workspace> {
       const payload = await requestJson('/workspace');
       return mapWorkspace(payload);
     },
-    async () => fallbackState.workspace,
+    async () => getFallbackState().workspace,
   );
 }
 
@@ -427,7 +437,7 @@ export async function getWorkspaceCatalog(): Promise<WorkspaceCatalog> {
       const payload = await requestJson('/workspaces');
       return mapWorkspaceCatalogResponse(payload);
     },
-    async () => buildWorkspaceCatalog(fallbackState.workspace),
+    async () => buildWorkspaceCatalog(getFallbackState().workspace),
   );
 }
 
@@ -444,7 +454,7 @@ export async function getBootstrap(): Promise<BootstrapInfo> {
       };
     },
     async () => ({
-      workspace: fallbackState.workspace,
+      workspace: getFallbackState().workspace,
       authMode: 'optional',
       hasToken: false,
     }),
@@ -490,7 +500,6 @@ export async function getContextBundlePreview(targetId: string): Promise<Context
               : undefined,
           relationScore: typeof item.relationScore === 'number' ? item.relationScore : undefined,
           retrievalRank: typeof item.retrievalRank === 'number' ? item.retrievalRank : undefined,
-          semanticSimilarity: typeof item.semanticSimilarity === 'number' ? item.semanticSimilarity : undefined,
           generator: typeof item.generator === 'string' ? item.generator : null,
         }));
     },
@@ -556,10 +565,7 @@ export async function getSnapshot(): Promise<WorkspaceSeed> {
 
       const nodes = mapPayloadItems(nodesPayload, mapNode);
       const integrations = mapPayloadItems(integrationsPayload, mapIntegration);
-      const recentNodeIds = [...nodes]
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 5)
-        .map((node) => node.id);
+      const recentNodeIds = nodes.slice(0, 5).map((node) => node.id);
       const pinnedProjectIds = nodes.filter((node) => node.type === 'project').slice(0, 3).map((node) => node.id);
 
       return {
@@ -592,73 +598,76 @@ export async function getNodeDetail(id: string): Promise<NodeDetail | undefined>
       };
     },
     async () => {
-      const node = fallbackState.nodes.find((item) => item.id === id);
+      const node = getFallbackState().nodes.find((item) => item.id === id);
       return node ? buildFallbackNodeDetail(node) : undefined;
     },
   );
 }
 
-async function getRelatedConnections(id: string): Promise<GraphConnection[]> {
-  return withFallback(
-    async () => {
-      const payload = await requestJson(`/nodes/${encodeURIComponent(id)}/neighborhood?include_inferred=1&max_inferred=4`);
-      return mapPayloadItems(payload, (item) => mapNeighborhoodConnection(id, item));
-    },
-    async () => {
-      const items = fallbackState.relations
-        .filter((relation) => (relation.fromNodeId === id || relation.toNodeId === id) && relation.status !== 'archived')
-        .map((relation) => {
-          const relatedId = relation.fromNodeId === id ? relation.toNodeId : relation.fromNodeId;
-          const node = fallbackState.nodes.find((item) => item.id === relatedId);
-          if (!node || node.status === 'archived') {
-            return null;
-          }
-          return {
-            node,
-            relation,
-            direction: relation.fromNodeId === id ? ('outgoing' as const) : ('incoming' as const),
-            hop: 1 as const,
-          };
-        });
+function getFallbackRelatedConnections(state: WorkspaceSeed, id: string): GraphConnection[] {
+  const nodeById = new Map(state.nodes.map((node) => [node.id, node] as const));
+  return state.relations.reduce<GraphConnection[]>((connections, relation) => {
+    if ((relation.fromNodeId !== id && relation.toNodeId !== id) || relation.status === 'archived') {
+      return connections;
+    }
 
-      return items.filter((item): item is NonNullable<(typeof items)[number]> => item !== null);
-    },
-  );
+    const relatedId = relation.fromNodeId === id ? relation.toNodeId : relation.fromNodeId;
+    const node = nodeById.get(relatedId);
+    if (!node || node.status === 'archived') {
+      return connections;
+    }
+
+    connections.push({
+      node,
+      relation,
+      direction: relation.fromNodeId === id ? 'outgoing' : 'incoming',
+      hop: 1,
+    });
+    return connections;
+  }, []);
 }
 
 export async function getGraphNeighborhood(id: string, hops: 1 | 2): Promise<GraphConnection[]> {
-  const firstHop = await getRelatedConnections(id);
-  if (hops === 1) {
-    return firstHop;
-  }
+  return withFallback(
+    async () => {
+      const payload = await requestJson(
+        `/nodes/${encodeURIComponent(id)}/neighborhood?include_inferred=1&max_inferred=4&depth=${hops}`
+      );
+      return mapPayloadItems(payload, (item) => mapNeighborhoodConnection(id, item));
+    },
+    async () => {
+      const fallback = getFallbackState();
+      const firstHop = getFallbackRelatedConnections(fallback, id);
+      if (hops === 1) {
+        return firstHop;
+      }
 
-  const secondHopGroups = await Promise.all(
-    firstHop.map(async (connection) => {
-      const nested = await getRelatedConnections(connection.node.id);
-      return nested
-        .filter((item) => item.node.id !== id)
-        .map((item) => ({
-          ...item,
-          hop: 2 as const,
-          viaNodeId: connection.node.id,
-          viaNodeTitle: connection.node.title,
-        }));
-    }),
-  );
+      const secondHopGroups = firstHop.map((connection) =>
+        getFallbackRelatedConnections(fallback, connection.node.id)
+          .filter((item) => item.node.id !== id)
+          .map((item) => ({
+            ...item,
+            hop: 2 as const,
+            viaNodeId: connection.node.id,
+            viaNodeTitle: connection.node.title,
+          }))
+      );
 
-  const merged = [...firstHop];
-  const seen = new Set(firstHop.map((item) => `${item.relation.id}:${item.node.id}:1`));
+      const merged = [...firstHop];
+      const seen = new Set(firstHop.map((item) => `${item.relation.id}:${item.node.id}:1`));
 
-  secondHopGroups.flat().forEach((item) => {
-    const key = `${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'direct'}`;
-    if (seen.has(key)) {
-      return;
+      secondHopGroups.flat().forEach((item) => {
+        const key = `${item.relation.id}:${item.node.id}:${item.viaNodeId ?? 'direct'}`;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        merged.push(item);
+      });
+
+      return merged;
     }
-    seen.add(key);
-    merged.push(item);
-  });
-
-  return merged;
+  );
 }
 
 export async function getGovernanceIssues(): Promise<GovernanceIssueItem[]> {
@@ -668,7 +677,7 @@ export async function getGovernanceIssues(): Promise<GovernanceIssueItem[]> {
       return mapPayloadItems(payload, mapGovernanceIssue);
     },
     async () =>
-      fallbackState.nodes
+      getFallbackState().nodes
         .filter((node) => node.status === 'contested' || node.canonicality === 'suggested')
         .map((node) => ({
           entityType: 'node' as const,
