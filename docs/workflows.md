@@ -78,6 +78,14 @@ Why this matters:
 - it gives agent clients a discoverable tool surface without raw prompt coupling
 - the packaged desktop app can now act as the stdio MCP command directly, writes a PATH-friendly `Memforge` shim under `~/.local/bin`, and writes a stable launcher script under `~/.memforge/bin/memforge-mcp`
 
+Operational guidance:
+
+- keep the current workspace as the default MCP scope unless the user explicitly asks to switch workspaces
+- use `memforge_search_workspace` for broad mixed recall when the request shape is still unclear
+- use `memforge_search_nodes` for durable-only lookups, especially `type=project` when checking whether a project already exists
+- use `memforge_search_activities` for recent logs, change history, and "what happened recently" questions
+- when work is clearly project-shaped, search for an existing project inside the current workspace before creating a new project node
+
 ## 4. Default workspace root behavior
 
 The default unmanaged workspace location now lives under:

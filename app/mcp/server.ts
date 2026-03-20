@@ -433,7 +433,7 @@ export function createMemforgeMcpServer(params?: {
     },
     {
       instructions:
-        "Use Memforge as a local knowledge backend. Prefer read tools first to inspect workspace state, and include source details on durable writes when you want caller-specific provenance.",
+        "Use Memforge as a local knowledge backend. Treat the current workspace as the default scope, and do not create or open another workspace unless the user explicitly asks. When the work is clearly project-shaped, search for an existing project inside the current workspace first: prefer memforge_search_nodes with type=project, broaden with memforge_search_workspace when needed, create a project node only if no suitable one exists, and then anchor follow-up context with memforge_context_bundle targetId. If the conversation is not project-specific, keep memory at workspace scope. Prefer read tools first, and include source details on durable writes when you want caller-specific provenance.",
       capabilities: {
         logging: {}
       }
@@ -510,7 +510,8 @@ export function createMemforgeMcpServer(params?: {
     "memforge_workspace_current",
     {
       title: "Current Workspace",
-      description: "Read the currently active Memforge workspace and auth mode.",
+      description:
+        "Read the currently active Memforge workspace and auth mode. Use this to confirm the default workspace scope before deciding whether an explicit user request justifies switching workspaces.",
       outputSchema: workspaceInfoSchema
     },
     createGetToolHandler(apiClient, "/workspace")
@@ -535,7 +536,8 @@ export function createMemforgeMcpServer(params?: {
     "memforge_workspace_create",
     {
       title: "Create Workspace",
-      description: "Create a Memforge workspace on disk and switch the running service to it without restarting.",
+      description:
+        "Create a Memforge workspace on disk and switch the running service to it without restarting. Only use this when the user explicitly requests creating or switching to a new workspace.",
       inputSchema: {
         rootPath: z.string().min(1).describe("Absolute or user-resolved path for the new workspace root."),
         workspaceName: z.string().min(1).optional().describe("Human-friendly workspace name.")
@@ -549,7 +551,8 @@ export function createMemforgeMcpServer(params?: {
     "memforge_workspace_open",
     {
       title: "Open Workspace",
-      description: "Switch the running Memforge service to another existing workspace.",
+      description:
+        "Switch the running Memforge service to another existing workspace. Only use this when the user explicitly requests opening or switching workspaces.",
       inputSchema: {
         rootPath: z.string().min(1).describe("Existing workspace root path to open.")
       }
@@ -624,7 +627,7 @@ export function createMemforgeMcpServer(params?: {
     {
       title: "Search Nodes",
       description:
-        "Search durable Memforge nodes by keyword and optional filters. Valid node types include note, project, idea, question, decision, reference, artifact_ref, and conversation. `activity` is not a node type.",
+        "Search durable Memforge nodes by keyword and optional filters. Prefer this for durable-only recall, especially when checking for an existing project in the current workspace by filtering with type=project. Valid node types include note, project, idea, question, decision, reference, artifact_ref, and conversation. `activity` is not a node type.",
       inputSchema: {
         query: z.string().default("").describe("Keyword or phrase query."),
         allowEmptyQuery: coerceBooleanSchema(false).describe("Set true to browse recent durable nodes without a query."),
@@ -654,7 +657,7 @@ export function createMemforgeMcpServer(params?: {
     {
       title: "Search Activities",
       description:
-        "Search operational activity timelines by keyword and optional filters. Accepts `activityType` and `targetNodeId` aliases and normalizes single strings into arrays.",
+        "Search operational activity timelines by keyword and optional filters. Prefer this for recent logs, change history, and 'what happened recently' questions. Accepts `activityType` and `targetNodeId` aliases and normalizes single strings into arrays.",
       inputSchema: {
         query: z.string().default("").describe("Keyword or phrase query."),
         allowEmptyQuery: coerceBooleanSchema(false).describe("Set true to browse recent activity results without a query."),
@@ -683,7 +686,7 @@ export function createMemforgeMcpServer(params?: {
     {
       title: "Search Workspace",
       description:
-        "Search nodes, activities, or both through one workspace-wide endpoint. This is the preferred default entry point when you do not already know a target node. Accepts `scope` or `scopes`, for example `activities`.",
+        "Search nodes, activities, or both through one workspace-wide endpoint. This is the preferred broad entry point when the target node or request shape is still unclear, or when you need both node and activity recall in the current workspace. Accepts `scope` or `scopes`, for example `activities`.",
       inputSchema: {
         query: z.string().default("").describe("Keyword or phrase query."),
         allowEmptyQuery: coerceBooleanSchema(false).describe("Set true to browse mixed recent results without a query."),
@@ -838,7 +841,8 @@ export function createMemforgeMcpServer(params?: {
     "memforge_append_activity",
     {
       title: "Append Activity",
-      description: "Append an activity entry to a Memforge node timeline with provenance.",
+      description:
+        "Append an activity entry to a specific Memforge node or project timeline with provenance. Use this when you already know the target node or project; otherwise prefer memforge_capture_memory for general workspace-scope updates.",
       inputSchema: {
         targetNodeId: z.string().min(1).describe("Target node id."),
         activityType: z.enum(activityTypes),
@@ -856,7 +860,7 @@ export function createMemforgeMcpServer(params?: {
     {
       title: "Capture Memory",
       description:
-        "Safely capture a memory item without choosing low-level storage first. Prefer this tool for short work logs or when you are unsure whether the content should become an activity or a durable node.",
+        "Safely capture a memory item without choosing low-level storage first. Prefer this as the default write when the conversation is not yet tied to a specific project or node. General short logs can stay at workspace scope and be auto-routed into activities, while reusable content can still land as durable memory.",
       inputSchema: {
         mode: z.enum(captureModes).default("auto"),
         body: z.string().min(1),
@@ -877,7 +881,7 @@ export function createMemforgeMcpServer(params?: {
     {
       title: "Create Node",
       description:
-        "Create a durable Memforge node with provenance. Short work-log updates are usually better captured with `memforge_capture_memory` or `memforge_append_activity`.",
+        "Create a durable Memforge node with provenance. Use this for reusable knowledge; when creating a project node in the current workspace, search first and only create one if no suitable project already exists. Short work-log updates are usually better captured with `memforge_capture_memory` or `memforge_append_activity`.",
       inputSchema: {
         type: z.enum(nodeTypes),
         title: z.string().min(1),
@@ -1012,7 +1016,8 @@ export function createMemforgeMcpServer(params?: {
     "memforge_context_bundle",
     {
       title: "Build Context Bundle",
-      description: "Build a compact Memforge context bundle for coding, research, writing, or decision support. If you do not already know a target node, omit targetId to get a workspace-entry bundle.",
+      description:
+        "Build a compact Memforge context bundle for coding, research, writing, or decision support. Omit targetId to get a workspace-entry bundle when the work is not yet tied to a specific project or node, and add targetId only after you know which project or node should anchor the context.",
       inputSchema: {
         targetId: z.string().min(1).optional(),
         mode: z.enum(bundleModes).default("compact"),

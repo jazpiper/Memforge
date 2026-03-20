@@ -110,6 +110,31 @@ Rules:
 - The search tools normalize common alias mistakes such as `type`, `activityType`, `targetNodeId`, `scope`, and single-string arrays before forwarding to HTTP.
 - When you do not already know the target node, prefer `memforge_search_workspace` as the default entry point. Use `memforge_search_nodes` for durable-only narrowing and `memforge_search_activities` for recent operational narrowing.
 
+### Workspace vs project
+
+- `workspace` is the top-level storage container and the default MCP working scope.
+- Do not switch workspaces unless the user explicitly asks for it.
+- `project` is a node type stored inside the current workspace.
+- Create or reuse a project only when the task is clearly project-shaped, such as ongoing repo work, a named app, or a named CLI.
+- If the conversation is not project-specific, keep memory at workspace scope.
+
+### When to use each search tool
+
+- Use `memforge_search_workspace` as the broad default when the request shape is still unclear or when you want both node and activity recall.
+- Use `memforge_search_nodes` when you want durable-only recall, especially when checking whether a project already exists with `type=project`.
+- Use `memforge_search_activities` when you want recent logs, change history, or "what happened recently" answers.
+
+### Project initialization with existing tools only
+
+When the work is clearly project-shaped, keep the flow inside the current workspace:
+
+1. Read `memforge_workspace_current` to confirm the active workspace.
+2. Search for an existing project with `memforge_search_nodes` and `type=project`.
+3. If you need broader context before deciding, widen the search with `memforge_search_workspace`.
+4. Create a new project with `memforge_create_node` and `type=project` only when no suitable project already exists.
+5. Once the project is known, use `memforge_context_bundle` with `targetId` to anchor follow-up context.
+6. If the work is not tied to a specific project yet, omit `targetId` and use the workspace-entry bundle instead.
+
 ---
 
 ## 5. Input schema conventions

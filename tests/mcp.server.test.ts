@@ -7,6 +7,12 @@ import { createMemforgeMcpServer } from "../app/mcp/server.js";
 describe("Memforge MCP server", () => {
   const cleanup: Array<() => Promise<void>> = [];
 
+  function findToolDescription(toolList: { tools: Array<{ name: string; description?: string }> }, name: string) {
+    const tool = toolList.tools.find((candidate) => candidate.name === name);
+    expect(tool).toBeDefined();
+    return tool?.description ?? "";
+  }
+
   afterEach(async () => {
     while (cleanup.length) {
       const close = cleanup.pop();
@@ -87,6 +93,39 @@ describe("Memforge MCP server", () => {
     expect(toolNames).toContain("memforge_semantic_reindex");
     expect(toolNames).toContain("memforge_semantic_reindex_node");
     expect(toolNames).toContain("memforge_rank_candidates");
+  });
+
+  it("advertises workspace, project, search, and bundle guidance in tool descriptions", async () => {
+    const { client } = await connectTestClient();
+
+    const toolList = await client.listTools();
+
+    expect(findToolDescription(toolList, "memforge_workspace_current")).toContain("default workspace scope");
+    expect(findToolDescription(toolList, "memforge_workspace_current")).toContain("switching workspaces");
+
+    expect(findToolDescription(toolList, "memforge_workspace_create")).toContain("user explicitly requests");
+    expect(findToolDescription(toolList, "memforge_workspace_open")).toContain("user explicitly requests");
+
+    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain("preferred broad entry point");
+    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain("current workspace");
+
+    expect(findToolDescription(toolList, "memforge_search_nodes")).toContain("type=project");
+    expect(findToolDescription(toolList, "memforge_search_nodes")).toContain("current workspace");
+
+    expect(findToolDescription(toolList, "memforge_search_activities")).toContain("recent logs");
+    expect(findToolDescription(toolList, "memforge_search_activities")).toContain("what happened recently");
+
+    expect(findToolDescription(toolList, "memforge_create_node")).toContain("project node in the current workspace");
+    expect(findToolDescription(toolList, "memforge_create_node")).toContain("only create one if no suitable project already exists");
+
+    expect(findToolDescription(toolList, "memforge_capture_memory")).toContain("default write");
+    expect(findToolDescription(toolList, "memforge_capture_memory")).toContain("workspace scope");
+
+    expect(findToolDescription(toolList, "memforge_append_activity")).toContain("specific Memforge node or project timeline");
+    expect(findToolDescription(toolList, "memforge_append_activity")).toContain("workspace-scope updates");
+
+    expect(findToolDescription(toolList, "memforge_context_bundle")).toContain("workspace-entry bundle");
+    expect(findToolDescription(toolList, "memforge_context_bundle")).toContain("project or node should anchor the context");
   });
 
   it("maps search tool calls onto the Memforge HTTP API contract", async () => {
