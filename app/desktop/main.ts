@@ -636,7 +636,7 @@ async function resolveApiBase(): Promise<string> {
 function resolveBundledPath(...parts: string[]): string {
   const unpackedCandidate = path.join(process.resourcesPath, "app.asar.unpacked", ...parts);
   const appCandidate = path.join(app.getAppPath(), ...parts);
-  const candidates = app.isPackaged ? [unpackedCandidate, appCandidate] : [appCandidate];
+  const candidates = app.isPackaged ? [appCandidate, unpackedCandidate] : [appCandidate];
   const resolved = candidates.find((candidate) => existsSync(candidate));
 
   if (!resolved) {

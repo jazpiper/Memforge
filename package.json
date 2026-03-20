@@ -25,7 +25,7 @@
     "start:run": "MEMFORGE_PORT=8787 node dist/server/app/server/index.js",
     "start:desktop": "npm run build && concurrently -n server,desktop -c blue,magenta \"npm:start:run\" \"npm:desktop:run\"",
     "mcp": "node dist/server/app/mcp/index.js",
-    "package:desktop": "npm run build && electron-builder",
+    "package:desktop": "npm run build && electron-builder && node scripts/repair-macos-artifacts.mjs",
     "start": "node dist/server/app/server/index.js",
     "test": "vitest run",
     "check": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
@@ -52,7 +52,7 @@
         "zip",
         "dmg"
       ],
-      "identity": null
+      "identity": "-"
     }
   },
   "dependencies": {
