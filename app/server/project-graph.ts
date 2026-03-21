@@ -6,6 +6,7 @@ import type { MemforgeRepository } from "./repositories.js";
 const DEFAULT_PROJECT_MEMBER_LIMIT = 120;
 const DEFAULT_PROJECT_ACTIVITY_LIMIT = 200;
 const DEFAULT_PROJECT_FALLBACK_NODE_LIMIT = 8;
+const DEFAULT_PROJECT_INFERRED_LIMIT = 60;
 
 function relationLabel(value: RelationType) {
   return value.replaceAll("_", " ");
@@ -29,17 +30,16 @@ export function buildProjectGraph(
   const includeInferred = options?.includeInferred ?? true;
   const memberLimit = options?.memberLimit ?? DEFAULT_PROJECT_MEMBER_LIMIT;
   const activityLimit = options?.activityLimit ?? DEFAULT_PROJECT_ACTIVITY_LIMIT;
-  const membership = repository
-    .listRelatedNodes(projectId, 1, ["relevant_to"])
-    .filter(({ node, relation }) => node.status !== "archived" && relation.status !== "rejected")
-    .slice(0, memberLimit);
+  const inferredLimit = options?.maxInferred ?? DEFAULT_PROJECT_INFERRED_LIMIT;
+  const membership = repository.listProjectMemberNodes(projectId, memberLimit);
   const scopedNodeIdSet = new Set([projectId, ...membership.map(({ node }) => node.id)]);
-  const scopedNodes = repository.getNodesByIds(Array.from(scopedNodeIdSet));
+  const scopedNodeIds = Array.from(scopedNodeIdSet);
+  const scopedNodes = repository.getNodesByIds(scopedNodeIds);
   scopedNodes.set(project.id, project);
 
-  let canonicalEdges = repository.listRelationsBetweenNodeIds(Array.from(scopedNodeIdSet));
-  let inferredEdges = includeInferred ? repository.listInferredRelationsBetweenNodeIds(Array.from(scopedNodeIdSet), options?.maxInferred ?? 60) : [];
-  const fallbackNodes =
+  let canonicalEdges = repository.listRelationsBetweenNodeIds(scopedNodeIds);
+  let inferredEdges = includeInferred ? repository.listInferredRelationsBetweenNodeIds(scopedNodeIds, inferredLimit) : [];
+  const fallbackNodeIds =
     scopedNodeIdSet.size <= 1 && canonicalEdges.length === 0 && inferredEdges.length === 0
       ? repository
           .searchNodes({
@@ -54,7 +54,16 @@ export function buildProjectGraph(
           })
           .items
           .filter((item) => item.id !== projectId)
-          .map((item) => repository.getNode(item.id))
+          .map((item) => item.id)
+          .filter((nodeId, index, items) => items.indexOf(nodeId) === index)
+      : [];
+
+  const fallbackNodeMap = fallbackNodeIds.length > 0 ? repository.getNodesByIds(fallbackNodeIds) : new Map();
+  const fallbackNodes =
+    fallbackNodeIds.length > 0
+      ? fallbackNodeIds
+          .map((nodeId) => fallbackNodeMap.get(nodeId))
+          .filter((node): node is NonNullable<typeof node> => Boolean(node))
       : [];
 
   for (const node of fallbackNodes) {
@@ -62,8 +71,11 @@ export function buildProjectGraph(
     scopedNodes.set(node.id, node);
   }
 
-  canonicalEdges = repository.listRelationsBetweenNodeIds(Array.from(scopedNodeIdSet));
-  inferredEdges = includeInferred ? repository.listInferredRelationsBetweenNodeIds(Array.from(scopedNodeIdSet), options?.maxInferred ?? 60) : [];
+  if (fallbackNodes.length) {
+    const expandedScopedNodeIds = Array.from(scopedNodeIdSet);
+    canonicalEdges = repository.listRelationsBetweenNodeIds(expandedScopedNodeIds);
+    inferredEdges = includeInferred ? repository.listInferredRelationsBetweenNodeIds(expandedScopedNodeIds, inferredLimit) : [];
+  }
   const directEdgeKeys = new Set(canonicalEdges.map((edge) => `${edge.fromNodeId}:${edge.toNodeId}`));
   const syntheticFallbackEdges = fallbackNodes
     .filter((node) => !directEdgeKeys.has(`${node.id}:${projectId}`) && !directEdgeKeys.has(`${projectId}:${node.id}`))

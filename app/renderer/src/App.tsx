@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   appendRelationUsageEvent,
   clearRendererToken,
@@ -19,8 +19,7 @@ import {
   saveRendererToken,
   subscribeWorkspaceEvents,
 } from './lib/mockApi';
-import { ProjectGraphCanvas } from './components/ProjectGraphCanvas';
-import { buildProjectGraphView, listProjectGraphRelationTypes } from './lib/projectGraph';
+import { buildProjectGraphEmphasis, filterProjectGraphView, listProjectGraphRelationTypes } from './lib/projectGraph';
 import type {
   Activity,
   Artifact,
@@ -63,6 +62,11 @@ const utilityNavigation: Array<
   { id: 'project-map', label: 'Project map', graphMode: 'project-map' },
   { id: 'governance', label: 'Governance' },
 ];
+
+const ProjectGraphCanvas = lazy(async () => {
+  const module = await import('./components/ProjectGraphCanvas');
+  return { default: module.ProjectGraphCanvas };
+});
 
 function badgeTone(status: string) {
   if (status === 'active' || status === 'approved') return 'tone-good';
@@ -625,22 +629,29 @@ export default function App() {
   }, [graphMode, projectGraphProjectId, view]);
 
   const [governanceIssues, setGovernanceIssues] = useState<GovernanceIssueItem[]>([]);
+  const searchableNoteNodes = useMemo(
+    () =>
+      (snapshot?.nodes ?? [])
+        .map((node) => ({
+          node,
+          searchText: [node.title, node.summary, node.body, node.tags.join(' ')].join(' ').toLowerCase(),
+        }))
+        .sort(
+          (left, right) =>
+            right.node.updatedAt.localeCompare(left.node.updatedAt) || left.node.title.localeCompare(right.node.title),
+        ),
+    [snapshot],
+  );
   const noteNodes = useMemo(() => {
-    const candidates = snapshot?.nodes ?? [];
     const normalizedQuery = deferredQuery.trim().toLowerCase();
-    const filtered = normalizedQuery
-      ? candidates.filter((node) =>
-          [node.title, node.summary, node.body, node.tags.join(' ')]
-            .join(' ')
-            .toLowerCase()
-            .includes(normalizedQuery),
-        )
-      : candidates;
+    if (!normalizedQuery) {
+      return searchableNoteNodes.map((item) => item.node);
+    }
 
-    return filtered
-      .slice()
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title));
-  }, [deferredQuery, snapshot]);
+    return searchableNoteNodes
+      .filter((item) => item.searchText.includes(normalizedQuery))
+      .map((item) => item.node);
+  }, [deferredQuery, searchableNoteNodes]);
   const activeNoteNode = useMemo(
     () => noteNodes.find((node) => node.id === selectedNodeId) ?? null,
     [noteNodes, selectedNodeId],
@@ -887,14 +898,35 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   const effectiveProjectGraphRelationTypes = projectGraphRelationTypes.length
     ? projectGraphRelationTypes
     : projectGraphAvailableRelationTypes;
-  const projectGraphView = useMemo(
+  const filteredProjectGraphView = useMemo(
     () =>
-      buildProjectGraphView(projectGraph, {
+      filterProjectGraphView(projectGraph, {
         relationTypes: effectiveProjectGraphRelationTypes,
         sources: projectGraphSources,
-        timelineIndex: projectGraphTimelineIndex,
       }),
-    [effectiveProjectGraphRelationTypes, projectGraph, projectGraphSources, projectGraphTimelineIndex],
+    [effectiveProjectGraphRelationTypes, projectGraph, projectGraphSources],
+  );
+  const projectGraphEmphasis = useMemo(
+    () => buildProjectGraphEmphasis(projectGraph, filteredProjectGraphView, projectGraphTimelineIndex),
+    [filteredProjectGraphView, projectGraph, projectGraphTimelineIndex],
+  );
+  const projectGraphView = useMemo(
+    () => ({
+      ...filteredProjectGraphView,
+      ...projectGraphEmphasis,
+    }),
+    [filteredProjectGraphView, projectGraphEmphasis],
+  );
+  const projectGraphCanvasGraph = useMemo(
+    () =>
+      projectGraph
+        ? {
+            ...projectGraph,
+            nodes: filteredProjectGraphView.nodes,
+            edges: filteredProjectGraphView.edges,
+          }
+        : null,
+    [filteredProjectGraphView.edges, filteredProjectGraphView.nodes, projectGraph],
   );
   const projectGraphRelationGroups = useMemo(
     () =>
@@ -968,6 +1000,10 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
 
   function handleSelectProjectGraphProject(nodeId: string) {
     setProjectGraphProjectId(nodeId);
+    focusNode(nodeId, 'graph');
+  }
+
+  function handleSelectProjectGraphNode(nodeId: string) {
     focusNode(nodeId, 'graph');
   }
 
@@ -1681,7 +1717,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 </article>
               </section>
             ) : null}
-            {graphMode === 'project-map' && !!projectGraph && !!projectGraphView.nodes.length ? (
+            {graphMode === 'project-map' && !!projectGraphCanvasGraph && !!projectGraphView.nodes.length ? (
               <section className="graph-section-grid graph-section-grid--project">
                 <article className="card relation-group-card project-graph-card">
                   <div className="section-head section-head--compact">
@@ -1693,7 +1729,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                       <button
                         type="button"
                         className={`tool-chip ${isProjectGraphPlaying ? 'tool-chip--active' : ''}`}
-                        disabled={!projectGraph.timeline.length}
+                        disabled={!projectGraphCanvasGraph.timeline.length}
                         onClick={() => {
                           setIsProjectGraphPlaying((current) => !current);
                         }}
@@ -1703,32 +1739,30 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                       <button
                         type="button"
                         className="tool-chip"
-                        disabled={!projectGraph.timeline.length}
-                        onClick={() => setProjectGraphTimelineIndex(Math.max(projectGraph.timeline.length - 1, 0))}
+                        disabled={!projectGraphCanvasGraph.timeline.length}
+                        onClick={() => setProjectGraphTimelineIndex(Math.max(projectGraphCanvasGraph.timeline.length - 1, 0))}
                       >
                         Latest
                       </button>
                     </div>
                   </div>
-                  <ProjectGraphCanvas
-                    graph={{
-                      ...projectGraph,
-                      nodes: projectGraphView.nodes,
-                      edges: projectGraphView.edges,
-                    }}
-                    selectedNodeId={selectedNode?.id ?? null}
-                    emphasizedNodeIds={projectGraphView.emphasizedNodeIds}
-                    emphasizedEdgeIds={projectGraphView.emphasizedEdgeIds}
-                    onSelectNode={(nodeId) => focusNode(nodeId, 'graph')}
-                  />
+                  <Suspense fallback={<div className="empty-state compact">Loading project graph canvas...</div>}>
+                    <ProjectGraphCanvas
+                      graph={projectGraphCanvasGraph}
+                      selectedNodeId={selectedNode?.id ?? null}
+                      emphasizedNodeIds={projectGraphView.emphasizedNodeIds}
+                      emphasizedEdgeIds={projectGraphView.emphasizedEdgeIds}
+                      onSelectNode={handleSelectProjectGraphNode}
+                    />
+                  </Suspense>
                   <div className="project-graph-controls">
                     <label className="search-box project-graph-scrubber">
                       <span>Time emphasis</span>
                       <input
                         type="range"
                         min={0}
-                        max={Math.max(projectGraph.timeline.length - 1, 0)}
-                        value={Math.min(projectGraphTimelineIndex, Math.max(projectGraph.timeline.length - 1, 0))}
+                        max={Math.max(projectGraphCanvasGraph.timeline.length - 1, 0)}
+                        value={Math.min(projectGraphTimelineIndex, Math.max(projectGraphCanvasGraph.timeline.length - 1, 0))}
                         onChange={(event) => {
                           setIsProjectGraphPlaying(false);
                           setProjectGraphTimelineIndex(Number(event.target.value));

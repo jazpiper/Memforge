@@ -22,14 +22,21 @@ export function ProjectGraphCanvas({
 }: ProjectGraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sigmaRef = useRef<Sigma | null>(null);
+  const sigmaGraphRef = useRef<Graph | null>(null);
+  const onSelectNodeRef = useRef(onSelectNode);
+
+  useEffect(() => {
+    onSelectNodeRef.current = onSelectNode;
+  }, [onSelectNode]);
 
   useEffect(() => {
     if (!containerRef.current) {
       return undefined;
     }
 
-    const sigmaGraph = buildSigmaGraph(graph, selectedNodeId, emphasizedNodeIds, emphasizedEdgeIds);
+    const sigmaGraph = buildSigmaGraph(graph);
     const sigma = sigmaRef.current;
+    sigmaGraphRef.current = sigmaGraph;
 
     if (!sigma) {
       const nextSigma = new Sigma(sigmaGraph, containerRef.current, {
@@ -45,16 +52,28 @@ export function ProjectGraphCanvas({
         zIndex: true,
       });
       nextSigma.on('clickNode', ({ node }) => {
-        onSelectNode(node);
+        onSelectNodeRef.current(node);
       });
       sigmaRef.current = nextSigma;
     } else {
       sigma.setGraph(sigmaGraph);
-      sigma.refresh();
     }
 
+    applyGraphPresentation(sigmaGraph, graph, selectedNodeId, emphasizedNodeIds, emphasizedEdgeIds);
+    sigmaRef.current?.refresh();
+
     return undefined;
-  }, [emphasizedEdgeIds, emphasizedNodeIds, graph, onSelectNode, selectedNodeId]);
+  }, [graph]);
+
+  useEffect(() => {
+    const sigmaGraph = sigmaGraphRef.current;
+    if (!sigmaGraph || !sigmaRef.current) {
+      return;
+    }
+
+    applyGraphPresentation(sigmaGraph, graph, selectedNodeId, emphasizedNodeIds, emphasizedEdgeIds);
+    sigmaRef.current.refresh();
+  }, [emphasizedEdgeIds, emphasizedNodeIds, graph, selectedNodeId]);
 
   useEffect(() => {
     function handleResize() {
@@ -71,6 +90,7 @@ export function ProjectGraphCanvas({
     () => () => {
       sigmaRef.current?.kill();
       sigmaRef.current = null;
+      sigmaGraphRef.current = null;
     },
     [],
   );
@@ -80,24 +100,17 @@ export function ProjectGraphCanvas({
 
 function buildSigmaGraph(
   graph: ProjectGraphPayload,
-  selectedNodeId: string | null,
-  emphasizedNodeIds: string[],
-  emphasizedEdgeIds: string[],
 ) {
   const sigmaGraph = new Graph();
-  const emphasizedNodeSet = new Set(emphasizedNodeIds);
-  const emphasizedEdgeSet = new Set(emphasizedEdgeIds);
 
   for (const node of graph.nodes) {
-    const isSelected = node.id === selectedNodeId;
-    const isEmphasized = emphasizedNodeSet.has(node.id);
     sigmaGraph.addNode(node.id, {
       label: node.title,
-      size: node.isFocus ? 20 : Math.min(14, 8 + node.degree * 0.8) + (isSelected ? 3 : 0),
-      color: nodeColor(node, { isSelected, isEmphasized }),
+      size: baseNodeSize(node, false),
+      color: nodeColor(node, { isSelected: false, isEmphasized: false }),
       x: 0,
       y: 0,
-      zIndex: node.isFocus ? 2 : isSelected ? 3 : 1,
+      zIndex: node.isFocus ? 2 : 1,
     });
   }
 
@@ -127,14 +140,63 @@ function buildSigmaGraph(
     }
 
     sigmaGraph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-      size: edge.relationSource === 'canonical' ? 2.2 : 1.4,
-      color: edgeColor(edge, emphasizedEdgeSet.has(edge.id)),
+      size: baseEdgeSize(edge),
+      color: edgeColor(edge, false),
       type: 'line',
-      zIndex: edge.relationSource === 'canonical' ? 1 : 0,
+      zIndex: baseEdgeZIndex(edge),
     });
   }
 
   return sigmaGraph;
+}
+
+function applyGraphPresentation(
+  sigmaGraph: Graph,
+  graph: ProjectGraphPayload,
+  selectedNodeId: string | null,
+  emphasizedNodeIds: string[],
+  emphasizedEdgeIds: string[],
+) {
+  const emphasizedNodeSet = new Set(emphasizedNodeIds);
+  const emphasizedEdgeSet = new Set(emphasizedEdgeIds);
+
+  for (const node of graph.nodes) {
+    if (!sigmaGraph.hasNode(node.id)) {
+      continue;
+    }
+
+    const isSelected = node.id === selectedNodeId;
+    const isEmphasized = emphasizedNodeSet.has(node.id);
+    sigmaGraph.mergeNodeAttributes(node.id, {
+      size: baseNodeSize(node, isSelected),
+      color: nodeColor(node, { isSelected, isEmphasized }),
+      zIndex: node.isFocus ? 2 : isSelected ? 3 : 1,
+    });
+  }
+
+  for (const edge of graph.edges) {
+    if (!sigmaGraph.hasEdge(edge.id)) {
+      continue;
+    }
+
+    sigmaGraph.mergeEdgeAttributes(edge.id, {
+      size: baseEdgeSize(edge),
+      color: edgeColor(edge, emphasizedEdgeSet.has(edge.id)),
+      zIndex: baseEdgeZIndex(edge),
+    });
+  }
+}
+
+function baseNodeSize(node: ProjectGraphPayload['nodes'][number], isSelected: boolean) {
+  return (node.isFocus ? 20 : Math.min(14, 8 + node.degree * 0.8)) + (isSelected ? 3 : 0);
+}
+
+function baseEdgeSize(edge: ProjectGraphPayload['edges'][number]) {
+  return edge.relationSource === 'canonical' ? 2.2 : 1.4;
+}
+
+function baseEdgeZIndex(edge: ProjectGraphPayload['edges'][number]) {
+  return edge.relationSource === 'canonical' ? 1 : 0;
 }
 
 function nodeColor(

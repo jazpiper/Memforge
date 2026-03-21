@@ -13,6 +13,9 @@ export type ProjectGraphView = {
   activeAt: string | null;
 };
 
+export type FilteredProjectGraphView = Pick<ProjectGraphView, 'nodes' | 'edges'>;
+export type ProjectGraphEmphasis = Pick<ProjectGraphView, 'emphasizedNodeIds' | 'emphasizedEdgeIds' | 'activeAt'>;
+
 export function listProjectGraphRelationTypes(graph: ProjectGraphPayload | null): RelationType[] {
   if (!graph) {
     return [];
@@ -41,6 +44,32 @@ export function buildProjectGraphView(
     };
   }
 
+  const visible = filterProjectGraphView(graph, {
+    relationTypes: filters.relationTypes,
+    sources: filters.sources,
+  });
+  const emphasis = buildProjectGraphEmphasis(graph, visible, filters.timelineIndex);
+
+  return {
+    ...visible,
+    ...emphasis,
+  };
+}
+
+export function filterProjectGraphView(
+  graph: ProjectGraphPayload | null,
+  filters: {
+    relationTypes: RelationType[];
+    sources: ProjectGraphSourceFilters;
+  }
+): FilteredProjectGraphView {
+  if (!graph) {
+    return {
+      nodes: [],
+      edges: [],
+    };
+  }
+
   const allowedRelationTypes = new Set(filters.relationTypes);
   const visibleEdges = graph.edges.filter((edge: ProjectGraphEdge) => {
     if (!allowedRelationTypes.has(edge.relationType)) {
@@ -64,7 +93,29 @@ export function buildProjectGraphView(
   }
 
   const nodes = graph.nodes.filter((node: ProjectGraphPayload['nodes'][number]) => visibleNodeIds.has(node.id));
-  const activeEvent = graph.timeline[Math.min(Math.max(filters.timelineIndex, 0), Math.max(graph.timeline.length - 1, 0))];
+
+  return {
+    nodes,
+    edges: visibleEdges,
+  };
+}
+
+export function buildProjectGraphEmphasis(
+  graph: ProjectGraphPayload | null,
+  visible: FilteredProjectGraphView,
+  timelineIndex: number,
+): ProjectGraphEmphasis {
+  if (!graph) {
+    return {
+      emphasizedNodeIds: [],
+      emphasizedEdgeIds: [],
+      activeAt: null,
+    };
+  }
+
+  const nodes = visible.nodes;
+  const visibleEdges = visible.edges;
+  const activeEvent = graph.timeline[Math.min(Math.max(timelineIndex, 0), Math.max(graph.timeline.length - 1, 0))];
   const activeAt = activeEvent?.at ?? null;
   const emphasizedNodeIds = activeAt
     ? nodes.filter((node: ProjectGraphPayload['nodes'][number]) => node.createdAt <= activeAt).map((node: ProjectGraphPayload['nodes'][number]) => node.id)
@@ -74,8 +125,6 @@ export function buildProjectGraphView(
     : visibleEdges.map((edge: ProjectGraphEdge) => edge.id);
 
   return {
-    nodes,
-    edges: visibleEdges,
     emphasizedNodeIds,
     emphasizedEdgeIds,
     activeAt,

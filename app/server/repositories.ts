@@ -977,20 +977,7 @@ export class MemforgeRepository {
   private queueSemanticConfigurationReindex(reason = SEMANTIC_CONFIGURATION_CHANGED_REASON): void {
     const nodeIds = this.listSemanticIndexTargetNodeIds();
     const updatedAt = nowIso();
-    for (const nodeId of nodeIds) {
-      const node = this.getNode(nodeId);
-      const contentHash = buildSemanticContentHash({
-        title: node.title,
-        body: node.body,
-        summary: node.summary,
-        tags: node.tags
-      });
-      this.markNodeSemanticIndexState(node.id, reason, {
-        status: "pending",
-        contentHash,
-        updatedAt
-      });
-    }
+    this.queueSemanticReindexForNodeIds(nodeIds, reason, updatedAt);
     this.writeSetting("search.semantic.last_backfill_at", updatedAt);
   }
 
@@ -1394,6 +1381,28 @@ export class MemforgeRepository {
     return rows.map((row) => String(row.id));
   }
 
+  private queueSemanticReindexForNodeIds(nodeIds: string[], reason: string, updatedAt = nowIso()): void {
+    const nodesById = this.getNodesByIds(nodeIds);
+    for (const nodeId of nodeIds) {
+      const node = nodesById.get(nodeId);
+      if (!node) {
+        continue;
+      }
+
+      const contentHash = buildSemanticContentHash({
+        title: node.title,
+        body: node.body,
+        summary: node.summary,
+        tags: node.tags
+      });
+      this.markNodeSemanticIndexState(node.id, reason, {
+        status: "pending",
+        contentHash,
+        updatedAt
+      });
+    }
+  }
+
   queueSemanticReindexForNode(nodeId: string, reason = "manual.reindex"): NodeRecord {
     const node = this.getNode(nodeId);
     const contentHash = buildSemanticContentHash({
@@ -1411,10 +1420,9 @@ export class MemforgeRepository {
 
   queueSemanticReindex(limit = 250, reason = "manual.reindex") {
     const nodeIds = this.listSemanticIndexTargetNodeIds(limit);
-    for (const nodeId of nodeIds) {
-      this.queueSemanticReindexForNode(nodeId, reason);
-    }
-    this.setSetting("search.semantic.last_backfill_at", nowIso());
+    const updatedAt = nowIso();
+    this.queueSemanticReindexForNodeIds(nodeIds, reason, updatedAt);
+    this.setSetting("search.semantic.last_backfill_at", updatedAt);
     return {
       queuedNodeIds: nodeIds,
       queuedCount: nodeIds.length
@@ -2914,6 +2922,39 @@ export class MemforgeRepository {
          ORDER BY r.created_at DESC`
       )
       .all(nodeId, nodeId, nodeId, ...(relationFilter ?? [])) as Record<string, unknown>[];
+
+    const relatedNodes = this.getNodesByIds(rows.map((row) => String(row.related_id)));
+
+    return rows.flatMap((row) => {
+      const node = relatedNodes.get(String(row.related_id));
+      if (!node) {
+        return [];
+      }
+
+      return [{
+        relation: mapRelation(row),
+        node
+      }];
+    });
+  }
+
+  listProjectMemberNodes(projectId: string, limit: number): Array<{ relation: RelationRecord; node: NodeRecord }> {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           r.*,
+           CASE WHEN r.from_node_id = ? THEN r.to_node_id ELSE r.from_node_id END AS related_id
+         FROM relations r
+         JOIN nodes n
+           ON n.id = CASE WHEN r.from_node_id = ? THEN r.to_node_id ELSE r.from_node_id END
+         WHERE (r.from_node_id = ? OR r.to_node_id = ?)
+           AND r.relation_type = 'relevant_to'
+           AND r.status NOT IN ('archived', 'rejected')
+           AND n.status != 'archived'
+         ORDER BY r.created_at DESC
+         LIMIT ?`
+      )
+      .all(projectId, projectId, projectId, projectId, limit) as Record<string, unknown>[];
 
     const relatedNodes = this.getNodesByIds(rows.map((row) => String(row.related_id)));
 
