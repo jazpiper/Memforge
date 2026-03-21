@@ -34,6 +34,7 @@ export interface VectorIndexStore {
     candidateNodeIds: string[];
     embeddingProvider: string;
     embeddingModel: string | null;
+    embeddingVersion: string | null;
   }): Promise<VectorSearchMatch[]>;
 }
 
@@ -114,6 +115,7 @@ class SqliteVectorIndexStore implements VectorIndexStore {
     candidateNodeIds: string[];
     embeddingProvider: string;
     embeddingModel: string | null;
+    embeddingVersion: string | null;
   }): Promise<VectorSearchMatch[]> {
     if (!input.candidateNodeIds.length) {
       return [];
@@ -128,12 +130,14 @@ class SqliteVectorIndexStore implements VectorIndexStore {
            AND vector_blob IS NOT NULL
            AND embedding_provider = ?
            AND embedding_model ${input.embeddingModel === null ? "IS NULL" : "= ?"}
+           AND embedding_version ${input.embeddingVersion === null ? "IS NULL" : "= ?"}
            AND owner_id IN (${input.candidateNodeIds.map(() => "?").join(", ")})`
       )
       .all(
         ...[
           input.embeddingProvider,
           ...(input.embeddingModel === null ? [] : [input.embeddingModel]),
+          ...(input.embeddingVersion === null ? [] : [input.embeddingVersion]),
           ...input.candidateNodeIds
         ]
       ) as Array<Record<string, unknown>>;
@@ -196,6 +200,7 @@ class SqliteVecVectorIndexStore implements VectorIndexStore {
     candidateNodeIds: string[];
     embeddingProvider: string;
     embeddingModel: string | null;
+    embeddingVersion: string | null;
   }): Promise<VectorSearchMatch[]> {
     if (!input.queryVector.length || !input.candidateNodeIds.length) {
       return [];
@@ -216,6 +221,7 @@ class SqliteVecVectorIndexStore implements VectorIndexStore {
            AND vector_blob IS NOT NULL
            AND embedding_provider = ?
            AND embedding_model ${input.embeddingModel === null ? "IS NULL" : "= ?"}
+           AND embedding_version ${input.embeddingVersion === null ? "IS NULL" : "= ?"}
            AND owner_id IN (${input.candidateNodeIds.map(() => "?").join(", ")})
          ORDER BY similarity DESC`
       )
@@ -224,6 +230,7 @@ class SqliteVecVectorIndexStore implements VectorIndexStore {
           queryVectorBlob,
           input.embeddingProvider,
           ...(input.embeddingModel === null ? [] : [input.embeddingModel]),
+          ...(input.embeddingVersion === null ? [] : [input.embeddingVersion]),
           ...input.candidateNodeIds
         ]
       ) as Array<Record<string, unknown>>;

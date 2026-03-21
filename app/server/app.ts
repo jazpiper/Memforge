@@ -2559,9 +2559,7 @@ export function createMemforgeApp(params: {
   app.patch("/api/v1/settings", (request, response) => {
     const repository = currentRepository();
     const input = updateSettingsSchema.parse(request.body ?? {});
-    for (const [key, value] of Object.entries(input.values)) {
-      repository.setSetting(key, value);
-    }
+    repository.setSettings(input.values);
     broadcastWorkspaceEvent({
       reason: "settings.updated",
       entityType: "settings"

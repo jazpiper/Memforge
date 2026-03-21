@@ -73,6 +73,9 @@ const SEMANTIC_INDEX_STATUS_VALUES = ["pending", "processing", "stale", "ready",
 const SEMANTIC_ISSUE_STATUS_VALUES = ["pending", "stale", "failed"] as const;
 const DEFAULT_SEMANTIC_CHUNK_AGGREGATION = "max" as const;
 const SEMANTIC_TOP_K_CHUNK_COUNT = 2;
+const SEMANTIC_CONFIGURATION_CHANGED_REASON = "embedding.configuration_changed";
+const SEMANTIC_CONFIGURATION_SWEEP_LIMIT = 100;
+const SEMANTIC_PENDING_TRANSITION_KEYS_SETTING = "search.semantic.configuration.pendingKeys";
 const SEARCH_FEEDBACK_WINDOW_PADDING = 20;
 const SEARCH_FEEDBACK_MAX_WINDOW = 100;
 const ACTIVITY_RESULT_CAP_PER_TARGET = 2;
@@ -87,6 +90,12 @@ const workspaceInboxSource: Source = {
 type SemanticIndexStatus = (typeof SEMANTIC_INDEX_STATUS_VALUES)[number];
 type SemanticIssueStatus = (typeof SEMANTIC_ISSUE_STATUS_VALUES)[number];
 type SemanticChunkAggregation = "max" | "topk_mean";
+
+type SemanticEmbeddingSignature = {
+  provider: string | null;
+  model: string | null;
+  version: string | null;
+};
 
 type SemanticStatusSummary = {
   enabled: boolean;
@@ -240,6 +249,7 @@ type SemanticIndexSettings = {
   enabled: boolean;
   provider: string | null;
   model: string | null;
+  version: string | null;
   configuredIndexBackend: SemanticIndexBackend;
   indexBackend: SemanticIndexBackend;
   extensionStatus: "loaded" | "fallback" | "disabled";
@@ -337,11 +347,24 @@ function resolveSemanticExtensionStatus(
   return sqliteVecLoaded ? "loaded" : "fallback";
 }
 
+function resolveSemanticEmbeddingSignature(input: {
+  provider: string | null;
+  model: string | null;
+}): SemanticEmbeddingSignature {
+  const normalized = normalizeSemanticProviderConfig(input);
+  const provider = resolveSemanticEmbeddingProvider(normalized);
+  return {
+    provider: provider?.provider ?? normalized.provider,
+    model: provider?.model ?? normalized.model,
+    version: provider?.version ?? null
+  };
+}
+
 function readSemanticIndexSettingSnapshot(
   settings: Record<string, unknown>,
   runtime: { sqliteVecLoaded: boolean; sqliteVecLoadError: string | null }
 ) {
-  const normalizedProvider = normalizeSemanticProviderConfig({
+  const signature = resolveSemanticEmbeddingSignature({
     provider: readStringSetting(settings, "search.semantic.provider"),
     model: readStringSetting(settings, "search.semantic.model")
   });
@@ -349,14 +372,28 @@ function readSemanticIndexSettingSnapshot(
 
   return {
     enabled: readBooleanSetting(settings, "search.semantic.enabled", false),
-    provider: normalizedProvider.provider,
-    model: normalizedProvider.model,
+    provider: signature.provider,
+    model: signature.model,
+    version: signature.version,
     configuredIndexBackend,
     indexBackend: resolveActiveSemanticIndexBackend(configuredIndexBackend, runtime.sqliteVecLoaded),
     extensionStatus: resolveSemanticExtensionStatus(configuredIndexBackend, runtime.sqliteVecLoaded),
     extensionLoadError: configuredIndexBackend === "sqlite-vec" && !runtime.sqliteVecLoaded ? runtime.sqliteVecLoadError : null,
     chunkEnabled: readBooleanSetting(settings, "search.semantic.chunk.enabled", false)
   };
+}
+
+function shouldReindexForSemanticConfigChange(
+  previous: Pick<SemanticIndexSettings, "enabled" | "provider" | "model" | "version" | "chunkEnabled">,
+  next: Pick<SemanticIndexSettings, "enabled" | "provider" | "model" | "version" | "chunkEnabled">
+): boolean {
+  return (
+    previous.enabled !== next.enabled ||
+    previous.chunkEnabled !== next.chunkEnabled ||
+    previous.provider !== next.provider ||
+    previous.model !== next.model ||
+    previous.version !== next.version
+  );
 }
 
 function buildSemanticContentHash(input: {
@@ -901,6 +938,104 @@ export class MemforgeRepository {
     };
   }
 
+  private markSemanticConfigurationMismatchesStale(limit = SEMANTIC_CONFIGURATION_SWEEP_LIMIT): number {
+    const settings = this.readSemanticIndexSettings();
+    const rows = this.db
+      .prepare(
+        `SELECT nis.node_id
+         FROM node_index_state nis
+         JOIN nodes n ON n.id = nis.node_id
+         WHERE n.status IN ('active', 'draft')
+           AND nis.embedding_status = 'ready'
+           AND (
+             nis.embedding_provider IS NOT ?
+             OR nis.embedding_model IS NOT ?
+             OR nis.embedding_version IS NOT ?
+           )
+         ORDER BY nis.updated_at ASC
+         LIMIT ?`
+      )
+      .all(settings.provider, settings.model, settings.version, limit) as Array<Record<string, unknown>>;
+
+    if (!rows.length) {
+      return 0;
+    }
+
+    const updatedAt = nowIso();
+    const updateStatement = this.db.prepare(
+      `UPDATE node_index_state
+       SET embedding_status = 'stale', stale_reason = ?, updated_at = ?
+       WHERE node_id = ? AND embedding_status = 'ready'`
+    );
+    for (const row of rows) {
+      updateStatement.run(SEMANTIC_CONFIGURATION_CHANGED_REASON, updatedAt, String(row.node_id));
+    }
+
+    return rows.length;
+  }
+
+  private queueSemanticConfigurationReindex(reason = SEMANTIC_CONFIGURATION_CHANGED_REASON): void {
+    const nodeIds = this.listSemanticIndexTargetNodeIds();
+    const updatedAt = nowIso();
+    for (const nodeId of nodeIds) {
+      const node = this.getNode(nodeId);
+      const contentHash = buildSemanticContentHash({
+        title: node.title,
+        body: node.body,
+        summary: node.summary,
+        tags: node.tags
+      });
+      this.markNodeSemanticIndexState(node.id, reason, {
+        status: "pending",
+        contentHash,
+        updatedAt
+      });
+    }
+    this.writeSetting("search.semantic.last_backfill_at", updatedAt);
+  }
+
+  private readPendingSemanticTransitionKeys(): string[] {
+    const value = this.getSettings([SEMANTIC_PENDING_TRANSITION_KEYS_SETTING])[SEMANTIC_PENDING_TRANSITION_KEYS_SETTING];
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .filter((item) => item === "search.semantic.provider" || item === "search.semantic.model");
+  }
+
+  private writePendingSemanticTransitionKeys(keys: string[]): void {
+    this.writeSetting(SEMANTIC_PENDING_TRANSITION_KEYS_SETTING, keys);
+  }
+
+  private updateSemanticSetting(key: string, value: unknown): void {
+    const previousSettings = this.readSemanticIndexSettings();
+    this.writeSetting(key, value);
+    const nextSettings = this.readSemanticIndexSettings();
+    if (!shouldReindexForSemanticConfigChange(previousSettings, nextSettings)) {
+      if (key === "search.semantic.provider" || key === "search.semantic.model") {
+        const pendingKeys = new Set(this.readPendingSemanticTransitionKeys());
+        pendingKeys.delete(key);
+        this.writePendingSemanticTransitionKeys([...pendingKeys]);
+      }
+      return;
+    }
+
+    if (key === "search.semantic.provider" || key === "search.semantic.model") {
+      const pendingKeys = new Set(this.readPendingSemanticTransitionKeys());
+      pendingKeys.add(key);
+      if (!pendingKeys.has("search.semantic.provider") || !pendingKeys.has("search.semantic.model")) {
+        this.writePendingSemanticTransitionKeys([...pendingKeys]);
+        return;
+      }
+
+      this.writePendingSemanticTransitionKeys([]);
+    }
+
+    this.queueSemanticConfigurationReindex();
+  }
+
   private listPendingSemanticIndexRows(limit = 25): PendingSemanticIndexRow[] {
     const rows = this.db
       .prepare(
@@ -1024,6 +1159,18 @@ export class MemforgeRepository {
 
   async processPendingSemanticIndex(limit = 25) {
     const settings = this.readSemanticIndexSettings();
+    if (this.readPendingSemanticTransitionKeys().length) {
+      return {
+        processedNodeIds: [],
+        processedCount: 0,
+        readyCount: 0,
+        failedCount: 0,
+        remainingCount: this.listPendingSemanticIndexRows(limit).length,
+        mode: !settings.enabled || settings.provider === "disabled" || settings.model === "none" ? "chunk-only" : "provider-required"
+      };
+    }
+
+    this.markSemanticConfigurationMismatchesStale(limit);
     const vectorIndexStore = this.resolveVectorIndexStore(settings.indexBackend);
     const provider = resolveSemanticEmbeddingProvider({
       provider: settings.provider,
@@ -1222,16 +1369,27 @@ export class MemforgeRepository {
     });
   }
 
-  listSemanticIndexTargetNodeIds(limit = 250): string[] {
-    const rows = this.db
-      .prepare(
-        `SELECT id
-         FROM nodes
-         WHERE status IN ('active', 'draft')
-         ORDER BY updated_at DESC
-         LIMIT ?`
-      )
-      .all(limit) as Array<Record<string, unknown>>;
+  listSemanticIndexTargetNodeIds(limit?: number): string[] {
+    const rows = (
+      limit === undefined
+        ? this.db
+            .prepare(
+              `SELECT id
+               FROM nodes
+               WHERE status IN ('active', 'draft')
+               ORDER BY updated_at DESC`
+            )
+            .all()
+        : this.db
+            .prepare(
+              `SELECT id
+               FROM nodes
+               WHERE status IN ('active', 'draft')
+               ORDER BY updated_at DESC
+               LIMIT ?`
+            )
+            .all(limit)
+    ) as Array<Record<string, unknown>>;
 
     return rows.map((row) => String(row.id));
   }
@@ -1264,6 +1422,7 @@ export class MemforgeRepository {
   }
 
   getSemanticStatus(): SemanticStatusSummary {
+    this.markSemanticConfigurationMismatchesStale();
     const settings = this.getSettings([
       "search.semantic.enabled",
       "search.semantic.provider",
@@ -1276,6 +1435,7 @@ export class MemforgeRepository {
       sqliteVecLoaded: this.sqliteVecRuntime.isLoaded,
       sqliteVecLoadError: this.sqliteVecRuntime.loadError
     });
+    const { version: _version, ...semanticStatusSettings } = semanticSettings;
     const counts = Object.fromEntries(
       SEMANTIC_INDEX_STATUS_VALUES.map((status) => [status, 0])
     ) as Record<SemanticIndexStatus, number>;
@@ -1295,7 +1455,7 @@ export class MemforgeRepository {
     }
 
     return {
-      ...semanticSettings,
+      ...semanticStatusSettings,
       lastBackfillAt: readStringSetting(settings, "search.semantic.last_backfill_at"),
       counts
     };
@@ -1306,6 +1466,7 @@ export class MemforgeRepository {
     statuses?: SemanticIssueStatus[];
     cursor?: string | null;
   } = {}): SemanticIssuePage {
+    this.markSemanticConfigurationMismatchesStale();
     const limit = Math.min(Math.max(input.limit ?? 5, 1), 25);
     const normalizedStatuses = (input.statuses?.length ? input.statuses : [...SEMANTIC_ISSUE_STATUS_VALUES]).filter(
       (status, index, values) => SEMANTIC_ISSUE_STATUS_VALUES.includes(status) && values.indexOf(status) === index
@@ -1378,6 +1539,7 @@ export class MemforgeRepository {
       return new Map();
     }
 
+    this.markSemanticConfigurationMismatchesStale();
     const settings = this.readSemanticIndexSettings();
     if (!settings.enabled || !settings.provider || !settings.model) {
       return new Map();
@@ -1397,7 +1559,8 @@ export class MemforgeRepository {
       queryVector: queryEmbedding.vector,
       candidateNodeIds,
       embeddingProvider: settings.provider,
-      embeddingModel: settings.model
+      embeddingModel: settings.model,
+      embeddingVersion: settings.version
     }).catch(() => []);
     for (const match of matches) {
       const accumulator = similarityByNode.get(match.nodeId) ?? {
@@ -1716,23 +1879,27 @@ export class MemforgeRepository {
 
   private listWorkspaceSemanticFallbackCandidateNodeIds(
     filters: WorkspaceSearchInput["nodeFilters"],
-    settings: Pick<SemanticIndexSettings, "provider" | "model">,
+    settings: Pick<SemanticIndexSettings, "provider" | "model" | "version">,
     limit: number
   ): string[] {
     if (!settings.provider || !settings.model) {
       return [];
     }
 
+    this.markSemanticConfigurationMismatchesStale();
+
     const where = [
       `n.status IN (${(filters?.status?.length ? filters.status : ["active", "draft"]).map(() => "?").join(", ")})`,
       `nis.embedding_status = 'ready'`,
       `nis.embedding_provider = ?`,
-      `nis.embedding_model = ?`
+      `nis.embedding_model = ?`,
+      `nis.embedding_version ${settings.version === null ? "IS NULL" : "= ?"}`
     ];
     const whereValues: SqlValue[] = [
       ...((filters?.status?.length ? filters.status : ["active", "draft"]) as SqlValue[]),
       settings.provider,
-      settings.model
+      settings.model,
+      ...(settings.version === null ? [] : [settings.version])
     ];
 
     if (filters?.types?.length) {
@@ -3805,6 +3972,48 @@ export class MemforgeRepository {
       .run(key, JSON.stringify(value));
   }
 
+  private isSemanticReindexSettingKey(key: string): boolean {
+    return (
+      key === "search.semantic.enabled" ||
+      key === "search.semantic.provider" ||
+      key === "search.semantic.model" ||
+      key === "search.semantic.chunk.enabled"
+    );
+  }
+
+  setSetting(key: string, value: unknown): void {
+    if (this.isSemanticReindexSettingKey(key)) {
+      this.updateSemanticSetting(key, value);
+      return;
+    }
+
+    this.writeSetting(key, value);
+  }
+
+  setSettings(values: Record<string, unknown>): void {
+    const keys = Object.keys(values);
+    if (!keys.length) {
+      return;
+    }
+
+    const requiresSemanticCheck = keys.some((key) => this.isSemanticReindexSettingKey(key));
+    const previousSettings = requiresSemanticCheck ? this.readSemanticIndexSettings() : null;
+    for (const [key, value] of Object.entries(values)) {
+      this.writeSetting(key, value);
+    }
+    if (requiresSemanticCheck) {
+      this.writePendingSemanticTransitionKeys([]);
+    }
+    if (!requiresSemanticCheck || !previousSettings) {
+      return;
+    }
+
+    const nextSettings = this.readSemanticIndexSettings();
+    if (shouldReindexForSemanticConfigChange(previousSettings, nextSettings)) {
+      this.queueSemanticConfigurationReindex();
+    }
+  }
+
   setSettingIfMissing(key: string, value: unknown): void {
     this.db
       .prepare(
@@ -3822,8 +4031,6 @@ export class MemforgeRepository {
   }
 
   upsertBaseSettings(settings: Record<string, unknown>): void {
-    for (const [key, value] of Object.entries(settings)) {
-      this.setSetting(key, value);
-    }
+    this.setSettings(settings);
   }
 }

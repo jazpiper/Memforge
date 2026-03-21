@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import type { SemanticEmbeddingProvider, SemanticEmbeddingRequest, SemanticEmbeddingResult } from "./types.js";
 
-const LOCAL_NGRAM_DIMENSION = 192;
+const LOCAL_NGRAM_DIMENSION = 384;
 const LEGACY_DETERMINISTIC_PROVIDER = "deterministic";
 const LOCAL_NGRAM_PROVIDER = "local-ngram";
 const LOCAL_NGRAM_MODEL = "chargram-v1";
@@ -12,7 +11,7 @@ class LocalNgramEmbeddingProvider implements SemanticEmbeddingProvider {
     readonly model = LOCAL_NGRAM_MODEL
   ) {}
 
-  readonly version = "1";
+  readonly version = "2";
 
   async embedBatch(input: SemanticEmbeddingRequest[]): Promise<SemanticEmbeddingResult[]> {
     return input.map((item) => ({
@@ -48,11 +47,35 @@ function forEachCharacterNgram(text: string, callback: (gram: string) => void) {
   for (let size = 2; size <= 4; size += 1) {
     for (let index = 0; index <= source.length - size; index += 1) {
       const gram = source.slice(index, index + size);
+      // Keep boundary grams that contain spaces, but drop grams that are only whitespace.
       if (gram.trim()) {
         callback(gram);
       }
     }
   }
+}
+
+function fnv1a32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.charCodeAt(index);
+    hash ^= codePoint & 0xff;
+    hash = Math.imul(hash, 0x01000193);
+    hash ^= codePoint >>> 8;
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return hash >>> 0;
+}
+
+function avalanche32(value: number): number {
+  let mixed = value >>> 0;
+  mixed ^= mixed >>> 16;
+  mixed = Math.imul(mixed, 0x7feb352d);
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 0x846ca68b);
+  mixed ^= mixed >>> 16;
+  return mixed >>> 0;
 }
 
 function localNgramVector(text: string, dimension: number): number[] {
@@ -61,9 +84,9 @@ function localNgramVector(text: string, dimension: number): number[] {
 
   forEachCharacterNgram(text, (gram) => {
     sawGram = true;
-    const digest = createHash("sha256").update(gram).digest();
-    const bucket = digest.readUInt32BE(0) % dimension;
-    const sign = digest[4] % 2 === 0 ? 1 : -1;
+    const hash = fnv1a32(gram);
+    const bucket = hash % dimension;
+    const sign = (avalanche32(hash ^ 0x9e3779b9) & 1) === 0 ? 1 : -1;
     vector[bucket] += sign;
   });
 

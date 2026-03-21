@@ -7,12 +7,13 @@ import { createMemforgeApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
 import { getSqliteVecExtensionRuntime, openDatabase } from "../app/server/db.js";
 import { MemforgeRepository } from "../app/server/repositories.js";
-import { embedSemanticQueryText } from "../app/server/semantic/provider.js";
+import { embedSemanticQueryText, resolveSemanticEmbeddingProvider } from "../app/server/semantic/provider.js";
 import { isPathWithinRoot } from "../app/server/utils.js";
 import { ensureWorkspace } from "../app/server/workspace.js";
 import { WorkspaceSessionManager } from "../app/server/workspace-session.js";
 
 const tempRoots: string[] = [];
+const LOCAL_NGRAM_EMBEDDING_VERSION = "2";
 
 async function waitFor<T>(
   check: () => T | null | undefined | Promise<T | null | undefined>,
@@ -122,10 +123,10 @@ async function seedSemanticEmbeddings(params: {
        updated_at = excluded.updated_at`
   );
 
-  insertEmbedding.run(params.relatedNodeId, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-related", now, now);
-  insertEmbedding.run(params.distractorNodeId, 0, null, encodeVector(distractorVector), "local-ngram", "chargram-v1", "1", "hash-distractor", now, now);
-  upsertReadyState.run(params.relatedNodeId, "hash-related", "local-ngram", "chargram-v1", "1", now);
-  upsertReadyState.run(params.distractorNodeId, "hash-distractor", "local-ngram", "chargram-v1", "1", now);
+  insertEmbedding.run(params.relatedNodeId, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-related", now, now);
+  insertEmbedding.run(params.distractorNodeId, 0, null, encodeVector(distractorVector), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-distractor", now, now);
+  upsertReadyState.run(params.relatedNodeId, "hash-related", "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now);
+  upsertReadyState.run(params.distractorNodeId, "hash-distractor", "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now);
 }
 
 afterEach(() => {
@@ -1390,15 +1391,15 @@ describe("semantic skeleton", () => {
 
     const first = await repository.processPendingSemanticIndex(10);
     const firstState = db
-      .prepare(`SELECT embedding_status, embedding_provider, embedding_model FROM node_index_state WHERE node_id = ?`)
+      .prepare(`SELECT embedding_status, embedding_provider, embedding_model, embedding_version FROM node_index_state WHERE node_id = ?`)
       .get(node.id) as Record<string, unknown> | undefined;
     const firstEmbeddings = db
-      .prepare(`SELECT chunk_ordinal, vector_blob, embedding_provider, embedding_model, status FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ? ORDER BY chunk_ordinal ASC`)
+      .prepare(`SELECT chunk_ordinal, vector_blob, embedding_provider, embedding_model, embedding_version, status FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ? ORDER BY chunk_ordinal ASC`)
       .all(node.id) as Array<Record<string, unknown>>;
 
     const second = await repository.processPendingSemanticIndex(10);
     const secondEmbeddings = db
-      .prepare(`SELECT chunk_ordinal, vector_blob, embedding_provider, embedding_model, status FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ? ORDER BY chunk_ordinal ASC`)
+      .prepare(`SELECT chunk_ordinal, vector_blob, embedding_provider, embedding_model, embedding_version, status FROM node_embeddings WHERE owner_type = 'node' AND owner_id = ? ORDER BY chunk_ordinal ASC`)
       .all(node.id) as Array<Record<string, unknown>>;
 
     expect(first.processedCount).toBe(1);
@@ -1406,13 +1407,31 @@ describe("semantic skeleton", () => {
     expect(firstState?.embedding_status).toBe("ready");
     expect(firstState?.embedding_provider).toBe("local-ngram");
     expect(firstState?.embedding_model).toBe("chargram-v1");
+    expect(firstState?.embedding_version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
     expect(firstEmbeddings).toHaveLength(1);
     expect(firstEmbeddings[0]?.embedding_provider).toBe("local-ngram");
     expect(firstEmbeddings[0]?.embedding_model).toBe("chargram-v1");
+    expect(firstEmbeddings[0]?.embedding_version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
     expect(firstEmbeddings[0]?.status).toBe("ready");
     expect((firstEmbeddings[0]?.vector_blob as Uint8Array).byteLength).toBeGreaterThan(0);
     expect(second.processedCount).toBe(0);
     expect(secondEmbeddings).toHaveLength(1);
+  });
+
+  it("embeds local-ngram queries at 384 dimensions with provider version 2", async () => {
+    const provider = resolveSemanticEmbeddingProvider({
+      provider: "local-ngram",
+      model: "chargram-v1"
+    });
+    const queryEmbedding = await embedSemanticQueryText({
+      provider: "local-ngram",
+      model: "chargram-v1",
+      text: "single term"
+    });
+
+    expect(provider?.version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
+    expect(queryEmbedding?.dimension).toBe(384);
+    expect(queryEmbedding?.vector).toHaveLength(384);
   });
 
   it("normalizes legacy deterministic semantic settings onto the local-ngram surface", async () => {
@@ -1447,7 +1466,7 @@ describe("semantic skeleton", () => {
     const status = repository.getSemanticStatus();
     const result = await repository.processPendingSemanticIndex(10);
     const state = db
-      .prepare(`SELECT embedding_status, embedding_provider, embedding_model FROM node_index_state WHERE node_id = ?`)
+      .prepare(`SELECT embedding_status, embedding_provider, embedding_model, embedding_version FROM node_index_state WHERE node_id = ?`)
       .get(node.id) as Record<string, unknown> | undefined;
 
     expect(status.provider).toBe("local-ngram");
@@ -1457,6 +1476,270 @@ describe("semantic skeleton", () => {
     expect(state?.embedding_status).toBe("ready");
     expect(state?.embedding_provider).toBe("local-ngram");
     expect(state?.embedding_model).toBe("chargram-v1");
+    expect(state?.embedding_version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
+  });
+
+  it("queues semantic reindex when chunk settings change and skips no-op semantic updates", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspace = ensureWorkspace(root);
+    const db = openDatabase(workspace);
+    const repository = new MemforgeRepository(db, root);
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+
+    const node = repository.createNode({
+      type: "note",
+      title: "Reindex target",
+      body: "Changing semantic chunking should requeue the node for indexing.",
+      tags: ["semantic", "reindex"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    await repository.processPendingSemanticIndex(10);
+    repository.setSetting("search.semantic.model", "chargram-v1");
+    let state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    expect(state?.embedding_status).toBe("ready");
+    expect(state?.stale_reason).toBeNull();
+
+    repository.setSetting("search.semantic.chunk.enabled", true);
+    state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    const lastBackfillAt = repository.getSettings(["search.semantic.last_backfill_at"])["search.semantic.last_backfill_at"];
+
+    expect(state?.embedding_status).toBe("pending");
+    expect(state?.stale_reason).toBe("embedding.configuration_changed");
+    expect(typeof lastBackfillAt).toBe("string");
+  });
+
+  it("defers provider/model reindex until a staged semantic transition is complete", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspace = ensureWorkspace(root);
+    const db = openDatabase(workspace);
+    const repository = new MemforgeRepository(db, root);
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+
+    const node = repository.createNode({
+      type: "note",
+      title: "Staged transition target",
+      body: "Changing provider and model separately should not queue against an intermediate config.",
+      tags: ["semantic", "staged"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    await repository.processPendingSemanticIndex(10);
+    repository.setSetting("search.semantic.provider", "openai");
+    let state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    const partialRun = await repository.processPendingSemanticIndex(10);
+
+    expect(state?.embedding_status).toBe("ready");
+    expect(state?.stale_reason).toBeNull();
+    expect(partialRun.processedCount).toBe(0);
+
+    repository.setSetting("search.semantic.model", "text-embedding-3-small");
+    state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    const finalRun = await repository.processPendingSemanticIndex(10);
+    state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+
+    expect(state?.embedding_status).toBe("failed");
+    expect(state?.stale_reason).toBe("embedding.provider_not_implemented:openai");
+    expect(finalRun.failedCount).toBe(1);
+  });
+
+  it("queues semantic reindex through batched setSettings updates", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspace = ensureWorkspace(root);
+    const db = openDatabase(workspace);
+    const repository = new MemforgeRepository(db, root);
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": false,
+      "search.semantic.provider": "disabled",
+      "search.semantic.model": "none",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+
+    const node = repository.createNode({
+      type: "note",
+      title: "Batch config target",
+      body: "Batched semantic settings should queue a full reindex with the final signature.",
+      tags: ["semantic", "batch"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+
+    await repository.processPendingSemanticIndex(10);
+    repository.setSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1"
+    });
+    let state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    expect(state?.embedding_status).toBe("pending");
+    expect(state?.stale_reason).toBe("embedding.configuration_changed");
+
+    await repository.processPendingSemanticIndex(10);
+    state = db
+      .prepare(`SELECT embedding_status, embedding_version, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+    expect(state?.embedding_status).toBe("ready");
+    expect(state?.embedding_version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
+    expect(state?.stale_reason).toBeNull();
+  });
+
+  it("reindexes legacy-version embeddings during worker processing without a prior ranking call", async () => {
+    const { db, repository } = createRepositoryContext();
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const node = repository.createNode({
+      type: "note",
+      title: "Legacy vector node",
+      body: "Rollback runbook service restart and deploy verification.",
+      tags: ["semantic", "legacy"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const queryEmbedding = await embedSemanticQueryText({
+      provider: "local-ngram",
+      model: "chargram-v1",
+      text: "rollback runbook service restart"
+    });
+    if (!queryEmbedding?.vector.length) {
+      throw new Error("Expected local-ngram query vector");
+    }
+
+    const now = "2026-03-20T12:00:00.000Z";
+    db.prepare(
+      `INSERT INTO node_embeddings (
+         owner_type, owner_id, chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model, embedding_version,
+         content_hash, status, created_at, updated_at
+       ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
+    ).run(node.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-legacy", now, now);
+    db.prepare(
+      `UPDATE node_index_state
+       SET content_hash = ?, embedding_status = 'ready', embedding_provider = ?, embedding_model = ?, embedding_version = ?, stale_reason = NULL, updated_at = ?
+       WHERE node_id = ?`
+    ).run("hash-legacy", "local-ngram", "chargram-v1", "1", now, node.id);
+
+    const reindexResult = await repository.processPendingSemanticIndex(10);
+    const state = db
+      .prepare(`SELECT embedding_status, embedding_version, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+
+    expect(reindexResult.readyCount).toBeGreaterThan(0);
+    expect(state?.embedding_status).toBe("ready");
+    expect(state?.embedding_version).toBe(LOCAL_NGRAM_EMBEDDING_VERSION);
+    expect(state?.stale_reason).toBeNull();
+  });
+
+  it("marks legacy-version embeddings stale during ranking and excludes them from matches", async () => {
+    const { db, repository } = createRepositoryContext();
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const node = repository.createNode({
+      type: "note",
+      title: "Legacy rank target",
+      body: "Rollback runbook service restart and deploy verification.",
+      tags: ["semantic", "legacy"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const queryEmbedding = await embedSemanticQueryText({
+      provider: "local-ngram",
+      model: "chargram-v1",
+      text: "rollback runbook service restart"
+    });
+    if (!queryEmbedding?.vector.length) {
+      throw new Error("Expected local-ngram query vector");
+    }
+
+    const now = "2026-03-20T12:00:00.000Z";
+    db.prepare(
+      `INSERT INTO node_embeddings (
+         owner_type, owner_id, chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model, embedding_version,
+         content_hash, status, created_at, updated_at
+       ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
+    ).run(node.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-legacy-rank", now, now);
+    db.prepare(
+      `UPDATE node_index_state
+       SET content_hash = ?, embedding_status = 'ready', embedding_provider = ?, embedding_model = ?, embedding_version = ?, stale_reason = NULL, updated_at = ?
+       WHERE node_id = ?`
+    ).run("hash-legacy-rank", "local-ngram", "chargram-v1", "1", now, node.id);
+
+    const matches = await repository.rankSemanticCandidates("rollback runbook service restart", [node.id]);
+    const state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(node.id) as Record<string, unknown> | undefined;
+
+    expect(matches.has(node.id)).toBe(false);
+    expect(state?.embedding_status).toBe("stale");
+    expect(state?.stale_reason).toBe("embedding.configuration_changed");
   });
 
   it("fails semantic processing cleanly when a provider is configured but not implemented", async () => {
@@ -4600,7 +4883,7 @@ describe("inferred relation API integration", () => {
        WHERE node_id = ?`
     );
 
-    insertEmbedding.run(exactChunkNode.id, 0, null, encodeVector(queryVector), "local-ngram", "chargram-v1", "1", "hash-a", now, now);
+    insertEmbedding.run(exactChunkNode.id, 0, null, encodeVector(queryVector), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-a", now, now);
     insertEmbedding.run(
       exactChunkNode.id,
       1,
@@ -4608,15 +4891,15 @@ describe("inferred relation API integration", () => {
       encodeVector(new Array<number>(queryVector.length).fill(0)),
       "local-ngram",
       "chargram-v1",
-      "1",
+      LOCAL_NGRAM_EMBEDDING_VERSION,
       "hash-a",
       now,
       now
     );
-    insertEmbedding.run(steadyChunkNode.id, 0, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
-    insertEmbedding.run(steadyChunkNode.id, 1, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
-    setReadyState.run("local-ngram", "chargram-v1", "1", now, exactChunkNode.id);
-    setReadyState.run("local-ngram", "chargram-v1", "1", now, steadyChunkNode.id);
+    insertEmbedding.run(steadyChunkNode.id, 0, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-b", now, now);
+    insertEmbedding.run(steadyChunkNode.id, 1, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-b", now, now);
+    setReadyState.run("local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now, exactChunkNode.id);
+    setReadyState.run("local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now, steadyChunkNode.id);
 
     const maxMatches = await repository.rankSemanticCandidates("rollback runbook service restart", [
       exactChunkNode.id,
@@ -4714,14 +4997,14 @@ describe("inferred relation API integration", () => {
       resolvedStatus: "active"
     });
 
-    insertEmbedding.run(exactChunkNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-a", now, now);
-    insertEmbedding.run(exactChunkNode.id, 1, null, encodeVector(blendVector(0.1)), "local-ngram", "chargram-v1", "1", "hash-a", now, now);
-    insertEmbedding.run(steadyChunkNode.id, 0, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
-    insertEmbedding.run(steadyChunkNode.id, 1, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", "1", "hash-b", now, now);
-    insertEmbedding.run(filteredOutNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-c", now, now);
-    setReadyState.run(exactChunkNode.id, "hash-a", "local-ngram", "chargram-v1", "1", now);
-    setReadyState.run(steadyChunkNode.id, "hash-b", "local-ngram", "chargram-v1", "1", now);
-    setReadyState.run(filteredOutNode.id, "hash-c", "local-ngram", "chargram-v1", "1", now);
+    insertEmbedding.run(exactChunkNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-a", now, now);
+    insertEmbedding.run(exactChunkNode.id, 1, null, encodeVector(blendVector(0.1)), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-a", now, now);
+    insertEmbedding.run(steadyChunkNode.id, 0, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-b", now, now);
+    insertEmbedding.run(steadyChunkNode.id, 1, null, encodeVector(blendVector(0.8)), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-b", now, now);
+    insertEmbedding.run(filteredOutNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, "hash-c", now, now);
+    setReadyState.run(exactChunkNode.id, "hash-a", "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now);
+    setReadyState.run(steadyChunkNode.id, "hash-b", "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now);
+    setReadyState.run(filteredOutNode.id, "hash-c", "local-ngram", "chargram-v1", LOCAL_NGRAM_EMBEDDING_VERSION, now);
 
     const maxMatches = await repository.rankSemanticCandidates("rollback runbook service restart", [
       exactChunkNode.id,
@@ -4737,6 +5020,70 @@ describe("inferred relation API integration", () => {
     expect(topKMatches.get(steadyChunkNode.id)?.similarity).toBeGreaterThan(topKMatches.get(exactChunkNode.id)?.similarity ?? 0);
     expect(maxMatches.has(filteredOutNode.id)).toBe(false);
     expect(topKMatches.has(filteredOutNode.id)).toBe(false);
+  });
+
+  it("ignores legacy-version sqlite-vec embeddings and marks them stale", async () => {
+    const { db, repository } = createRepositoryContext();
+    repository.ensureBaseSettings({
+      "search.semantic.enabled": true,
+      "search.semantic.provider": "local-ngram",
+      "search.semantic.model": "chargram-v1",
+      "search.semantic.indexBackend": "sqlite-vec",
+      "search.semantic.chunk.enabled": false,
+    });
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test"
+    };
+    const legacyNode = repository.createNode({
+      type: "note",
+      title: "Legacy sqlite-vec node",
+      body: "Rollback runbook service restart and deploy verification.",
+      tags: ["semantic", "legacy", "sqlite-vec"],
+      source,
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const queryEmbedding = await embedSemanticQueryText({
+      provider: "local-ngram",
+      model: "chargram-v1",
+      text: "rollback runbook service restart"
+    });
+    if (!queryEmbedding?.vector.length) {
+      throw new Error("Expected local-ngram query embedding to be available");
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO node_embeddings (
+         owner_type, owner_id, chunk_ordinal, vector_ref, vector_blob, embedding_provider, embedding_model,
+         embedding_version, content_hash, status, created_at, updated_at
+       ) VALUES ('node', ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)`
+    ).run(legacyNode.id, 0, null, encodeVector(queryEmbedding.vector), "local-ngram", "chargram-v1", "1", "hash-legacy-sqlite-vec", now, now);
+    db.prepare(
+      `INSERT INTO node_index_state (
+         node_id, content_hash, embedding_status, embedding_provider, embedding_model, embedding_version, stale_reason, updated_at
+       ) VALUES (?, ?, 'ready', ?, ?, ?, NULL, ?)
+       ON CONFLICT(node_id) DO UPDATE SET
+         content_hash = excluded.content_hash,
+         embedding_status = excluded.embedding_status,
+         embedding_provider = excluded.embedding_provider,
+         embedding_model = excluded.embedding_model,
+         embedding_version = excluded.embedding_version,
+         stale_reason = excluded.stale_reason,
+         updated_at = excluded.updated_at`
+    ).run(legacyNode.id, "hash-legacy-sqlite-vec", "local-ngram", "chargram-v1", "1", now);
+
+    const matches = await repository.rankSemanticCandidates("rollback runbook service restart", [legacyNode.id]);
+    const state = db
+      .prepare(`SELECT embedding_status, stale_reason FROM node_index_state WHERE node_id = ?`)
+      .get(legacyNode.id) as Record<string, unknown> | undefined;
+
+    expect(matches.has(legacyNode.id)).toBe(false);
+    expect(state?.embedding_status).toBe("stale");
+    expect(state?.stale_reason).toBe("embedding.configuration_changed");
   });
 
   it("skips sqlite-vec semantic lookups when a strong lexical candidate match already exists", async () => {
