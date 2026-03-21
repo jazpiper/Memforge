@@ -59,9 +59,12 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "graphology": "^0.26.0",
+    "graphology-layout": "^0.6.1",
     "mime-types": "^2.1.35",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "sigma": "^3.0.2",
     "sqlite-vec": "^0.1.7",
     "ulid": "^2.3.0",
     "zod": "^3.25.76"

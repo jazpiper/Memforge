@@ -2930,6 +2930,27 @@ export class MemforgeRepository {
     });
   }
 
+  listRelationsBetweenNodeIds(nodeIds: string[]): RelationRecord[] {
+    if (!nodeIds.length) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(nodeIds));
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM relations
+         WHERE from_node_id IN (${placeholders})
+           AND to_node_id IN (${placeholders})
+           AND status NOT IN ('archived', 'rejected')
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all(...uniqueIds, ...uniqueIds) as Record<string, unknown>[];
+
+    return rows.map(mapRelation);
+  }
+
   createRelation(input: CreateRelationInput & { resolvedStatus: string }): RelationRecord {
     const now = nowIso();
     const id = createId("rel");
@@ -3034,6 +3055,29 @@ export class MemforgeRepository {
          LIMIT ?`
       )
       .all(status, nodeId, nodeId, nowIso(), limit) as Record<string, unknown>[];
+    return rows.map(mapInferredRelation);
+  }
+
+  listInferredRelationsBetweenNodeIds(nodeIds: string[], limit = 100, status = "active"): InferredRelationRecord[] {
+    if (!nodeIds.length) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(nodeIds));
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM inferred_relations
+         WHERE status = ?
+           AND from_node_id IN (${placeholders})
+           AND to_node_id IN (${placeholders})
+           AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY final_score DESC, last_computed_at DESC, id ASC
+         LIMIT ?`
+      )
+      .all(status, ...uniqueIds, ...uniqueIds, nowIso(), limit) as Record<string, unknown>[];
+
     return rows.map(mapInferredRelation);
   }
 
@@ -3761,6 +3805,24 @@ export class MemforgeRepository {
     return rows.map(mapActivity);
   }
 
+  listActivitiesForNodeIds(nodeIds: string[], limit = 200): ActivityRecord[] {
+    if (!nodeIds.length) {
+      return [];
+    }
+
+    const uniqueIds = Array.from(new Set(nodeIds));
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM activities
+         WHERE target_node_id IN (${uniqueIds.map(() => "?").join(", ")})
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`
+      )
+      .all(...uniqueIds, limit) as Record<string, unknown>[];
+    return rows.map(mapActivity);
+  }
+
   appendActivity(input: AppendActivityInput): ActivityRecord {
     const id = createId("act");
     const now = nowIso();
@@ -3962,7 +4024,7 @@ export class MemforgeRepository {
     return Object.fromEntries(rows.map((row) => [String(row.key), parseJson(row.value_json as string, null)]));
   }
 
-  setSetting(key: string, value: unknown): void {
+  private writeSetting(key: string, value: unknown): void {
     this.db
       .prepare(
         `INSERT INTO settings (key, value_json)

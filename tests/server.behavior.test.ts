@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemforgeApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
 import { getSqliteVecExtensionRuntime, openDatabase } from "../app/server/db.js";
+import { buildProjectGraph } from "../app/server/project-graph.js";
 import { MemforgeRepository } from "../app/server/repositories.js";
 import { embedSemanticQueryText, resolveSemanticEmbeddingProvider } from "../app/server/semantic/provider.js";
 import { isPathWithinRoot } from "../app/server/utils.js";
@@ -5227,6 +5228,267 @@ describe("inferred relation API integration", () => {
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
+  });
+});
+
+describe("project graph API", () => {
+  it("returns a bounded project-scoped graph with canonical and inferred edges", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+      const source = {
+        actorType: "human" as const,
+        actorLabel: "juhwan",
+        toolName: "memforge-test",
+      };
+
+      const createNodeRequest = async (input: { type: string; title: string; body: string }) => {
+        const response = await fetch(`${baseUrl}/nodes`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...input,
+            tags: [],
+            metadata: {},
+            source,
+          }),
+        });
+        return response.json();
+      };
+
+      const projectBody = await createNodeRequest({
+        type: "project",
+        title: "Renderer Refresh",
+        body: "Project root",
+      });
+      const otherProjectBody = await createNodeRequest({
+        type: "project",
+        title: "Another Project",
+        body: "Other scope",
+      });
+      const noteABody = await createNodeRequest({
+        type: "note",
+        title: "Sigma direction",
+        body: "Use Sigma as the core renderer.",
+      });
+      const noteBBody = await createNodeRequest({
+        type: "note",
+        title: "Project map filters",
+        body: "Keep inferred edges visually distinct.",
+      });
+      const otherNoteBody = await createNodeRequest({
+        type: "note",
+        title: "Outside scope",
+        body: "Should not leak into the project graph.",
+      });
+
+      const projectId = projectBody.data.node.id as string;
+      const otherProjectId = otherProjectBody.data.node.id as string;
+      const noteAId = noteABody.data.node.id as string;
+      const noteBId = noteBBody.data.node.id as string;
+      const otherNoteId = otherNoteBody.data.node.id as string;
+
+      const createRelationRequest = async (input: { fromNodeId: string; toNodeId: string; relationType: string }) =>
+        fetch(`${baseUrl}/relations`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...input,
+            source,
+            metadata: {},
+          }),
+        });
+
+      await createRelationRequest({
+        fromNodeId: noteAId,
+        toNodeId: projectId,
+        relationType: "relevant_to",
+      });
+      await createRelationRequest({
+        fromNodeId: noteBId,
+        toNodeId: projectId,
+        relationType: "relevant_to",
+      });
+      await createRelationRequest({
+        fromNodeId: otherNoteId,
+        toNodeId: otherProjectId,
+        relationType: "relevant_to",
+      });
+      await createRelationRequest({
+        fromNodeId: noteAId,
+        toNodeId: noteBId,
+        relationType: "supports",
+      });
+      await createRelationRequest({
+        fromNodeId: noteAId,
+        toNodeId: otherNoteId,
+        relationType: "supports",
+      });
+      await fetch(`${baseUrl}/activities`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          targetNodeId: noteAId,
+          activityType: "agent_run_summary",
+          body: "Renderer work is active on this project.",
+          source,
+          metadata: {},
+        }),
+      });
+
+      const repository = workspaceSessionManager.getCurrent().repository;
+      await waitFor(() => {
+        const inferred = repository.listInferredRelationsForNode(noteBId, 20);
+        return inferred.some(
+          (item) =>
+            item.generator === "deterministic-project-membership" &&
+            [item.fromNodeId, item.toNodeId].includes(noteAId)
+        )
+          ? inferred
+          : null;
+      });
+
+      const response = await fetch(`${baseUrl}/projects/${projectId}/graph?max_inferred=1`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.data.meta.focusProjectId).toBe(projectId);
+      expect(body.data.meta.inferredEdgeCount).toBeLessThanOrEqual(1);
+      expect(body.data.nodes.map((item: any) => item.id)).toEqual(expect.arrayContaining([projectId, noteAId, noteBId]));
+      expect(body.data.nodes.map((item: any) => item.id)).not.toContain(otherNoteId);
+      expect(body.data.edges.every((item: any) => [projectId, noteAId, noteBId].includes(item.source))).toBe(true);
+      expect(body.data.edges.every((item: any) => [projectId, noteAId, noteBId].includes(item.target))).toBe(true);
+      expect(body.data.edges.some((item: any) => item.relationSource === "canonical" && item.relationType === "supports")).toBe(true);
+      expect(body.data.timeline[0].at <= body.data.timeline[body.data.timeline.length - 1].at).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("orders project timeline items deterministically when timestamps match", () => {
+    const { db, repository } = createRepositoryContext();
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test",
+    };
+    const fixedAt = "2026-03-21T00:00:00.000Z";
+
+    const project = repository.createNode({
+      type: "project",
+      title: "Timeline Project",
+      body: "Project body",
+      summary: "Project summary",
+      tags: [],
+      metadata: {},
+      source,
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const note = repository.createNode({
+      type: "note",
+      title: "Timeline Note",
+      body: "Note body",
+      summary: "Note summary",
+      tags: [],
+      metadata: {},
+      source,
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const relation = repository.createRelation({
+      fromNodeId: note.id,
+      toNodeId: project.id,
+      relationType: "relevant_to",
+      source,
+      metadata: {},
+      resolvedStatus: "active",
+    });
+    const activity = repository.appendActivity({
+      targetNodeId: note.id,
+      activityType: "note_appended",
+      body: "Updated the note",
+      source,
+      metadata: {},
+    });
+
+    db.prepare(`UPDATE nodes SET created_at = ?, updated_at = ? WHERE id IN (?, ?)`).run(fixedAt, fixedAt, project.id, note.id);
+    db.prepare(`UPDATE relations SET created_at = ? WHERE id = ?`).run(fixedAt, relation.id);
+    db.prepare(`UPDATE activities SET created_at = ? WHERE id = ?`).run(fixedAt, activity.id);
+
+    const graph = buildProjectGraph(repository, project.id, {
+      includeInferred: false,
+    });
+
+    expect(graph.timeline.map((item) => item.kind)).toEqual([
+      "node_created",
+      "node_created",
+      "relation_created",
+      "activity",
+    ]);
+  });
+
+  it("falls back to recent workspace nodes when a project has no explicit graph yet", () => {
+    const repository = createRepository();
+    const source = {
+      actorType: "human" as const,
+      actorLabel: "juhwan",
+      toolName: "memforge-test",
+    };
+
+    const project = repository.createNode({
+      type: "project",
+      title: "Empty Project",
+      body: "Project body",
+      summary: "Project summary",
+      tags: [],
+      metadata: {},
+      source,
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+    const note = repository.createNode({
+      type: "note",
+      title: "Recent Workspace Note",
+      body: "Useful exploration seed",
+      summary: "Seed summary",
+      tags: [],
+      metadata: {},
+      source,
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active",
+    });
+
+    const graph = buildProjectGraph(repository, project.id, {
+      includeInferred: true,
+      maxInferred: 10,
+    });
+
+    expect(graph.nodes.map((item) => item.id)).toContain(note.id);
+    expect(
+      graph.edges.some(
+        (item) =>
+          item.source === project.id &&
+          item.target === note.id &&
+          item.relationSource === "inferred" &&
+          item.generator === "project-map-fallback"
+      )
+    ).toBe(true);
   });
 });
 

@@ -54,6 +54,7 @@ import {
   computeRankCandidateScore,
   shouldUseSemanticCandidateAugmentation
 } from "./retrieval.js";
+import { buildProjectGraph } from "./project-graph.js";
 import { createId, isPathWithinRoot } from "./utils.js";
 import type { WorkspaceSessionManager } from "./workspace-session.js";
 
@@ -436,6 +437,11 @@ function buildServiceIndex(workspaceInfo: {
         method: "GET",
         path: "/api/v1/nodes/:id/neighborhood",
         purpose: "Fetch lightweight canonical plus inferred neighborhood items for a node."
+      },
+      {
+        method: "GET",
+        path: "/api/v1/projects/:id/graph",
+        purpose: "Fetch a bounded project-scoped graph payload for the renderer project map."
       },
       {
         method: "POST",
@@ -2074,6 +2080,34 @@ export function createMemforgeApp(params: {
       }
     );
     response.json(envelope(response.locals.requestId, { items }));
+  }));
+
+  app.get("/api/v1/projects/:id/graph", handleAsyncRoute(async (request, response) => {
+    const includeInferred =
+      request.query.include_inferred === "1" ||
+      request.query.include_inferred === "true" ||
+      request.query.include_inferred === undefined;
+    const maxInferred = parseClampedNumber(request.query.max_inferred, 60, 0, 200);
+    const memberLimit = parseClampedNumber(request.query.member_limit, 120, 1, 300);
+    const activityLimit = parseClampedNumber(request.query.activity_limit, 200, 0, 400);
+    const payload = await runObservedSpan(
+      "projects.graph",
+      {
+        includeInferred,
+        maxInferred,
+        memberLimit,
+        activityLimit
+      },
+      () =>
+        buildProjectGraph(currentRepository(), readRequestParam(request.params.id), {
+          includeInferred,
+          maxInferred,
+          memberLimit,
+          activityLimit
+        })
+    );
+
+    response.json(envelope(response.locals.requestId, payload));
   }));
 
   app.post("/api/v1/relations", (request, response) => {

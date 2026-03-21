@@ -9,6 +9,7 @@ import {
   getGovernanceIssues,
   getNodeDetail,
   getGraphNeighborhood,
+  getProjectGraph,
   getSnapshot,
   getWorkspaceCatalog,
   getWorkspace,
@@ -18,6 +19,8 @@ import {
   saveRendererToken,
   subscribeWorkspaceEvents,
 } from './lib/mockApi';
+import { ProjectGraphCanvas } from './components/ProjectGraphCanvas';
+import { buildProjectGraphView, listProjectGraphRelationTypes } from './lib/projectGraph';
 import type {
   Activity,
   Artifact,
@@ -28,6 +31,8 @@ import type {
   NavView,
   NodeDetail,
   Node,
+  ProjectGraphPayload,
+  RelationType,
   WorkspaceCatalogItem,
   WorkspaceSeed,
 } from './lib/types';
@@ -41,16 +46,21 @@ type DetailPanel = {
   governance: GovernancePayload;
 };
 
+type GraphMode = 'neighborhood' | 'project-map';
+
 const navigation: { id: NavView; label: string; hint: string }[] = [
   { id: 'home', label: 'Home', hint: 'landing' },
-  { id: 'search', label: 'API', hint: 'local access' },
-  { id: 'projects', label: 'MCP Tools', hint: 'agent route' },
+  { id: 'search', label: 'Guide', hint: 'api + mcp' },
   { id: 'recent', label: 'Notes', hint: 'reading' },
   { id: 'settings', label: 'Workspace', hint: 'scope' },
 ];
 
-const utilityNavigation: { id: NavView; label: string }[] = [
+const utilityNavigation: Array<
+  | { id: NavView; label: string; graphMode?: undefined }
+  | { id: 'project-map'; label: string; graphMode: GraphMode }
+> = [
   { id: 'graph', label: 'Graph' },
+  { id: 'project-map', label: 'Project map', graphMode: 'project-map' },
   { id: 'governance', label: 'Governance' },
 ];
 
@@ -128,9 +138,9 @@ function getGovernanceActionLabel(item: GovernanceIssueItem) {
 function getViewTitle(view: NavView) {
   switch (view) {
     case 'search':
-      return 'API';
+      return 'Guide';
     case 'projects':
-      return 'MCP Tools';
+      return 'Guide';
     case 'recent':
       return 'Notes';
     case 'settings':
@@ -141,6 +151,30 @@ function getViewTitle(view: NavView) {
       return 'Graph';
     default:
       return 'Home';
+  }
+}
+
+function resolveInitialView(): NavView {
+  if (typeof window === 'undefined') {
+    return 'home';
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view');
+  switch (view) {
+    case 'search':
+    case 'guide':
+      return 'search';
+    case 'graph':
+      return 'graph';
+    case 'governance':
+      return 'governance';
+    case 'recent':
+      return 'recent';
+    case 'settings':
+      return 'settings';
+    default:
+      return 'home';
   }
 }
 
@@ -165,6 +199,7 @@ type DesktopActionPayload = {
 
 type GuideSection = {
   id: string;
+  group: string;
   label: string;
   eyebrow: string;
   title: string;
@@ -217,7 +252,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSeed['workspace'] | null>(null);
   const [workspaceCatalog, setWorkspaceCatalog] = useState<WorkspaceCatalogItem[]>([]);
   const [snapshot, setSnapshot] = useState<WorkspaceSeed | null>(null);
-  const [view, setView] = useState<NavView>('home');
+  const [view, setView] = useState<NavView>(resolveInitialView);
   const [selectedNodeId, setSelectedNodeId] = useState<string>('node_memforge');
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -238,8 +273,7 @@ export default function App() {
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [isSwitchingWorkspace, setIsSwitchingWorkspace] = useState(false);
   const [isNotePreviewOpen, setIsNotePreviewOpen] = useState(false);
-  const [apiGuideSectionId, setApiGuideSectionId] = useState('overview');
-  const [mcpGuideSectionId, setMcpGuideSectionId] = useState('overview');
+  const [guideSectionId, setGuideSectionId] = useState('overview');
   const bundleUsageEventKeysRef = useRef(new Set<string>());
   const relationUsageSessionIdRef = useRef(
     globalThis.crypto?.randomUUID?.() ?? `memforge-renderer-${Date.now()}`
@@ -437,18 +471,48 @@ export default function App() {
         .sort((left, right) => (left.title || '').localeCompare(right.title || '') || left.updatedAt.localeCompare(right.updatedAt)),
     [snapshot],
   );
+  const projectNodes = useMemo(
+    () => graphFocusableNodes.filter((node) => node.type === 'project'),
+    [graphFocusableNodes],
+  );
 
   const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) ?? null : null;
   const selectedNodeKey = selectedNode?.id ?? null;
 
   const [detail, setDetail] = useState<DetailPanel>(emptyDetailPanel);
   const detailNode = detail.node?.id === selectedNode?.id ? detail.node : selectedNode;
+  const [graphMode, setGraphMode] = useState<GraphMode>('neighborhood');
   const [graphRadius, setGraphRadius] = useState<1 | 2>(1);
   const [graphConnections, setGraphConnections] = useState<GraphConnection[]>([]);
+  const [projectGraphProjectId, setProjectGraphProjectId] = useState<string | null>(null);
+  const [projectGraph, setProjectGraph] = useState<ProjectGraphPayload | null>(null);
+  const [projectGraphSources, setProjectGraphSources] = useState({
+    canonical: true,
+    inferred: true,
+  });
+  const [projectGraphRelationTypes, setProjectGraphRelationTypes] = useState<RelationType[]>([]);
+  const [projectGraphTimelineIndex, setProjectGraphTimelineIndex] = useState(0);
+  const [isProjectGraphPlaying, setIsProjectGraphPlaying] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [isGraphLoading, setIsGraphLoading] = useState(false);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState(false);
   const desktopInfo = getDesktopIntegrationInfo();
+
+  useEffect(() => {
+    if (!projectNodes.length) {
+      setProjectGraphProjectId(null);
+      return;
+    }
+
+    if (selectedNode?.type === 'project') {
+      setProjectGraphProjectId(selectedNode.id);
+      return;
+    }
+
+    if (!projectGraphProjectId || !projectNodes.some((node) => node.id === projectGraphProjectId)) {
+      setProjectGraphProjectId(projectNodes[0]?.id ?? null);
+    }
+  }, [projectGraphProjectId, projectNodes, selectedNode]);
 
   useEffect(() => {
     let mounted = true;
@@ -498,7 +562,7 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     const currentNode = selectedNode;
-    if (!currentNode || !selectedNodeKey) return undefined;
+    if (view !== 'graph' || graphMode !== 'neighborhood' || !currentNode || !selectedNodeKey) return undefined;
     const nodeId = selectedNodeKey;
 
     async function loadGraph() {
@@ -524,7 +588,41 @@ export default function App() {
     return () => {
       mounted = false;
     };
-  }, [graphRadius, selectedNodeKey, view]);
+  }, [graphMode, graphRadius, selectedNodeKey, view]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (view !== 'graph' || graphMode !== 'project-map' || !projectGraphProjectId) return undefined;
+    const projectId = projectGraphProjectId;
+
+    async function loadProjectGraph() {
+      setIsGraphLoading(true);
+      try {
+        const nextGraph = await getProjectGraph(projectId);
+        if (!mounted) return;
+        setProjectGraph(nextGraph);
+        const relationTypes = listProjectGraphRelationTypes(nextGraph);
+        setProjectGraphRelationTypes((current) => (current.length ? current.filter((item) => relationTypes.includes(item)) : relationTypes));
+        setProjectGraphTimelineIndex(Math.max(nextGraph.timeline.length - 1, 0));
+        setGraphConnections([]);
+        setGraphError(null);
+      } catch (error) {
+        if (!mounted) return;
+        setProjectGraph(null);
+        setGraphError(error instanceof Error ? error.message : 'Failed to load project graph.');
+      } finally {
+        if (mounted) {
+          setIsGraphLoading(false);
+        }
+      }
+    }
+
+    void loadProjectGraph();
+
+    return () => {
+      mounted = false;
+    };
+  }, [graphMode, projectGraphProjectId, view]);
 
   const [governanceIssues, setGovernanceIssues] = useState<GovernanceIssueItem[]>([]);
   const noteNodes = useMemo(() => {
@@ -630,204 +728,120 @@ export default function App() {
   const apiExample = `curl${apiAuthHeader} ${apiBase}
 curl${apiAuthHeader} ${desktopInfo?.healthUrl ?? `${apiBase}/health`}
 curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
-  const apiGuideSections: GuideSection[] = [
+  const guideSections: GuideSection[] = [
     {
       id: 'overview',
+      group: 'Getting started',
       label: 'Overview',
-      eyebrow: 'Entry point',
-      title: 'Start with the local base URL.',
-      body: 'This page should feel like a quick reference, not a wall of docs. Use the local API when you want direct loopback access into the current Memforge workspace.',
+      eyebrow: 'Unified guide',
+      title: 'One page for human access and agent access.',
+      body: 'This guide merges the loopback API and MCP setup into one quiet reference. The left menu should feel like a documentation tree: start broad, then drill into one detail page at a time.',
+      points: [
+        'Use HTTP when a person or script wants direct loopback access.',
+        'Use MCP when an agent client needs tool-shaped access and guided workflow.',
+        'Keep the surface text-first and operational, not dashboard-like.',
+      ],
+    },
+    {
+      id: 'base-url',
+      group: 'HTTP API',
+      label: 'Base URL',
+      eyebrow: 'Loopback entry',
+      title: 'Start with the current loopback endpoint.',
+      body: 'Everything else in the local API hangs off one base URL. Keep auth rules explicit, but do not bury the main path under decorative UI.',
       points: [
         `Base URL: ${apiBase}`,
-        workspace?.authMode === 'bearer' ? 'Bearer auth is enabled for this workspace.' : 'Local mode is available without extra auth friction.',
-        'Use this route for health, workspace inspection, and bootstrap calls before deeper integration.',
-      ],
-      stats: [
-        {
-          label: 'Base URL',
-          value: apiBase,
-          description: 'Primary endpoint for local integrations.',
-        },
-        {
-          label: 'Auth mode',
-          value: workspace?.authMode === 'bearer' ? 'Bearer auth' : 'Loopback-first',
-          description: workspace?.authMode === 'bearer' ? 'Include the Authorization header.' : 'No extra auth header in local mode.',
-        },
+        workspace?.authMode === 'bearer' ? 'Auth mode: bearer header required for protected requests.' : 'Auth mode: local optional access for loopback requests.',
+        'Use this first for health, workspace, bootstrap, and direct endpoint inspection.',
       ],
     },
     {
       id: 'routes',
-      label: 'Core routes',
-      eyebrow: 'Starter routes',
+      group: 'HTTP API',
+      label: 'Starter routes',
+      eyebrow: 'Small surface first',
       title: 'Keep the first three routes in easy reach.',
-      body: 'Most sessions only need a small route set. These are the ones worth surfacing first before expanding into deeper API docs.',
+      body: 'Most sessions only need a tiny route set. Show those clearly before any deeper reference material.',
       points: [
-        '/health for service status and the currently active workspace.',
-        '/workspace for the current workspace metadata and scope details.',
-        '/bootstrap for the starting index when a client needs to discover service capabilities.',
-      ],
-      stats: [
-        {
-          label: '/health',
-          value: 'Check',
-          description: 'Service status and active workspace.',
-        },
-        {
-          label: '/workspace',
-          value: 'Inspect',
-          description: 'Current workspace details.',
-        },
-        {
-          label: '/bootstrap',
-          value: 'Begin',
-          description: 'Service entry for clients.',
-        },
+        '/health for service status and active workspace state.',
+        '/workspace for current workspace metadata and local scope details.',
+        '/bootstrap for client startup and service capability discovery.',
       ],
     },
     {
-      id: 'examples',
-      label: 'Examples',
-      eyebrow: 'Quick example',
-      title: 'Copy the local calls and move on.',
-      body: 'Examples should stay compact here. The goal is to let someone make the first successful request without digging through a dense reference page.',
+      id: 'http-examples',
+      group: 'HTTP API',
+      label: 'Example requests',
+      eyebrow: 'Quick start',
+      title: 'Copy a request, verify locally, then move on.',
+      body: 'The examples should stay short and immediately runnable. This page is a launchpad, not a full API encyclopedia.',
       points: [
-        'Use curl for the quickest local verification loop.',
-        'Keep the Authorization header only when bearer mode is enabled.',
-        'Treat this screen as a launchpad, then move detailed API usage elsewhere.',
+        'Use curl for the fastest first verification loop.',
+        'Add the bearer header only when this workspace requires it.',
+        'After the first successful request, move into the route or workflow you actually need.',
       ],
       code: apiExample,
     },
     {
-      id: 'paths',
-      label: 'Workspace paths',
-      eyebrow: 'Local paths',
-      title: 'Know where the current workspace lives.',
-      body: 'This is useful when you need to inspect the underlying local store, database, or artifacts without jumping through another admin page.',
-      points: [
-        `Workspace root: ${workspaceRoot || 'Unavailable'}`,
-        `Database: ${workspaceDbPath || 'Unavailable'}`,
-        `Artifacts: ${artifactsPath || 'Unavailable'}`,
-      ],
-      stats: [
-        {
-          label: 'Workspace root',
-          value: workspaceRoot || 'Unavailable',
-          description: 'Current workspace directory.',
-        },
-        {
-          label: 'Database',
-          value: workspaceDbPath || 'Unavailable',
-          description: 'Primary local store.',
-        },
-        {
-          label: 'Artifacts',
-          value: artifactsPath || 'Unavailable',
-          description: 'Generated files and attachments.',
-        },
-      ],
-    },
-  ];
-  const activeApiGuideSection =
-    apiGuideSections.find((section) => section.id === apiGuideSectionId) ?? apiGuideSections[0]!;
-  const mcpGuideSections: GuideSection[] = [
-    {
-      id: 'overview',
-      label: 'Overview',
-      eyebrow: 'Agent route',
-      title: 'Use MCP when the client is an agent, not a human clicking around.',
-      body: 'This page should surface the core agent workflow first. Keep it clear which tools are used for broad recall, precise recall, soft capture, and anchored context.',
-      points: [
-        'Search broad with memforge_search_workspace when the target is still unclear.',
-        'Search precise with memforge_search_nodes, especially for type=project checks.',
-        'Keep capture soft first, then anchor with targetId only when the project or node is genuinely known.',
-      ],
-      stats: [
-        {
-          label: 'Search broad',
-          value: 'memforge_search_workspace',
-          description: 'Mixed recall across nodes and activities.',
-        },
-        {
-          label: 'Search precise',
-          value: 'memforge_search_nodes',
-          description: 'Project and durable node checks.',
-        },
-      ],
-    },
-    {
-      id: 'connect',
+      id: 'mcp-connect',
+      group: 'MCP',
       label: 'Connection',
-      eyebrow: 'Launch',
-      title: 'Start from the MCP launcher configuration.',
-      body: 'Keep the connection instructions visible, but compact. Most users need either the mcpServers block or the local launcher command, not a long setup essay.',
+      eyebrow: 'Agent route',
+      title: 'Use MCP when the client is an agent, not a person making raw requests.',
+      body: 'Show the launcher configuration and the direct command together, but keep the page visually quiet. The important part is the connection shape, not extra chrome.',
       points: [
-        'Use the launcher config when wiring Memforge into an agent client.',
-        'Use the local command when testing the MCP server directly.',
-        'Keep the API target pointed at the active local workspace service.',
+        'Use the launcher config when wiring Memforge into an MCP-capable agent client.',
+        'Use the direct local command when testing the server manually.',
+        'Keep the API target pointed at the current workspace service.',
       ],
       code: `${genericMcpConfig}\n\n${mcpCommand}`,
     },
     {
-      id: 'flow',
+      id: 'mcp-search-flow',
+      group: 'MCP',
       label: 'Search flow',
       eyebrow: 'Recommended flow',
       title: 'Search first, then decide whether to anchor.',
-      body: 'The page should make the order obvious so agents do not jump straight into project creation or over-specific retrieval too early.',
+      body: 'The guide should make the order obvious so agent clients do not jump into over-specific context too early.',
       points: [
-        '1. Check the current workspace context first.',
-        '2. Use memforge_search_nodes with type=project when you are checking for an existing project.',
-        '3. Expand to memforge_search_workspace when you need broader recall across nodes and activities.',
-      ],
-      stats: [
-        {
-          label: 'Step 1',
-          value: 'Check workspace',
-          description: 'Stay in current scope by default.',
-        },
-        {
-          label: 'Step 2',
-          value: 'Search first',
-          description: 'Avoid guessing a project.',
-        },
-        {
-          label: 'Step 3',
-          value: 'Anchor later',
-          description: 'Bundle only when the target is known.',
-        },
+        '1. Start broad with memforge_search_workspace when the target is still unclear.',
+        '2. Use memforge_search_nodes when checking for an existing project or durable node.',
+        '3. Use memforge_context_bundle only after the target is actually known.',
       ],
     },
     {
-      id: 'capture',
-      label: 'Capture',
-      eyebrow: 'Write path',
+      id: 'mcp-write-flow',
+      group: 'MCP',
+      label: 'Write path',
+      eyebrow: 'Capture rules',
       title: 'Write lightly unless the target is already clear.',
-      body: 'This is the part that prevents over-structuring. Use the default write path for general notes or conversation outcomes, then move into stronger anchoring only when it helps.',
+      body: 'This is the part that prevents over-structuring. Treat durable memory, activity logs, and anchored bundles as separate decisions.',
       points: [
         'memforge_capture_memory is the safe default when work is not yet tied to a specific project or node.',
         'memforge_append_activity is best for routine summaries and work logs.',
         'memforge_context_bundle should include targetId only after the project or node is truly known.',
       ],
-      stats: [
-        {
-          label: 'Default write',
-          value: 'memforge_capture_memory',
-          description: 'Low-friction capture path.',
-        },
-        {
-          label: 'Routine logging',
-          value: 'memforge_append_activity',
-          description: 'Progress and execution notes.',
-        },
-        {
-          label: 'Anchored context',
-          value: 'memforge_context_bundle',
-          description: 'Use targetId only when ready.',
-        },
+    },
+    {
+      id: 'workspace-paths',
+      group: 'Workspace',
+      label: 'Workspace paths',
+      eyebrow: 'Local files',
+      title: 'Know where the current workspace lives on disk.',
+      body: 'Keep the local paths visible for debugging, inspection, and operational work. This should read like a simple system note, not an admin panel.',
+      points: [
+        `Workspace root: ${workspaceRoot || 'Unavailable'}`,
+        `Database: ${workspaceDbPath || 'Unavailable'}`,
+        `Artifacts: ${artifactsPath || 'Unavailable'}`,
       ],
     },
   ];
-  const activeMcpGuideSection =
-    mcpGuideSections.find((section) => section.id === mcpGuideSectionId) ?? mcpGuideSections[0]!;
+  const activeGuideSection =
+    guideSections.find((section) => section.id === guideSectionId) ?? guideSections[0]!;
+  const guideGroups = Array.from(new Set(guideSections.map((section) => section.group))).map((group) => ({
+    group,
+    sections: guideSections.filter((section) => section.group === group),
+  }));
   const graphSummary = useMemo(() => {
     const distinctNodes = new Map<string, Node>();
     const relationCounts: Record<string, number> = {};
@@ -866,6 +880,66 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
         .sort((left, right) => right.count - left.count || left.relationType.localeCompare(right.relationType)),
     [graphSummary.relationCounts],
   );
+  const projectGraphAvailableRelationTypes = useMemo(
+    () => listProjectGraphRelationTypes(projectGraph),
+    [projectGraph],
+  );
+  const effectiveProjectGraphRelationTypes = projectGraphRelationTypes.length
+    ? projectGraphRelationTypes
+    : projectGraphAvailableRelationTypes;
+  const projectGraphView = useMemo(
+    () =>
+      buildProjectGraphView(projectGraph, {
+        relationTypes: effectiveProjectGraphRelationTypes,
+        sources: projectGraphSources,
+        timelineIndex: projectGraphTimelineIndex,
+      }),
+    [effectiveProjectGraphRelationTypes, projectGraph, projectGraphSources, projectGraphTimelineIndex],
+  );
+  const projectGraphRelationGroups = useMemo(
+    () =>
+      Object.entries(
+        projectGraphView.edges.reduce<Record<string, number>>((acc, edge) => {
+          acc[edge.relationType] = (acc[edge.relationType] ?? 0) + 1;
+          return acc;
+        }, {}),
+      )
+        .map(([relationType, count]) => ({
+          relationType,
+          count,
+        }))
+        .sort((left, right) => right.count - left.count || left.relationType.localeCompare(right.relationType)),
+    [projectGraphView.edges],
+  );
+  const activeProjectGraphProject =
+    (projectGraphProjectId ? nodeMap.get(projectGraphProjectId) : undefined) ?? projectNodes.find((node) => node.id === projectGraphProjectId) ?? null;
+  const currentProjectGraphEvent = projectGraph?.timeline[projectGraphTimelineIndex] ?? null;
+
+  useEffect(() => {
+    if (!isProjectGraphPlaying || !projectGraph?.timeline.length) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setProjectGraphTimelineIndex((current) => {
+        if (current >= projectGraph.timeline.length - 1) {
+          setIsProjectGraphPlaying(false);
+          return current;
+        }
+        return current + 1;
+      });
+    }, 900);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isProjectGraphPlaying, projectGraph]);
+
+  useEffect(() => {
+    if (graphMode !== 'project-map') {
+      setIsProjectGraphPlaying(false);
+    }
+  }, [graphMode]);
   const governanceStateCounts = useMemo(
     () =>
       governanceIssues.reduce<Record<string, number>>((acc, item) => {
@@ -881,6 +955,8 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     setSelectedNodeId(nextSnapshot.nodes[0]?.id ?? '');
     setIsNotePreviewOpen(false);
     setDetail(emptyDetailPanel());
+    setProjectGraph(null);
+    setProjectGraphProjectId(nextSnapshot.nodes.find((node) => node.type === 'project')?.id ?? null);
   }
 
   function focusNode(nodeId: string, nextView?: NavView) {
@@ -888,6 +964,25 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     if (nextView) {
       selectView(nextView);
     }
+  }
+
+  function handleSelectProjectGraphProject(nodeId: string) {
+    setProjectGraphProjectId(nodeId);
+    focusNode(nodeId, 'graph');
+  }
+
+  function toggleProjectGraphRelationType(relationType: RelationType) {
+    setProjectGraphRelationTypes((current) => {
+      if (!current.length) {
+        return projectGraphAvailableRelationTypes.filter((item) => item !== relationType);
+      }
+
+      if (current.includes(relationType)) {
+        return current.length === 1 ? current : current.filter((item) => item !== relationType);
+      }
+
+      return [...current, relationType].sort((left, right) => left.localeCompare(right));
+    });
   }
 
   async function handleBundlePreviewClick(item: ContextBundlePreviewItem) {
@@ -942,7 +1037,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       await refreshSnapshotState();
       focusNode(node.id);
       setIsNotePreviewOpen(false);
-      setView(node.type === 'project' ? 'projects' : 'recent');
+      setView('recent');
       setCaptureTitle('');
       setCaptureBody('');
       setCaptureType('note');
@@ -1070,6 +1165,11 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   }
 
   function openNodeInGraph(nodeId: string) {
+    const node = nodeMap.get(nodeId);
+    if (node?.type === 'project') {
+      setGraphMode('project-map');
+      setProjectGraphProjectId(nodeId);
+    }
     focusNode(nodeId, 'graph');
   }
 
@@ -1122,122 +1222,54 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       );
     }
 
-    if (view === 'search') {
+    if (view === 'search' || view === 'projects') {
       return (
-        <section className="page-section">
+        <section className="page-section page-section--guide">
           <div className="page-heading">
-            <span className="eyebrow">Local access</span>
-            <h2>The loopback API, simplified.</h2>
-            <p>Use the left menu like a normal guide page. Keep the surface compact and reveal detail only when needed.</p>
+            <span className="eyebrow">Guide</span>
+            <h2>API and MCP in one quiet reference.</h2>
           </div>
-          <div className="guide-layout">
-            <aside className="card guide-nav">
-              <div className="page-copy compact-copy">
-                <span className="eyebrow">API guide</span>
-                <h3>Sections</h3>
+          <div className="guide-shell">
+            <aside className="guide-sidebar">
+              <div className="guide-sidebar-head">
+                <span className="eyebrow">Developer guide</span>
+                <h3>Contents</h3>
               </div>
-              <div className="guide-nav-list">
-                {apiGuideSections.map((section) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    className={`guide-nav-item ${activeApiGuideSection.id === section.id ? 'active' : ''}`}
-                    onClick={() => setApiGuideSectionId(section.id)}
-                  >
-                    <strong>{section.label}</strong>
-                    <span>{section.eyebrow}</span>
-                  </button>
+              <div className="guide-tree">
+                {guideGroups.map((group) => (
+                  <section key={group.group} className="guide-tree-group">
+                    <div className="guide-tree-group-label">{group.group}</div>
+                    <div className="guide-tree-children">
+                      {group.sections.map((section) => (
+                        <button
+                          key={section.id}
+                          type="button"
+                          className={`guide-tree-item ${activeGuideSection.id === section.id ? 'active' : ''}`}
+                          onClick={() => setGuideSectionId(section.id)}
+                        >
+                          {section.label}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             </aside>
-            <section className="card guide-detail">
-              <div className="page-copy">
-                <span className="eyebrow">{activeApiGuideSection.eyebrow}</span>
-                <h3>{activeApiGuideSection.title}</h3>
-                <p>{activeApiGuideSection.body}</p>
-              </div>
-              {activeApiGuideSection.stats?.length ? (
-                <div className={`info-grid ${activeApiGuideSection.stats.length >= 3 ? 'three' : 'two'}`}>
-                  {activeApiGuideSection.stats.map((item) => (
-                    <article key={item.label} className="info-block">
-                      <span className="info-label">{item.label}</span>
-                      <strong>{item.value}</strong>
-                      <p>{item.description}</p>
-                    </article>
+            <section className="guide-content">
+              <article className="guide-article">
+                <div className="guide-kicker-row">
+                  <span className="eyebrow">{activeGuideSection.group}</span>
+                  <span className="guide-section-meta">{activeGuideSection.eyebrow}</span>
+                </div>
+                <h3>{activeGuideSection.title}</h3>
+                <p className="guide-body">{activeGuideSection.body}</p>
+                <div className="guide-copy-list">
+                  {activeGuideSection.points.map((point) => (
+                    <p key={point}>{point}</p>
                   ))}
                 </div>
-              ) : null}
-              <div className="guide-points">
-                {activeApiGuideSection.points.map((point) => (
-                  <article key={point} className="route-card">
-                    <div>
-                      <strong>{point}</strong>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              {activeApiGuideSection.code ? <pre className="code-block">{activeApiGuideSection.code}</pre> : null}
-            </section>
-          </div>
-        </section>
-      );
-    }
-
-    if (view === 'projects') {
-      return (
-        <section className="page-section">
-          <div className="page-heading">
-            <span className="eyebrow">Agent-native route</span>
-            <h2>MCP tools, with less noise.</h2>
-            <p>Use the left menu to move through the setup and workflow, the way a normal guide page would.</p>
-          </div>
-          <div className="guide-layout">
-            <aside className="card guide-nav">
-              <div className="page-copy compact-copy">
-                <span className="eyebrow">MCP guide</span>
-                <h3>Sections</h3>
-              </div>
-              <div className="guide-nav-list">
-                {mcpGuideSections.map((section) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    className={`guide-nav-item ${activeMcpGuideSection.id === section.id ? 'active' : ''}`}
-                    onClick={() => setMcpGuideSectionId(section.id)}
-                  >
-                    <strong>{section.label}</strong>
-                    <span>{section.eyebrow}</span>
-                  </button>
-                ))}
-              </div>
-            </aside>
-            <section className="card guide-detail">
-              <div className="page-copy">
-                <span className="eyebrow">{activeMcpGuideSection.eyebrow}</span>
-                <h3>{activeMcpGuideSection.title}</h3>
-                <p>{activeMcpGuideSection.body}</p>
-              </div>
-              {activeMcpGuideSection.stats?.length ? (
-                <div className={`info-grid ${activeMcpGuideSection.stats.length >= 3 ? 'three' : 'two'}`}>
-                  {activeMcpGuideSection.stats.map((item) => (
-                    <article key={item.label} className="info-block">
-                      <span className="info-label">{item.label}</span>
-                      <strong>{item.value}</strong>
-                      <p>{item.description}</p>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              <div className="guide-points">
-                {activeMcpGuideSection.points.map((point) => (
-                  <article key={point} className="route-card">
-                    <div>
-                      <strong>{point}</strong>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              {activeMcpGuideSection.code ? <pre className="code-block">{activeMcpGuideSection.code}</pre> : null}
+                {activeGuideSection.code ? <pre className="guide-code-block">{activeGuideSection.code}</pre> : null}
+              </article>
             </section>
           </div>
         </section>
@@ -1250,7 +1282,6 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
           <div className="page-heading">
             <span className="eyebrow">Governance</span>
             <h2>Governance explorer</h2>
-            <p>Use this as a triage surface for contested and low-confidence memory. It should make issue state, cause, and next action easy to scan.</p>
           </div>
           <div className="governance-layout">
             <aside className="card governance-list">
@@ -1395,69 +1426,168 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
           <div className="page-heading">
             <span className="eyebrow">Graph</span>
             <h2>Relationship explorer</h2>
-            <p>Use this as a focused secondary view for connected memory. It should explain what is linked, what is missing, and what to inspect next.</p>
           </div>
           <section className="card page-card">
             <div className="graph-toolbar">
-              <label className="search-box">
-                <span>Focus node</span>
-                <select
-                  value={selectedNode?.id ?? ''}
-                  onChange={(event) => {
-                    if (event.target.value) {
-                      focusNode(event.target.value);
-                    }
-                  }}
-                >
-                  {graphFocusableNodes.map((node) => (
-                    <option key={node.id} value={node.id}>
-                      {`${node.title} · ${node.type}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <div className="chip-row">
                 <button
                   type="button"
-                  className={`tool-chip ${graphRadius === 1 ? 'tool-chip--active' : ''}`}
-                  onClick={() => setGraphRadius(1)}
+                  className={`tool-chip ${graphMode === 'neighborhood' ? 'tool-chip--active' : ''}`}
+                  onClick={() => setGraphMode('neighborhood')}
                 >
-                  1 hop
+                  Neighborhood
                 </button>
                 <button
                   type="button"
-                  className={`tool-chip ${graphRadius === 2 ? 'tool-chip--active' : ''}`}
-                  onClick={() => setGraphRadius(2)}
+                  className={`tool-chip ${graphMode === 'project-map' ? 'tool-chip--active' : ''}`}
+                  onClick={() => setGraphMode('project-map')}
                 >
-                  2 hops
+                  Project map
                 </button>
               </div>
+              {graphMode === 'neighborhood' ? (
+                <>
+                  <label className="search-box">
+                    <span>Focus node</span>
+                    <select
+                      value={selectedNode?.id ?? ''}
+                      onChange={(event) => {
+                        if (event.target.value) {
+                          focusNode(event.target.value);
+                        }
+                      }}
+                    >
+                      {graphFocusableNodes.map((node) => (
+                        <option key={node.id} value={node.id}>
+                          {`${node.title} · ${node.type}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="chip-row">
+                    <button
+                      type="button"
+                      className={`tool-chip ${graphRadius === 1 ? 'tool-chip--active' : ''}`}
+                      onClick={() => setGraphRadius(1)}
+                    >
+                      1 hop
+                    </button>
+                    <button
+                      type="button"
+                      className={`tool-chip ${graphRadius === 2 ? 'tool-chip--active' : ''}`}
+                      onClick={() => setGraphRadius(2)}
+                    >
+                      2 hops
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="search-box">
+                    <span>Focus project</span>
+                    <select
+                      value={activeProjectGraphProject?.id ?? ''}
+                      onChange={(event) => {
+                        if (event.target.value) {
+                          handleSelectProjectGraphProject(event.target.value);
+                        }
+                      }}
+                    >
+                      {projectNodes.map((node) => (
+                        <option key={node.id} value={node.id}>
+                          {node.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="chip-row">
+                    <button
+                      type="button"
+                      className={`tool-chip ${projectGraphSources.canonical ? 'tool-chip--active' : ''}`}
+                      onClick={() => setProjectGraphSources((current) => ({ ...current, canonical: !current.canonical }))}
+                    >
+                      Canonical
+                    </button>
+                    <button
+                      type="button"
+                      className={`tool-chip ${projectGraphSources.inferred ? 'tool-chip--active' : ''}`}
+                      onClick={() => setProjectGraphSources((current) => ({ ...current, inferred: !current.inferred }))}
+                    >
+                      Inferred
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
+            {graphMode === 'project-map' && !!projectGraphAvailableRelationTypes.length ? (
+              <div className="graph-filter-row">
+                {projectGraphAvailableRelationTypes.map((relationType) => {
+                  const isActive = effectiveProjectGraphRelationTypes.includes(relationType);
+                  return (
+                    <button
+                      key={relationType}
+                      type="button"
+                      className={`tool-chip ${isActive ? 'tool-chip--active' : ''}`}
+                      onClick={() => toggleProjectGraphRelationType(relationType)}
+                    >
+                      {relationLabel(relationType)}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <div className="graph-summary-grid">
-              <article className="graph-focus graph-focus-card">
-                <span className="eyebrow">Focus node</span>
-                <strong>{selectedNode?.title}</strong>
-                <p>{selectedNode?.summary}</p>
-              </article>
-              <article className="mini-card">
-                <span className="eyebrow">Connected nodes</span>
-                <strong>{graphSummary.distinctNodes.length} nodes</strong>
-                <p>{graphConnections.length} visible paths around the current focus.</p>
-              </article>
-              <article className="mini-card">
-                <span className="eyebrow">Signal mix</span>
-                <strong>{graphRelationGroups.length} relation types</strong>
-                <p>{graphSummary.suggestedCount} suggested links still need review.</p>
-              </article>
-              <article className="mini-card">
-                <span className="eyebrow">Direction</span>
-                <strong>{graphSummary.outgoingCount} out / {graphSummary.incomingCount} in</strong>
-                <p>Shows whether this node mostly points outward or is referenced by others.</p>
-              </article>
+              {graphMode === 'neighborhood' ? (
+                <>
+                  <article className="graph-focus graph-focus-card">
+                    <span className="eyebrow">Focus node</span>
+                    <strong>{selectedNode?.title}</strong>
+                    <p>{selectedNode?.summary}</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Connected nodes</span>
+                    <strong>{graphSummary.distinctNodes.length} nodes</strong>
+                    <p>{graphConnections.length} visible paths around the current focus.</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Signal mix</span>
+                    <strong>{graphRelationGroups.length} relation types</strong>
+                    <p>{graphSummary.suggestedCount} suggested links still need review.</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Direction</span>
+                    <strong>{graphSummary.outgoingCount} out / {graphSummary.incomingCount} in</strong>
+                    <p>Shows whether this node mostly points outward or is referenced by others.</p>
+                  </article>
+                </>
+              ) : (
+                <>
+                  <article className="graph-focus graph-focus-card">
+                    <span className="eyebrow">Focus project</span>
+                    <strong>{activeProjectGraphProject?.title ?? 'No project selected'}</strong>
+                    <p>{activeProjectGraphProject?.summary ?? 'Select a project node to open a bounded project graph.'}</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Visible graph</span>
+                    <strong>{projectGraphView.nodes.length} nodes</strong>
+                    <p>{projectGraphView.edges.length} visible edges in the current filtered project map.</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Signal split</span>
+                    <strong>{projectGraph?.meta.inferredEdgeCount ?? 0} inferred</strong>
+                    <p>{projectGraph?.meta.edgeCount ?? 0} total edges are currently scoped to this project.</p>
+                  </article>
+                  <article className="mini-card">
+                    <span className="eyebrow">Timeline</span>
+                    <strong>{projectGraph?.timeline.length ?? 0} events</strong>
+                    <p>{currentProjectGraphEvent ? currentProjectGraphEvent.label : 'Use the scrubber to highlight graph growth over time.'}</p>
+                  </article>
+                </>
+              )}
             </div>
             {graphError ? <div className="empty-state">{graphError}</div> : null}
-            {isGraphLoading ? <div className="empty-state">Loading graph neighborhood...</div> : null}
-            {!isGraphLoading && !graphConnections.length ? (
+            {isGraphLoading ? <div className="empty-state">{graphMode === 'project-map' ? 'Loading project graph...' : 'Loading graph neighborhood...'}</div> : null}
+            {!isGraphLoading && graphMode === 'neighborhood' && !graphConnections.length ? (
               <div className="graph-empty">
                 <div className="empty-state">
                   No linked memory is visible for this node yet. Create relations first, or inspect nearby context signals below.
@@ -1482,7 +1612,19 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 </div>
               </div>
             ) : null}
-            {!!graphRelationGroups.length ? (
+            {!isGraphLoading && graphMode === 'project-map' && !activeProjectGraphProject ? (
+              <div className="graph-empty">
+                <div className="empty-state">Project map only opens for project nodes. Create or select a project first.</div>
+              </div>
+            ) : null}
+            {!isGraphLoading && graphMode === 'project-map' && !!activeProjectGraphProject && !projectGraphView.edges.length ? (
+              <div className="graph-empty">
+                <div className="empty-state">
+                  This project map is still sparse. Add `relevant_to` links to the project or relax the current graph filters.
+                </div>
+              </div>
+            ) : null}
+            {graphMode === 'neighborhood' && !!graphRelationGroups.length ? (
               <section className="graph-section-grid">
                 <article className="card relation-group-card">
                   <div className="section-head section-head--compact">
@@ -1535,6 +1677,89 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                         </div>
                       </button>
                     ))}
+                  </div>
+                </article>
+              </section>
+            ) : null}
+            {graphMode === 'project-map' && !!projectGraph && !!projectGraphView.nodes.length ? (
+              <section className="graph-section-grid graph-section-grid--project">
+                <article className="card relation-group-card project-graph-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Project map</span>
+                      <h3>Explore the project as a bounded memory field</h3>
+                    </div>
+                    <div className="chip-row">
+                      <button
+                        type="button"
+                        className={`tool-chip ${isProjectGraphPlaying ? 'tool-chip--active' : ''}`}
+                        disabled={!projectGraph.timeline.length}
+                        onClick={() => {
+                          setIsProjectGraphPlaying((current) => !current);
+                        }}
+                      >
+                        {isProjectGraphPlaying ? 'Pause' : 'Play'}
+                      </button>
+                      <button
+                        type="button"
+                        className="tool-chip"
+                        disabled={!projectGraph.timeline.length}
+                        onClick={() => setProjectGraphTimelineIndex(Math.max(projectGraph.timeline.length - 1, 0))}
+                      >
+                        Latest
+                      </button>
+                    </div>
+                  </div>
+                  <ProjectGraphCanvas
+                    graph={{
+                      ...projectGraph,
+                      nodes: projectGraphView.nodes,
+                      edges: projectGraphView.edges,
+                    }}
+                    selectedNodeId={selectedNode?.id ?? null}
+                    emphasizedNodeIds={projectGraphView.emphasizedNodeIds}
+                    emphasizedEdgeIds={projectGraphView.emphasizedEdgeIds}
+                    onSelectNode={(nodeId) => focusNode(nodeId, 'graph')}
+                  />
+                  <div className="project-graph-controls">
+                    <label className="search-box project-graph-scrubber">
+                      <span>Time emphasis</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(projectGraph.timeline.length - 1, 0)}
+                        value={Math.min(projectGraphTimelineIndex, Math.max(projectGraph.timeline.length - 1, 0))}
+                        onChange={(event) => {
+                          setIsProjectGraphPlaying(false);
+                          setProjectGraphTimelineIndex(Number(event.target.value));
+                        }}
+                      />
+                    </label>
+                    <div className="mini-card">
+                      <span className="eyebrow">Current event</span>
+                      <strong>{currentProjectGraphEvent?.label ?? 'Latest state'}</strong>
+                      <p>{currentProjectGraphEvent ? formatTime(currentProjectGraphEvent.at) : 'No timeline events available for this project yet.'}</p>
+                    </div>
+                  </div>
+                </article>
+                <article className="card relation-group-card">
+                  <div className="section-head section-head--compact">
+                    <div>
+                      <span className="eyebrow">Relation groups</span>
+                      <h3>What kind of links dominate this project?</h3>
+                    </div>
+                  </div>
+                  <div className="relation-group-grid">
+                    {projectGraphRelationGroups.map((item) => (
+                      <article key={item.relationType} className="mini-card">
+                        <span className={`chip relation-chip ${relationToneClass(item.relationType as GraphConnection['relation']['relationType'])}`}>
+                          {relationLabel(item.relationType)}
+                        </span>
+                        <strong>{item.count} links</strong>
+                        <p>Visible in the current project map filters.</p>
+                      </article>
+                    ))}
+                    {!projectGraphRelationGroups.length ? <div className="empty-state compact">No relation groups are visible with the current filters.</div> : null}
                   </div>
                 </article>
               </section>
@@ -1593,7 +1818,6 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
           <div className="page-heading">
             <span className="eyebrow">Current workspace</span>
             <h2>Scope management, not clutter.</h2>
-            <p>Workspace switching stays user-directed. Projects stay inside the current workspace instead of replacing it.</p>
           </div>
           <div className="two-column-grid">
             <section className="card page-card">
@@ -1684,7 +1908,6 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
           <div className="page-heading">
             <span className="eyebrow">Notes</span>
             <h2>Memory cards for the current workspace.</h2>
-            <p>Use the board to scan quickly, then open a card for the full note. Keep the surface lighter than the old wide reading layout.</p>
           </div>
           <div className="notes-toolbar">
             <section className="card notes-toolbar-card">
@@ -1869,26 +2092,25 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       <section className="page-section home-section">
         <div className="home-hero">
           <span className="eyebrow">Memforge</span>
-          <h2>Local API and MCP access.</h2>
-          <p>Start here. Open the rest from the top menu.</p>
+          <h2>Local guide and graph access.</h2>
           <div className="hero-actions">
             <button type="button" className="hero-button hero-button--primary" onClick={() => selectView('search')}>
-              Open API
+              Open Guide
             </button>
-            <button type="button" className="hero-button hero-button--secondary" onClick={() => selectView('projects')}>
-              Open MCP Tools
+            <button type="button" className="hero-button hero-button--secondary" onClick={() => selectView('graph')}>
+              Open Graph
             </button>
           </div>
           <div className="info-grid two">
             <article className="info-block">
-              <span className="info-label">Local API</span>
-              <strong>Health, workspace, bootstrap.</strong>
-              <p>Direct local endpoints.</p>
+              <span className="info-label">Guide</span>
+              <strong>HTTP API and MCP in one place.</strong>
+              <p>Text-first setup and workflow reference.</p>
             </article>
             <article className="info-block">
-              <span className="info-label">MCP Tools</span>
-              <strong>Search, capture, bundle.</strong>
-              <p>Agent-native access.</p>
+              <span className="info-label">Graph</span>
+              <strong>Neighborhood and project map.</strong>
+              <p>Inspect linked memory when structure matters.</p>
             </article>
           </div>
         </div>
@@ -1926,8 +2148,27 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 <button
                   key={item.id}
                   type="button"
-                  className={`utility-nav-item ${view === item.id ? 'active' : ''}`}
-                  onClick={() => selectView(item.id)}
+                  className={`utility-nav-item ${
+                    item.id === 'project-map'
+                      ? view === 'graph' && graphMode === 'project-map'
+                        ? 'active'
+                        : ''
+                      : view === item.id
+                        ? 'active'
+                        : ''
+                  }`}
+                  onClick={() => {
+                    if (item.id === 'project-map') {
+                      setGraphMode('project-map');
+                      selectView('graph');
+                      return;
+                    }
+
+                    if (item.id === 'graph') {
+                      setGraphMode('neighborhood');
+                    }
+                    selectView(item.id);
+                  }}
                 >
                   {item.label}
                 </button>

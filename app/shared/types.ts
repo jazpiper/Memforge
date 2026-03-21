@@ -297,6 +297,58 @@ export interface NeighborhoodItem {
   };
 }
 
+export interface ProjectGraphNode {
+  id: string;
+  title: string | null;
+  type: NodeType;
+  status: NodeStatus;
+  canonicality: Canonicality;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  degree: number;
+  isFocus: boolean;
+  projectRole: "focus" | "member";
+}
+
+export interface ProjectGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relationType: RelationType;
+  relationSource: RelationSource;
+  status: RelationStatus | InferredRelationStatus;
+  score?: number | null;
+  generator?: string | null;
+  createdAt: string;
+  evidence?: JsonMap;
+}
+
+export interface ProjectGraphTimelineEvent {
+  id: string;
+  kind: "node_created" | "relation_created" | "activity";
+  at: string;
+  nodeId?: string;
+  edgeId?: string;
+  label: string;
+}
+
+export interface ProjectGraphPayload {
+  nodes: ProjectGraphNode[];
+  edges: ProjectGraphEdge[];
+  timeline: ProjectGraphTimelineEvent[];
+  meta: {
+    focusProjectId: string;
+    nodeCount: number;
+    edgeCount: number;
+    inferredEdgeCount: number;
+    timeRange: {
+      start: string | null;
+      end: string | null;
+    };
+  };
+}
+
 export interface ContextBundle {
   target: {
     type: NodeType | "workspace";

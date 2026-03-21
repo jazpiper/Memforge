@@ -10,6 +10,7 @@ import type {
   Integration,
   NodeDetail,
   Node,
+  ProjectGraphPayload,
   Relation,
   ContextBundlePreviewItem,
   Workspace,
@@ -356,6 +357,161 @@ function mapNeighborhoodConnection(targetNodeId: string, raw: any): GraphConnect
   };
 }
 
+function mapProjectGraphPayload(raw: any): ProjectGraphPayload {
+  const data = readPayloadData(raw);
+  return {
+    nodes: Array.isArray(data?.nodes)
+      ? data.nodes.map((item: any) => ({
+          id: item.id,
+          title: item.title ?? 'Untitled',
+          type: item.type,
+          status: item.status ?? 'active',
+          canonicality: item.canonicality ?? 'appended',
+          summary: item.summary ?? 'No summary yet.',
+          createdAt: item.createdAt ?? item.created_at ?? new Date().toISOString(),
+          updatedAt: item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? new Date().toISOString(),
+          degree: typeof item.degree === 'number' ? item.degree : 0,
+          isFocus: Boolean(item.isFocus),
+          projectRole: item.projectRole === 'focus' ? 'focus' : 'member',
+        }))
+      : [],
+    edges: Array.isArray(data?.edges)
+      ? data.edges.map((item: any) => ({
+          id: item.id,
+          source: item.source,
+          target: item.target,
+          relationType: item.relationType ?? item.relation_type ?? 'related_to',
+          relationSource: item.relationSource === 'inferred' ? 'inferred' : 'canonical',
+          status: item.status ?? 'active',
+          score: typeof item.score === 'number' ? item.score : null,
+          generator: typeof item.generator === 'string' ? item.generator : null,
+          createdAt: item.createdAt ?? item.created_at ?? new Date().toISOString(),
+          evidence: item.evidence ?? {},
+        }))
+      : [],
+    timeline: Array.isArray(data?.timeline)
+      ? data.timeline.map((item: any) => ({
+          id: item.id,
+          kind: item.kind ?? 'activity',
+          at: item.at ?? new Date().toISOString(),
+          nodeId: typeof item.nodeId === 'string' ? item.nodeId : undefined,
+          edgeId: typeof item.edgeId === 'string' ? item.edgeId : undefined,
+          label: item.label ?? 'Graph event',
+        }))
+      : [],
+    meta: {
+      focusProjectId: data?.meta?.focusProjectId ?? data?.meta?.focus_project_id ?? '',
+      nodeCount: typeof data?.meta?.nodeCount === 'number' ? data.meta.nodeCount : 0,
+      edgeCount: typeof data?.meta?.edgeCount === 'number' ? data.meta.edgeCount : 0,
+      inferredEdgeCount: typeof data?.meta?.inferredEdgeCount === 'number' ? data.meta.inferredEdgeCount : 0,
+      timeRange: {
+        start: data?.meta?.timeRange?.start ?? null,
+        end: data?.meta?.timeRange?.end ?? null,
+      },
+    },
+  };
+}
+
+function buildFallbackProjectGraph(state: WorkspaceSeed, projectId: string): ProjectGraphPayload {
+  const project = state.nodes.find((node) => node.id === projectId && node.type === 'project');
+  if (!project) {
+    throw new Error('Project not found in fallback workspace.');
+  }
+
+  const membershipRelations = state.relations.filter(
+    (relation) =>
+      relation.relationType === 'relevant_to' &&
+      relation.status !== 'archived' &&
+      relation.status !== 'rejected' &&
+      (relation.fromNodeId === projectId || relation.toNodeId === projectId),
+  );
+  const memberNodeIds = new Set<string>([projectId]);
+  membershipRelations.forEach((relation) => {
+    memberNodeIds.add(relation.fromNodeId === projectId ? relation.toNodeId : relation.fromNodeId);
+  });
+
+  const nodes = state.nodes
+    .filter((node) => memberNodeIds.has(node.id))
+    .map((node) => ({
+      id: node.id,
+      title: node.title,
+      type: node.type,
+      status: node.status,
+      canonicality: node.canonicality,
+      summary: node.summary,
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt,
+      degree: state.relations.filter(
+        (relation) => memberNodeIds.has(relation.fromNodeId) && memberNodeIds.has(relation.toNodeId) && (relation.fromNodeId === node.id || relation.toNodeId === node.id),
+      ).length,
+      isFocus: node.id === projectId,
+      projectRole: node.id === projectId ? ('focus' as const) : ('member' as const),
+    }));
+  const nodeTitleById = new Map(nodes.map((node) => [node.id, node.title] as const));
+  const edges = state.relations
+    .filter(
+      (relation) =>
+        memberNodeIds.has(relation.fromNodeId) &&
+        memberNodeIds.has(relation.toNodeId) &&
+        relation.status !== 'archived' &&
+        relation.status !== 'rejected',
+    )
+    .map((relation) => ({
+      id: relation.id,
+      source: relation.fromNodeId,
+      target: relation.toNodeId,
+      relationType: relation.relationType,
+      relationSource: 'canonical' as const,
+      status: relation.status,
+      score: null,
+      generator: null,
+      createdAt: relation.createdAt,
+      evidence: {},
+    }));
+  const timeline = [
+    ...nodes.map((node) => ({
+      id: `timeline-node:${node.id}`,
+      kind: 'node_created' as const,
+      at: node.createdAt,
+      nodeId: node.id,
+      label: `${node.title} created`,
+    })),
+    ...edges.map((edge) => ({
+      id: `timeline-edge:${edge.id}`,
+      kind: 'relation_created' as const,
+      at: edge.createdAt,
+      edgeId: edge.id,
+      nodeId: edge.source,
+      label: `${nodeTitleById.get(edge.source) ?? edge.source} ${edge.relationType.replaceAll('_', ' ')} ${nodeTitleById.get(edge.target) ?? edge.target}`,
+    })),
+    ...state.activities
+      .filter((activity) => memberNodeIds.has(activity.targetNodeId))
+      .map((activity) => ({
+        id: `timeline-activity:${activity.id}`,
+        kind: 'activity' as const,
+        at: activity.createdAt,
+        nodeId: activity.targetNodeId,
+        label: `${activity.activityType.replaceAll('_', ' ')} on ${nodeTitleById.get(activity.targetNodeId) ?? activity.targetNodeId}`,
+      })),
+  ].sort((left, right) => left.at.localeCompare(right.at) || left.id.localeCompare(right.id));
+
+  return {
+    nodes,
+    edges,
+    timeline,
+    meta: {
+      focusProjectId: projectId,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      inferredEdgeCount: 0,
+      timeRange: {
+        start: timeline[0]?.at ?? project.createdAt,
+        end: timeline[timeline.length - 1]?.at ?? project.createdAt,
+      },
+    },
+  };
+}
+
 async function requestJson(path: string, init?: RequestInit) {
   const token = getRendererToken();
   let response: Response;
@@ -667,6 +823,16 @@ export async function getGraphNeighborhood(id: string, hops: 1 | 2): Promise<Gra
 
       return merged;
     }
+  );
+}
+
+export async function getProjectGraph(projectId: string): Promise<ProjectGraphPayload> {
+  return withFallback(
+    async () => {
+      const payload = await requestJson(`/projects/${encodeURIComponent(projectId)}/graph?include_inferred=1&max_inferred=60`);
+      return mapProjectGraphPayload(payload);
+    },
+    async () => buildFallbackProjectGraph(getFallbackState(), projectId),
   );
 }
 

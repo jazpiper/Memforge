@@ -135,6 +135,58 @@ export interface GraphConnection {
   viaNodeTitle?: string;
 }
 
+export interface ProjectGraphNode {
+  id: string;
+  title: string;
+  type: NodeType;
+  status: NodeStatus;
+  canonicality: Canonicality;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+  degree: number;
+  isFocus: boolean;
+  projectRole: 'focus' | 'member';
+}
+
+export interface ProjectGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relationType: RelationType;
+  relationSource: 'canonical' | 'inferred';
+  status: RelationStatus | 'muted' | 'hidden' | 'expired';
+  score?: number | null;
+  generator?: string | null;
+  createdAt: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface ProjectGraphTimelineEvent {
+  id: string;
+  kind: 'node_created' | 'relation_created' | 'activity';
+  at: string;
+  nodeId?: string;
+  edgeId?: string;
+  label: string;
+}
+
+export interface ProjectGraphPayload {
+  nodes: ProjectGraphNode[];
+  edges: ProjectGraphEdge[];
+  timeline: ProjectGraphTimelineEvent[];
+  meta: {
+    focusProjectId: string;
+    nodeCount: number;
+    edgeCount: number;
+    inferredEdgeCount: number;
+    timeRange: {
+      start: string | null;
+      end: string | null;
+    };
+  };
+}
+
 export interface Activity {
   id: string;
   targetNodeId: string;
