@@ -36,9 +36,9 @@ A non-agent client can bootstrap from health and bootstrap, then use the API dir
 
 For agent tooling that prefers structured tool calls, the MCP bridge is available through:
 
-- `Memforge --mcp-stdio`
 - `npm run mcp`
 - `node dist/server/app/mcp/index.js --api http://127.0.0.1:8787/api/v1`
+- `memforge-mcp --api http://127.0.0.1:8787/api/v1`
 - `~/.memforge/bin/memforge-mcp`
 
 Representative tools:

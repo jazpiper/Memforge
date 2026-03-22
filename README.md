@@ -39,9 +39,9 @@ Memforge is documented around two public ways to use it:
 Use the public repo when you want the full source-run surface:
 
 - local API under `/api/v1`
-- CLI commands through `memforge` and `pnw`
-- stdio MCP bridge through `memforge-mcp`
-- renderer and desktop workflows from source
+- source-run renderer workflow through `npm run dev`
+- source-run desktop workflow through `npm run dev:desktop`
+- stdio MCP bridge through `npm run mcp`
 - runtime workspace create/open switching without restarting the service
 
 ```bash
@@ -49,6 +49,18 @@ git clone https://github.com/jazpiper/Memforge.git
 cd Memforge
 npm install
 npm run dev
+```
+
+Desktop runtime from source:
+
+```bash
+npm run dev:desktop
+```
+
+MCP from source:
+
+```bash
+npm run mcp
 ```
 
 Server only:
@@ -65,6 +77,8 @@ npm run check
 npm test
 npm run build
 ```
+
+If you want installed terminal commands like `memforge`, `pnw`, and `memforge-mcp`, use the npm distribution path below.
 
 ## 2. npm Terminal-Only Product
 
