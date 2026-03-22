@@ -2,9 +2,10 @@
 
 ## At A Glance
 
-- This package is the npm-distributed CLI and MCP entrypoint for Memforge.
+- This package is the npm-distributed terminal-only product for Memforge.
 - It provides the `memforge`, `pnw`, and `memforge-mcp` commands.
 - The CLI stays intentionally thin and maps back to the local Memforge HTTP API.
+- It does not include the renderer or a packaged desktop UI.
 
 It defers behavior to the local Memforge API contract in [`docs/api.md`](../../docs/api.md).
 
@@ -13,6 +14,8 @@ It defers behavior to the local Memforge API contract in [`docs/api.md`](../../d
 - `memforge` as the main CLI entrypoint
 - `pnw` as the short command for day-to-day workspace and memory operations
 - `memforge-mcp` as the direct stdio MCP entrypoint for agent clients
+
+This distribution is for terminal workflows only. If you want the full source-run product surface, use the public Git repo path from the root [`README.md`](../../README.md).
 
 ## Install
 
@@ -30,6 +33,8 @@ pnw mcp install
 ```
 
 If the API is running in bearer mode, set `MEMFORGE_API_TOKEN` in the MCP client environment. The launcher intentionally does not persist tokens to disk.
+
+The npm package expects a running local Memforge API and does not ship renderer pages or a packaged desktop app.
 
 You can also print the direct MCP command or a config snippet:
 
@@ -116,5 +121,5 @@ pnw workspace open --root /Users/name/Documents/Memforge-Test
 - `--format json` is useful when scripting, while `--format markdown` is best for `context`
 - `workspace open` switches the active workspace in the running local Memforge service without restarting the server
 - `memforge-mcp` is the direct stdio MCP entrypoint from the npm package
-- See the root [`README.md`](../../README.md) for product overview and install paths
+- See the root [`README.md`](../../README.md) for source-run usage and install paths
 - See [`docs/mcp.md`](../../docs/mcp.md) for editor MCP wiring details

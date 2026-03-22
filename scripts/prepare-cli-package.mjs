@@ -5,12 +5,26 @@ const rootDir = process.cwd();
 const packageJson = JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8"));
 const outputDir = path.join(rootDir, "release", "npm-cli");
 const readmeSource = path.join(rootDir, "app", "cli", "README.md");
+const runtimeDependencyAllowlist = ["@modelcontextprotocol/sdk", "zod"];
 const directoriesToCopy = [
   ["app", "cli", "bin"],
   ["dist", "server", "app", "cli"],
   ["dist", "server", "app", "mcp"],
   ["dist", "server", "app", "shared"],
 ];
+
+const packageDependencies = Object.fromEntries(
+  runtimeDependencyAllowlist.map((dependencyName) => {
+    const version = packageJson.dependencies?.[dependencyName];
+    if (typeof version !== "string" || !version.trim()) {
+      throw new Error(
+        `Missing runtime dependency "${dependencyName}" in root package.json dependencies. Update scripts/prepare-cli-package.mjs allowlist or root dependencies.`
+      );
+    }
+
+    return [dependencyName, version];
+  })
+);
 const filesToCopy = [
   ["dist", "server", "app", "server", "observability.js"],
   ["app", "cli", "src", "format.js"],
@@ -61,7 +75,7 @@ writeFileSync(
     {
       name: "memforge",
       version: packageJson.version,
-      description: "Local-first Memforge CLI and MCP entrypoint.",
+      description: "Terminal-only Memforge CLI and MCP entrypoint.",
       type: "module",
       bin: {
         memforge: "./app/cli/bin/pnw.js",
@@ -69,6 +83,7 @@ writeFileSync(
         "memforge-mcp": "./app/cli/bin/memforge-mcp.js",
       },
       files: ["app/cli", "app/mcp", "app/shared", "app/server/observability.js", "README.md"],
+      dependencies: packageDependencies,
       engines: {
         node: ">=20",
       },

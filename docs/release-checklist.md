@@ -11,6 +11,7 @@
 - run `npm run build`
 - run `npm run prepare:cli-package`
 - confirm `npm pack ./release/npm-cli` succeeds
+- confirm `npm run verify:cli-package` succeeds after packing the tarball
 - confirm `npm run verify:desktop:mac-release` succeeds on macOS
 - confirm desktop packaging smoke tests on macOS and Linux
 
@@ -30,9 +31,12 @@
 ## npm release
 
 - `npm publish ./release/npm-cli --access public` succeeds
+- `npm pack ./release/npm-cli` is followed by `npm run verify:cli-package`
 - `memforge --help` works after install
+- `pnw help` works after install
 - `pnw mcp install` creates `~/.memforge/bin/memforge-mcp`
 - `memforge-mcp --help` starts from the installed package
+- the installed MCP launcher contains `memforge-mcp.js` and `--api`, but not persisted bearer tokens
 
 ## Release notes and docs
 

@@ -22,6 +22,7 @@ jobs:
       - run: npm run build
       - run: npm run prepare:cli-package
       - run: npm pack ./release/npm-cli
+      - run: npm run verify:cli-package
 
   package-macos:
     needs: validate
@@ -88,6 +89,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run prepare:cli-package
+      - run: npm pack ./release/npm-cli
+      - run: npm run verify:cli-package
       - run: npm publish ./release/npm-cli --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

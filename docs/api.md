@@ -4,7 +4,8 @@
 
 - Memforge exposes one local HTTP API for the desktop app, CLI, and external agent tools.
 - The current base path is `/api/v1`.
-- The most important bootstrap endpoints are `GET /api/v1`, `GET /api/v1/health`, `GET /api/v1/workspace`, and `GET /api/v1/bootstrap`.
+- The most important bootstrap endpoints are `GET /api/v1/health` and `GET /api/v1/bootstrap`.
+- `GET /api/v1` and `GET /api/v1/workspace` are available after auth or in optional mode.
 - Durable writes are append-first and provenance-aware.
 - MCP and CLI behavior should map back to this API instead of introducing a second contract.
 
@@ -1240,7 +1241,6 @@ The CLI should be a thin ergonomic layer over the API.
 - `pnw workspace list`
 - `pnw workspace create`
 - `pnw workspace open`
-- `pnw workspace switch`
 
 ## 20.2 CLI examples
 ### Search

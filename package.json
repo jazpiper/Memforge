@@ -3,13 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "author": {
+    "name": "jazpiper",
+    "email": "jazpiper1@gmail.com"
+  },
   "main": "dist/server/app/desktop/main.js",
   "bin": {
     "memforge": "./app/cli/bin/pnw.js",
     "pnw": "./app/cli/bin/pnw.js",
     "memforge-mcp": "./app/cli/bin/memforge-mcp.js"
   },
-  "description": "Local-first personal knowledge layer for humans and agents.",
+  "description": "Local-first memory workspace with source-run UI, local API, CLI, and MCP tools.",
   "scripts": {
     "dev": "concurrently -n server,renderer -c blue,green \"npm:dev:server\" \"npm:dev:renderer\"",
     "dev:server": "tsx watch app/server/index.ts",
@@ -31,6 +35,7 @@
     "package:desktop:linux": "npm run build && electron-builder --publish never --linux AppImage deb",
     "verify:desktop:mac-release": "node scripts/verify-macos-artifacts.mjs",
     "prepare:cli-package": "node scripts/prepare-cli-package.mjs",
+    "verify:cli-package": "node scripts/verify-cli-package.mjs",
     "pack:cli": "npm run build && npm run prepare:cli-package && npm pack ./release/npm-cli",
     "publish:cli": "npm run build && npm run prepare:cli-package && npm publish ./release/npm-cli --provenance",
     "start": "node dist/server/app/server/index.js",

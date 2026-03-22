@@ -2,7 +2,7 @@
 
 Memforge is a local-first personal knowledge layer for humans and agents.
 
-It gives your desktop app, local API, CLI, and MCP-capable tools one durable workspace for shared memory instead of scattering context across prompts, notes, and tool-specific state.
+It gives your local API, CLI, MCP-capable tools, and source-run UI one durable workspace for shared memory instead of scattering context across prompts, notes, and tool-specific state.
 
 ## What It Is For
 
@@ -25,24 +25,50 @@ The core idea is simple: one brain, many tools.
 - shared memory for humans and coding agents
 - append-first writes with explicit provenance
 - compact context assembly for agent workflows
-- desktop, HTTP API, CLI, and MCP access over the same local data
+- HTTP API, CLI, MCP, and source-run UI access over the same local data
 
-## What Ships Today
+## Distribution Paths
 
-- desktop app for local browsing, search, governance, and project exploration
-- loopback HTTP API under `/api/v1`
+Memforge is documented around two public ways to use it:
+
+1. Git public repo for direct source execution
+2. npm package for the terminal-only product
+
+## 1. Git Public Repo
+
+Use the public repo when you want the full source-run surface:
+
+- local API under `/api/v1`
 - CLI commands through `memforge` and `pnw`
 - stdio MCP bridge through `memforge-mcp`
+- renderer and desktop workflows from source
 - runtime workspace create/open switching without restarting the service
 
-## Install
+```bash
+git clone https://github.com/jazpiper/Memforge.git
+cd Memforge
+npm install
+npm run dev
+```
 
-Desktop releases:
+Server only:
 
-- macOS arm64: download the `.dmg` or `.zip` from [GitHub Releases](https://github.com/jazpiper/Memforge/releases)
-- Linux x64: download the `.AppImage` or `.deb` from [GitHub Releases](https://github.com/jazpiper/Memforge/releases)
+```bash
+npm run build:server
+npm start
+```
 
-CLI + MCP from npm:
+Checks:
+
+```bash
+npm run check
+npm test
+npm run build
+```
+
+## 2. npm Terminal-Only Product
+
+Use the npm package when you want terminal-native commands only:
 
 ```bash
 npm install -g memforge
@@ -51,13 +77,25 @@ pnw mcp install
 memforge-mcp --help
 ```
 
+The npm package includes:
+
+- `memforge`
+- `pnw`
+- `memforge-mcp`
+
+The npm package does not include:
+
+- renderer pages
+- packaged desktop UI
+
 `pnw mcp install` writes a stable launcher to `~/.memforge/bin/memforge-mcp`, which is the recommended command path for editor MCP configs.
 
 If the API is running in bearer mode, set `MEMFORGE_API_TOKEN` in the MCP client environment. The launcher does not write tokens to disk.
 
+The terminal-only npm package expects a running local Memforge API. If you want the full source-run product surface, use the Git public repo path above.
+
 Node requirements:
 
-- desktop release users do not need Node
 - npm CLI package: Node 20+
 - local source development: Node 25+ is recommended because the backend uses `node:sqlite`
 
@@ -92,40 +130,12 @@ memforge-mcp --api http://127.0.0.1:8787/api/v1
 
 For launcher paths, environment variables, and editor-specific setup, see `docs/mcp.md`.
 
-## Local Development
-
-```bash
-npm install
-npm run dev
-```
-
-Server only:
-
-```bash
-npm run build:server
-npm start
-```
-
-Checks:
-
-```bash
-npm run check
-npm test
-npm run build
-```
-
-Desktop packaging:
-
-```bash
-npm run package:desktop
-```
-
 ## Docs
 
 - `docs/README.md` for the full documentation map and reading order
+- `app/cli/README.md` for the npm terminal-only package
 - `docs/concept.md` for product positioning
 - `docs/api.md` for the local HTTP and CLI contract
 - `docs/mcp.md` for MCP bridge setup
-- `docs/workflows.md` for validated usage flows
+- `docs/workflows.md` for common usage flows
 - `docs/schema.md` for storage and data model details
-- `CHANGELOG.md` for release history
