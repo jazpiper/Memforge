@@ -1,4 +1,4 @@
-# Memforge — MVP Spec
+# RecallX — MVP Spec
 
 > Historical v1 design reference.
 > Some sections in this document no longer reflect the shipped v2 surface.

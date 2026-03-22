@@ -2,16 +2,16 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { memforgeHomeDir, resolveWorkspaceRoot } from "../app/server/workspace.js";
+import { recallxHomeDir, resolveWorkspaceRoot } from "../app/server/workspace.js";
 
 const tempRoots: string[] = [];
 const originalCwd = process.cwd();
 const originalHome = process.env.HOME;
-const originalWorkspaceRoot = process.env.MEMFORGE_WORKSPACE_ROOT;
-const originalWorkspaceName = process.env.MEMFORGE_WORKSPACE_NAME;
+const originalWorkspaceRoot = process.env.RECALLX_WORKSPACE_ROOT;
+const originalWorkspaceName = process.env.RECALLX_WORKSPACE_NAME;
 
 function createTempRoot() {
-  const root = mkdtempSync(path.join(tmpdir(), "memforge-workspace-test-"));
+  const root = mkdtempSync(path.join(tmpdir(), "recallx-workspace-test-"));
   tempRoots.push(root);
   return root;
 }
@@ -24,14 +24,14 @@ afterEach(() => {
     process.env.HOME = originalHome;
   }
   if (originalWorkspaceRoot === undefined) {
-    delete process.env.MEMFORGE_WORKSPACE_ROOT;
+    delete process.env.RECALLX_WORKSPACE_ROOT;
   } else {
-    process.env.MEMFORGE_WORKSPACE_ROOT = originalWorkspaceRoot;
+    process.env.RECALLX_WORKSPACE_ROOT = originalWorkspaceRoot;
   }
   if (originalWorkspaceName === undefined) {
-    delete process.env.MEMFORGE_WORKSPACE_NAME;
+    delete process.env.RECALLX_WORKSPACE_NAME;
   } else {
-    process.env.MEMFORGE_WORKSPACE_NAME = originalWorkspaceName;
+    process.env.RECALLX_WORKSPACE_NAME = originalWorkspaceName;
   }
 
   while (tempRoots.length) {
@@ -43,52 +43,52 @@ afterEach(() => {
 });
 
 describe("resolveWorkspaceRoot", () => {
-  it("defaults to ~/.memforge/{workspaceName}", () => {
+  it("defaults to ~/.recallx/{workspaceName}", () => {
     const homeRoot = createTempRoot();
     const projectRoot = createTempRoot();
     process.env.HOME = homeRoot;
-    delete process.env.MEMFORGE_WORKSPACE_ROOT;
-    process.env.MEMFORGE_WORKSPACE_NAME = "Sample Workspace";
+    delete process.env.RECALLX_WORKSPACE_ROOT;
+    process.env.RECALLX_WORKSPACE_NAME = "Sample Workspace";
     process.chdir(projectRoot);
 
     const root = resolveWorkspaceRoot();
 
-    expect(root).toBe(path.join(homeRoot, ".memforge", "Sample Workspace"));
+    expect(root).toBe(path.join(homeRoot, ".recallx", "Sample Workspace"));
   });
 
-  it("migrates a legacy repo-local .memforge-workspace to the user root when needed", () => {
+  it("migrates a legacy repo-local .recallx-workspace to the user root when needed", () => {
     const homeRoot = createTempRoot();
     const projectRoot = createTempRoot();
-    const legacyRoot = path.join(projectRoot, ".memforge-workspace");
+    const legacyRoot = path.join(projectRoot, ".recallx-workspace");
     mkdirSync(legacyRoot, { recursive: true });
     writeFileSync(path.join(legacyRoot, "workspace.db"), "legacy");
     process.env.HOME = homeRoot;
-    delete process.env.MEMFORGE_WORKSPACE_ROOT;
-    process.env.MEMFORGE_WORKSPACE_NAME = "Migrated Workspace";
+    delete process.env.RECALLX_WORKSPACE_ROOT;
+    process.env.RECALLX_WORKSPACE_NAME = "Migrated Workspace";
     process.chdir(projectRoot);
 
     const root = resolveWorkspaceRoot();
 
-    expect(root).toBe(path.join(homeRoot, ".memforge", "Migrated Workspace"));
+    expect(root).toBe(path.join(homeRoot, ".recallx", "Migrated Workspace"));
     expect(existsSync(path.join(root, "workspace.db"))).toBe(true);
   });
 
   it("can ignore the legacy repo-local root for desktop-style launches", () => {
     const homeRoot = createTempRoot();
     const projectRoot = createTempRoot();
-    const legacyRoot = path.join(projectRoot, ".memforge-workspace");
+    const legacyRoot = path.join(projectRoot, ".recallx-workspace");
     mkdirSync(legacyRoot, { recursive: true });
     writeFileSync(path.join(legacyRoot, "workspace.db"), "legacy");
     process.env.HOME = homeRoot;
-    delete process.env.MEMFORGE_WORKSPACE_ROOT;
-    process.env.MEMFORGE_WORKSPACE_NAME = "Desktop Workspace";
+    delete process.env.RECALLX_WORKSPACE_ROOT;
+    process.env.RECALLX_WORKSPACE_NAME = "Desktop Workspace";
     process.chdir(projectRoot);
 
     const root = resolveWorkspaceRoot({
       allowLegacyProjectRoot: false
     });
 
-    expect(root).toBe(path.join(memforgeHomeDir(), "Desktop Workspace"));
+    expect(root).toBe(path.join(recallxHomeDir(), "Desktop Workspace"));
     expect(existsSync(path.join(root, "workspace.db"))).toBe(false);
   });
 });

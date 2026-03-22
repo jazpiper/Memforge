@@ -83,8 +83,8 @@ const WORKSPACE_CAPTURE_INBOX_KEY = "workspace.capture.inboxNodeId";
 const SEARCH_FALLBACK_TOKEN_LIMIT = 5;
 const workspaceInboxSource: Source = {
   actorType: "system",
-  actorLabel: "Memforge",
-  toolName: "memforge-system"
+  actorLabel: "RecallX",
+  toolName: "recallx-system"
 };
 
 type SemanticIndexStatus = (typeof SEMANTIC_INDEX_STATUS_VALUES)[number];
@@ -723,7 +723,7 @@ function mapIntegration(row: Record<string, unknown>): IntegrationRecord {
 
 const RELATION_USAGE_ROLLUP_STATE_ID = "bootstrap";
 
-export class MemforgeRepository {
+export class RecallXRepository {
   private readonly workspaceKey: string;
 
   private readonly sqliteVectorIndexStore: VectorIndexStore;

@@ -1,7 +1,7 @@
 import type { BuildContextBundleInput, RelationType } from "../shared/contracts.js";
 import type { ContextBundle, NeighborhoodItem, RelationUsageSummary, SearchResultItem } from "../shared/types.js";
 import { appendCurrentTelemetryDetails } from "./observability.js";
-import type { MemforgeRepository } from "./repositories.js";
+import type { RecallXRepository } from "./repositories.js";
 import { computeUsageBonus, relationTypeSpecificityBonus } from "./relation-scoring.js";
 
 export type RetrievalRankWeights = {
@@ -81,7 +81,7 @@ function prioritizeItems(
 }
 
 function buildNeighborhoodResult(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   nodeId: string,
   options?: {
     relationTypes?: RelationType[];
@@ -357,7 +357,7 @@ function buildRetrievalCandidates(
 }
 
 export function buildNeighborhoodItems(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   nodeId: string,
   options?: {
     relationTypes?: RelationType[];
@@ -369,7 +369,7 @@ export function buildNeighborhoodItems(
 }
 
 export function buildCandidateRelationBonusMap(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   targetNodeId: string,
   candidateNodeIds: string[]
 ) {
@@ -400,7 +400,7 @@ export function buildCandidateRelationBonusMap(
 }
 
 export function buildTargetRelatedRetrievalItems(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   targetId: string,
   filters: {
     types?: string[];
@@ -420,7 +420,7 @@ export function buildTargetRelatedRetrievalItems(
 }
 
 async function buildWorkspaceContextBundle(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   input: BuildContextBundleInput
 ): Promise<ContextBundle> {
   const recentNodes = repository
@@ -481,7 +481,7 @@ async function buildWorkspaceContextBundle(
 }
 
 export async function buildContextBundle(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   input: BuildContextBundleInput
 ): Promise<ContextBundle> {
   if (!input.target?.id) {

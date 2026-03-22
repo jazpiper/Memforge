@@ -6,14 +6,14 @@ import { workspaceInfo } from "./config.js";
 import { openDatabase } from "./db.js";
 import { AppError } from "./errors.js";
 import { bootstrapAutomaticGovernance } from "./governance.js";
-import { MemforgeRepository } from "./repositories.js";
+import { RecallXRepository } from "./repositories.js";
 import { defaultWorkspaceName, ensureWorkspace, type WorkspacePaths } from "./workspace.js";
 import type { WorkspaceCatalogItem, WorkspaceInfo } from "../shared/types.js";
-import { MEMFORGE_VERSION } from "../shared/version.js";
+import { RECALLX_VERSION } from "../shared/version.js";
 
 interface WorkspaceSessionState {
   db: DatabaseSync;
-  repository: MemforgeRepository;
+  repository: RecallXRepository;
   workspaceInfo: WorkspaceInfo;
   workspaceRoot: string;
   paths: WorkspacePaths;
@@ -92,7 +92,7 @@ export class WorkspaceSessionManager {
 
     const paths = ensureWorkspace(resolvedRoot);
     const db = openDatabase(paths);
-    const repository = new MemforgeRepository(db, resolvedRoot);
+    const repository = new RecallXRepository(db, resolvedRoot);
     const storedSettings = repository.getSettings(["workspace.name"]);
     const resolvedName =
       typeof storedSettings["workspace.name"] === "string" && storedSettings["workspace.name"].trim()
@@ -100,7 +100,7 @@ export class WorkspaceSessionManager {
         : options.workspaceName?.trim() || defaultWorkspaceName(resolvedRoot);
 
     repository.setSetting("workspace.name", resolvedName);
-    repository.setSetting("workspace.version", MEMFORGE_VERSION);
+    repository.setSetting("workspace.version", RECALLX_VERSION);
     repository.setSetting("api.bind", `${this.serverConfig.bindAddress}:${this.serverConfig.port}`);
     repository.setSetting("api.auth.mode", this.authMode);
     repository.ensureBaseSettings({

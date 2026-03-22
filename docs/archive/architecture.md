@@ -1,4 +1,4 @@
-# Memforge — Architecture
+# RecallX — Architecture
 
 > Historical v1 design reference.
 > Some sections in this document no longer reflect the shipped v2 surface.
@@ -684,9 +684,9 @@ Good for:
 A thin CLI on top of the API can make adoption easier.
 
 Examples:
-- `pnw search "project context"`
-- `pnw context project_42 --mode compact`
-- `pnw append node_123 --file output.md --source codex`
+- `recallx search "project context"`
+- `recallx context project_42 --mode compact`
+- `recallx append node_123 --file output.md --source codex`
 
 This may be more ergonomic for terminal-native tools.
 
@@ -833,7 +833,7 @@ These do not need to block the first build, but they will matter soon:
 
 ## 22. Summary
 
-The right architecture for Memforge is not a cloud AI note app.
+The right architecture for RecallX is not a cloud AI note app.
 It is a **desktop-local knowledge system with an embedded local integration layer**.
 
 Its core value comes from:

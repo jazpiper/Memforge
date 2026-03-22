@@ -1,12 +1,12 @@
-# Memforge
+# RecallX
 
-Memforge is a local-first personal knowledge layer for humans and agents.
+RecallX is a local-first personal knowledge layer for humans and agents.
 
 It gives your local API, CLI, MCP-capable tools, and source-run UI one durable workspace for shared memory instead of scattering context across prompts, notes, and tool-specific state.
 
 ## What It Is For
 
-Memforge is built to keep these things in one local workspace:
+RecallX is built to keep these things in one local workspace:
 
 - notes
 - projects
@@ -19,7 +19,7 @@ Memforge is built to keep these things in one local workspace:
 
 The core idea is simple: one brain, many tools.
 
-## Why Memforge
+## Why RecallX
 
 - local-first storage with SQLite-backed workspaces
 - shared memory for humans and coding agents
@@ -29,11 +29,11 @@ The core idea is simple: one brain, many tools.
 
 ## Distribution Paths
 
-Memforge is documented around three public ways to use it:
+RecallX is documented around three public ways to use it:
 
 1. Git public repo for direct source execution
-2. npm package `memforge` for the full local runtime
-3. npm package `memforge-headless` for the headless runtime
+2. npm package `recallx` for the full local runtime
+3. npm package `recallx-headless` for the headless runtime
 
 ## 1. Git Public Repo
 
@@ -46,8 +46,8 @@ Use the public repo when you want the full source-run surface:
 - runtime workspace create/open switching without restarting the service
 
 ```bash
-git clone https://github.com/jazpiper/Memforge.git
-cd Memforge
+git clone https://github.com/jazpiper/RecallX.git RecallX
+cd RecallX
 npm install
 npm run dev
 ```
@@ -81,75 +81,75 @@ npm run build
 
 If you want an installable runtime instead of source-run workflows, use one of the npm distribution paths below.
 
-## 2. npm Full Runtime (`memforge`)
+## 2. npm Full Runtime (`recallx`)
 
 Use the full npm package when you want a local install that includes the API, renderer, CLI, and MCP entrypoint:
 
 ```bash
-npm install -g memforge
-memforge serve
+npm install -g recallx
+recallx serve
 ```
 
 In another shell:
 
 ```bash
-pnw health
-pnw mcp install
-memforge-mcp --help
+recallx health
+recallx mcp install
+recallx-mcp --help
 ```
 
 The full npm package includes:
 
 - local API under `/api/v1`
 - browser renderer served from `/`
-- `memforge`
-- `pnw`
-- `memforge-mcp`
+- `recallx`
+- `recallx serve` and subcommands
+- `recallx-mcp`
 
 The full npm package does not include:
 
 - desktop release artifacts
 
-`pnw mcp install` writes a stable launcher to `~/.memforge/bin/memforge-mcp`, which is the recommended command path for editor MCP configs.
+`recallx mcp install` writes a stable launcher to `~/.recallx/bin/recallx-mcp`, which is the recommended command path for Codex and other editor MCP configs.
 
-If the API is running in bearer mode, set `MEMFORGE_API_TOKEN` in the MCP client environment. The launcher does not write tokens to disk.
+If the API is running in bearer mode, set `RECALLX_API_TOKEN` in the MCP client environment. The launcher does not write tokens to disk.
 
 Start the packaged runtime with:
 
 ```bash
-memforge serve
+recallx serve
 ```
 
 Optional runtime overrides:
 
 ```bash
-memforge serve --port 8787 --bind 127.0.0.1
-memforge serve --workspace-root /Users/name/Documents/Memforge
-memforge serve --api-token secret-token
+recallx serve --port 8787 --bind 127.0.0.1
+recallx serve --workspace-root /Users/name/Documents/RecallX
+recallx serve --api-token secret-token
 ```
 
-## 3. npm Headless Runtime (`memforge-headless`)
+## 3. npm Headless Runtime (`recallx-headless`)
 
 Use the headless npm package when you want the local API, CLI, and MCP entrypoint without shipping the renderer bundle:
 
 ```bash
-npm install -g memforge-headless
-memforge serve
+npm install -g recallx-headless
+recallx serve
 ```
 
 In another shell:
 
 ```bash
-pnw health
-memforge-mcp --help
+recallx health
+recallx-mcp --help
 ```
 
 The headless npm package includes:
 
 - local API under `/api/v1`
-- `memforge`
-- `pnw`
-- `memforge-mcp`
+- `recallx`
+- `recallx serve` and subcommands
+- `recallx-mcp`
 
 The headless npm package does not include:
 
@@ -165,7 +165,7 @@ Node requirements:
 
 ## Use From Other Coding Agents
 
-If you want another coding agent to use a running local Memforge service, start with health and bootstrap first instead of assuming the protected service index is available.
+If you want another coding agent to use a running local RecallX service, start with health and bootstrap first instead of assuming the protected service index is available.
 
 - health check: `GET http://127.0.0.1:8787/api/v1/health`
 - bootstrap: `GET http://127.0.0.1:8787/api/v1/bootstrap`
@@ -175,7 +175,7 @@ If you want another coding agent to use a running local Memforge service, start 
 Recommended instruction:
 
 ```text
-Use my running local Memforge service at http://127.0.0.1:8787/api/v1.
+Use my running local RecallX service at http://127.0.0.1:8787/api/v1.
 Start by calling GET /health and GET /bootstrap.
 If authMode is bearer, include Authorization: Bearer <token> before calling GET /api/v1 or GET /workspace.
 Use the returned endpoint list and request examples to search nodes and activities, inspect governance state, build context bundles, and switch workspaces.
@@ -184,12 +184,12 @@ Reuse the existing local service instead of starting a new one.
 
 ## MCP Bridge
 
-Memforge also ships a stdio MCP adapter for agent clients that prefer tool discovery over raw HTTP calls.
+RecallX also ships a stdio MCP adapter for agent clients that prefer tool discovery over raw HTTP calls.
 
 ```bash
 npm run mcp
 node dist/server/app/mcp/index.js --api http://127.0.0.1:8787/api/v1
-memforge-mcp --api http://127.0.0.1:8787/api/v1
+recallx-mcp --api http://127.0.0.1:8787/api/v1
 ```
 
 For launcher paths, environment variables, and editor-specific setup, see `docs/mcp.md`.

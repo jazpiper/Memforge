@@ -21,32 +21,32 @@ type ResolveWorkspaceRootOptions = {
   legacyProjectRoot?: string;
 };
 
-export function memforgeHomeDir(): string {
-  return path.join(os.homedir(), ".memforge");
+export function recallxHomeDir(): string {
+  return path.join(os.homedir(), ".recallx");
 }
 
 function sanitizeWorkspaceName(value: string): string {
-  return value.replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-").replace(/\s+/g, " ").trim() || "Memforge";
+  return value.replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-").replace(/\s+/g, " ").trim() || "RecallX";
 }
 
 function preferredWorkspaceName(): string {
-  const configured = process.env.MEMFORGE_WORKSPACE_NAME;
+  const configured = process.env.RECALLX_WORKSPACE_NAME;
   if (typeof configured === "string" && configured.trim()) {
     return sanitizeWorkspaceName(configured);
   }
 
-  return sanitizeWorkspaceName(path.basename(process.cwd()) || "Memforge");
+  return sanitizeWorkspaceName(path.basename(process.cwd()) || "RecallX");
 }
 
 export function resolveWorkspaceRoot(options?: ResolveWorkspaceRootOptions): string {
-  const configured = process.env.MEMFORGE_WORKSPACE_ROOT;
+  const configured = process.env.RECALLX_WORKSPACE_ROOT;
   if (configured) {
     return path.resolve(configured);
   }
 
-  const preferredRoot = path.join(memforgeHomeDir(), preferredWorkspaceName());
+  const preferredRoot = path.join(recallxHomeDir(), preferredWorkspaceName());
   const allowLegacyProjectRoot = options?.allowLegacyProjectRoot ?? true;
-  const legacyRoot = path.resolve(options?.legacyProjectRoot ?? process.cwd(), ".memforge-workspace");
+  const legacyRoot = path.resolve(options?.legacyProjectRoot ?? process.cwd(), ".recallx-workspace");
 
   if (existsSync(preferredRoot)) {
     return preferredRoot;
@@ -104,8 +104,8 @@ export function defaultWorkspaceName(root: string): string {
   const resolved = path.resolve(root);
   const base = path.basename(resolved);
   if (base.startsWith(".")) {
-    return path.basename(path.dirname(resolved)) || "Memforge";
+    return path.basename(path.dirname(resolved)) || "RecallX";
   }
 
-  return base.replace(/^\.*/, "") || "Memforge";
+  return base.replace(/^\.*/, "") || "RecallX";
 }

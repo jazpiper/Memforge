@@ -52,7 +52,7 @@ describe("runCli health", () => {
     );
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
-    await runCli(["node", "memforge", "health"]);
+    await runCli(["node", "recallx", "health"]);
 
     const output = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
     expect(output).toContain("status: ok");
@@ -64,20 +64,20 @@ describe("runCli health", () => {
 
 describe("runCli mcp", () => {
   it("installs a stable launcher script for MCP clients", async () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "memforge-cli-test-"));
-    const launcherPath = path.join(tempDir, "memforge-mcp");
+    const tempDir = mkdtempSync(path.join(tmpdir(), "recallx-cli-test-"));
+    const launcherPath = path.join(tempDir, "recallx-mcp");
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
     try {
-      await runCli(["node", "memforge", "mcp", "install", "--path", launcherPath]);
+      await runCli(["node", "recallx", "mcp", "install", "--path", launcherPath]);
       const contents = readFileSync(launcherPath, "utf8");
       const output = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
 
-      expect(contents).toContain("memforge-mcp.js");
+      expect(contents).toContain("recallx-mcp.js");
       expect(contents).toContain("--api");
       expect(output).toContain(`Installed launcher: ${launcherPath}`);
       expect(output).toContain("\"mcpServers\"");
-      expect(output).toContain("MEMFORGE_API_TOKEN");
+      expect(output).toContain("RECALLX_API_TOKEN");
       expect(output).toContain("bearer auth");
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
@@ -85,18 +85,18 @@ describe("runCli mcp", () => {
   });
 
   it("does not persist bearer tokens into the installed launcher script", async () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "memforge-cli-test-"));
-    const launcherPath = path.join(tempDir, "memforge-mcp");
+    const tempDir = mkdtempSync(path.join(tmpdir(), "recallx-cli-test-"));
+    const launcherPath = path.join(tempDir, "recallx-mcp");
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
     try {
-      await runCli(["node", "memforge", "mcp", "install", "--path", launcherPath, "--token", "secret-token"]);
+      await runCli(["node", "recallx", "mcp", "install", "--path", launcherPath, "--token", "secret-token"]);
       const contents = readFileSync(launcherPath, "utf8");
       const output = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
 
       expect(contents).not.toContain("secret-token");
       expect(contents).not.toContain("--token");
-      expect(output).toContain("MEMFORGE_API_TOKEN");
+      expect(output).toContain("RECALLX_API_TOKEN");
       expect(output).toContain("does not persist bearer tokens");
       expect(output).toContain("bearer-mode services");
     } finally {

@@ -1,10 +1,10 @@
-# Memforge — Guardrails
+# RecallX — Guardrails
 
 ## 1. Purpose
 
 This document exists to protect the project from drifting away from its core intent.
 
-Memforge is promising precisely because it can become:
+RecallX is promising precisely because it can become:
 - fast
 - local-first
 - durable
@@ -380,7 +380,7 @@ The product will win by being reliably useful, not by looking maximally futurist
 
 ## 15. Final rule
 
-If a proposed change makes Memforge feel more like:
+If a proposed change makes RecallX feel more like:
 - a fast memory substrate
 - a durable local context layer
 - a useful bridge between humans and agents

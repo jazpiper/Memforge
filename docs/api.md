@@ -1,8 +1,8 @@
-# Memforge — API Contract
+# RecallX — API Contract
 
 ## At A Glance
 
-- Memforge exposes one local HTTP API for the desktop app, CLI, and external agent tools.
+- RecallX exposes one local HTTP API for the desktop app, CLI, and external agent tools.
 - The current base path is `/api/v1`.
 - The most important bootstrap endpoints are `GET /api/v1/health` and `GET /api/v1/bootstrap`.
 - `GET /api/v1` and `GET /api/v1/workspace` are available after auth or in optional mode.
@@ -11,7 +11,7 @@
 
 ## 1. Purpose
 
-This document defines the first concrete API contract for Memforge.
+This document defines the first concrete API contract for RecallX.
 
 The API exists to let:
 - the desktop UI
@@ -259,7 +259,7 @@ Return a discoverable machine-friendly service index for external coding agents 
 - MCP launch hints when a local stdio bridge is available
 
 ### Why
-This allows another agent to receive one base URL and self-discover how to use Memforge without needing a separate MCP bridge or a human-written prompt for every endpoint.
+This allows another agent to receive one base URL and self-discover how to use RecallX without needing a separate MCP bridge or a human-written prompt for every endpoint.
 
 ### Auth note
 When bearer auth is enabled, callers should bootstrap from `GET /api/v1/bootstrap` first and then call `GET /api/v1` with the bearer token.
@@ -335,7 +335,7 @@ Fast search over nodes using keyword/FTS and structured filters.
       {
         "id": "node_1",
         "type": "project",
-        "title": "Memforge",
+        "title": "RecallX",
         "summary": "Shared memory layer for humans and agents.",
         "status": "active",
         "sourceLabel": "manual",
@@ -484,7 +484,7 @@ Archive without hard deletion.
   "source": {
     "actorType": "human",
     "actorLabel": "juhwan",
-    "toolName": "pnw-desktop"
+    "toolName": "recallx-desktop"
   }
 }
 ```
@@ -1088,7 +1088,7 @@ In bearer mode, clients must authenticate the request. Browser `EventSource` can
 ### Example event
 ```text
 event: workspace.updated
-data: {"type":"workspace.updated","reason":"activity.appended","entityType":"activity","entityId":"act_123","workspaceRoot":"/Users/name/Documents/Memforge","at":"2026-03-18T07:20:00.000Z"}
+data: {"type":"workspace.updated","reason":"activity.appended","entityType":"activity","entityId":"act_123","workspaceRoot":"/Users/name/Documents/RecallX","at":"2026-03-18T07:20:00.000Z"}
 ```
 
 ---
@@ -1129,8 +1129,8 @@ Notes:
 - semantic search now requires `embedding_provider + embedding_model + embedding_version` compatibility
 - `configuredIndexBackend=sqlite-vec` is the default local-first preference
 - `indexBackend=sqlite-vec` means the extension loaded and bounded vector math is running inside SQLite
-- `indexBackend=sqlite` means Memforge is using the fallback app-calculated similarity path
-- `extensionStatus=loaded` means `sqlite-vec` is active, `fallback` means Memforge downgraded to `sqlite`, and `disabled` means the workspace is explicitly configured to stay on plain `sqlite`
+- `indexBackend=sqlite` means RecallX is using the fallback app-calculated similarity path
+- `extensionStatus=loaded` means `sqlite-vec` is active, `fallback` means RecallX downgraded to `sqlite`, and `disabled` means the workspace is explicitly configured to stay on plain `sqlite`
 - `search.semantic.chunk.aggregation=max` remains the default request-time chunk aggregation strategy
 - `search.semantic.chunk.aggregation=topk_mean` averages the top semantic chunk matches for each node without changing write-time indexing
 - semantic configuration changes may automatically mark ready rows as `stale` and queue affected active/draft nodes for rebuild
@@ -1224,40 +1224,40 @@ Legacy governance-related settings:
 The CLI should be a thin ergonomic layer over the API.
 
 ## 20.1 Core commands
-- `pnw health`
-- `pnw search <query>`
-- `pnw get <node-id>`
-- `pnw neighborhood <node-id>`
-- `pnw related <node-id>` (legacy compatibility alias)
-- `pnw context <target-id>`
-- `pnw create`
-- `pnw append`
-- `pnw link`
-- `pnw attach`
-- `pnw governance issues`
-- `pnw governance show --entity-type node --entity-id <id>`
-- `pnw governance recompute`
-- `pnw workspace current`
-- `pnw workspace list`
-- `pnw workspace create`
-- `pnw workspace open`
+- `recallx health`
+- `recallx search <query>`
+- `recallx get <node-id>`
+- `recallx neighborhood <node-id>`
+- `recallx related <node-id>` (legacy compatibility alias)
+- `recallx context <target-id>`
+- `recallx create`
+- `recallx append`
+- `recallx link`
+- `recallx attach`
+- `recallx governance issues`
+- `recallx governance show --entity-type node --entity-id <id>`
+- `recallx governance recompute`
+- `recallx workspace current`
+- `recallx workspace list`
+- `recallx workspace create`
+- `recallx workspace open`
 
 ## 20.2 CLI examples
 ### Search
 ```bash
-pnw search "agent memory" --type project --limit 5
+recallx search "agent memory" --type project --limit 5
 ```
 
 ### Build context bundle
 ```bash
-pnw context node_project_1 --mode compact --preset for-coding --format markdown
+recallx context node_project_1 --mode compact --preset for-coding --format markdown
 ```
 
-`pnw context --mode compact --preset for-coding --format markdown` now builds a workspace-entry bundle when no target id is supplied.
+`recallx context --mode compact --preset for-coding --format markdown` now builds a workspace-entry bundle when no target id is supplied.
 
 ### Append activity
 ```bash
-pnw append node_project_1 \
+recallx append node_project_1 \
   --type agent_run_summary \
   --source codex \
   --text "Implemented schema draft and wrote migration notes"
@@ -1265,7 +1265,7 @@ pnw append node_project_1 \
 
 ### Link nodes
 ```bash
-pnw link node_a node_b supports --source claude-code --status suggested
+recallx link node_a node_b supports --source claude-code --status suggested
 ```
 
 ---
@@ -1370,7 +1370,7 @@ This keeps the API practical and aligned with the build plan.
 
 ## 24. Summary
 
-The right v1 API for Memforge is:
+The right v1 API for RecallX is:
 - local-only by default
 - small but expressive
 - retrieval-first

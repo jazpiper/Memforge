@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { MemforgeApiError } from "../app/mcp/api-client.js";
-import { createMemforgeMcpServer } from "../app/mcp/server.js";
+import { RecallXApiError } from "../app/mcp/api-client.js";
+import { createRecallXMcpServer } from "../app/mcp/server.js";
 
-describe("Memforge MCP server", () => {
+describe("RecallX MCP server", () => {
   const cleanup: Array<() => Promise<void>> = [];
 
   function findToolDescription(toolList: { tools: Array<{ name: string; description?: string }> }, name: string) {
@@ -42,7 +42,7 @@ describe("Memforge MCP server", () => {
       capturePayloadShape: boolean;
     }>;
   }) {
-    const server = createMemforgeMcpServer({
+    const server = createRecallXMcpServer({
       apiClient: {
         get: apiClient?.get ?? vi.fn(),
         post: apiClient?.post ?? vi.fn(),
@@ -51,7 +51,7 @@ describe("Memforge MCP server", () => {
       getObservabilityState: options?.getObservabilityState
     });
     const client = new Client({
-      name: "memforge-mcp-test-client",
+      name: "recallx-mcp-test-client",
       version: "1.0.0"
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -64,34 +64,34 @@ describe("Memforge MCP server", () => {
     return { client };
   }
 
-  it("advertises the first-pass Memforge tools", async () => {
+  it("advertises the first-pass RecallX tools", async () => {
     const { client } = await connectTestClient();
 
     const toolList = await client.listTools();
     const toolNames = toolList.tools.map((tool) => tool.name);
 
-    expect(toolNames).toContain("memforge_health");
-    expect(toolNames).toContain("memforge_workspace_current");
-    expect(toolNames).toContain("memforge_semantic_status");
-    expect(toolNames).toContain("memforge_semantic_issues");
-    expect(toolNames).toContain("memforge_search_nodes");
-    expect(toolNames).toContain("memforge_search_activities");
-    expect(toolNames).toContain("memforge_search_workspace");
-    expect(toolNames).toContain("memforge_capture_memory");
-    expect(toolNames).toContain("memforge_append_activity");
-    expect(toolNames).toContain("memforge_create_node");
-    expect(toolNames).toContain("memforge_create_nodes");
-    expect(toolNames).toContain("memforge_upsert_inferred_relation");
-    expect(toolNames).toContain("memforge_append_relation_usage_event");
-    expect(toolNames).toContain("memforge_append_search_feedback");
-    expect(toolNames).toContain("memforge_recompute_inferred_relations");
-    expect(toolNames).toContain("memforge_list_governance_issues");
-    expect(toolNames).toContain("memforge_get_governance_state");
-    expect(toolNames).toContain("memforge_recompute_governance");
-    expect(toolNames).toContain("memforge_context_bundle");
-    expect(toolNames).toContain("memforge_semantic_reindex");
-    expect(toolNames).toContain("memforge_semantic_reindex_node");
-    expect(toolNames).toContain("memforge_rank_candidates");
+    expect(toolNames).toContain("recallx_health");
+    expect(toolNames).toContain("recallx_workspace_current");
+    expect(toolNames).toContain("recallx_semantic_status");
+    expect(toolNames).toContain("recallx_semantic_issues");
+    expect(toolNames).toContain("recallx_search_nodes");
+    expect(toolNames).toContain("recallx_search_activities");
+    expect(toolNames).toContain("recallx_search_workspace");
+    expect(toolNames).toContain("recallx_capture_memory");
+    expect(toolNames).toContain("recallx_append_activity");
+    expect(toolNames).toContain("recallx_create_node");
+    expect(toolNames).toContain("recallx_create_nodes");
+    expect(toolNames).toContain("recallx_upsert_inferred_relation");
+    expect(toolNames).toContain("recallx_append_relation_usage_event");
+    expect(toolNames).toContain("recallx_append_search_feedback");
+    expect(toolNames).toContain("recallx_recompute_inferred_relations");
+    expect(toolNames).toContain("recallx_list_governance_issues");
+    expect(toolNames).toContain("recallx_get_governance_state");
+    expect(toolNames).toContain("recallx_recompute_governance");
+    expect(toolNames).toContain("recallx_context_bundle");
+    expect(toolNames).toContain("recallx_semantic_reindex");
+    expect(toolNames).toContain("recallx_semantic_reindex_node");
+    expect(toolNames).toContain("recallx_rank_candidates");
   });
 
   it("advertises workspace, project, search, and bundle guidance in tool descriptions", async () => {
@@ -99,37 +99,37 @@ describe("Memforge MCP server", () => {
 
     const toolList = await client.listTools();
 
-    expect(findToolDescription(toolList, "memforge_workspace_current")).toContain("default workspace scope");
-    expect(findToolDescription(toolList, "memforge_workspace_current")).toContain("switching workspaces");
+    expect(findToolDescription(toolList, "recallx_workspace_current")).toContain("default workspace scope");
+    expect(findToolDescription(toolList, "recallx_workspace_current")).toContain("switching workspaces");
 
-    expect(findToolDescription(toolList, "memforge_workspace_create")).toContain("user explicitly requests");
-    expect(findToolDescription(toolList, "memforge_workspace_open")).toContain("user explicitly requests");
+    expect(findToolDescription(toolList, "recallx_workspace_create")).toContain("user explicitly requests");
+    expect(findToolDescription(toolList, "recallx_workspace_open")).toContain("user explicitly requests");
 
-    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain("preferred broad entry point");
-    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain("current workspace");
-    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain('["nodes", "activities"]');
-    expect(findToolDescription(toolList, "memforge_search_workspace")).toContain('comma-separated string like `"nodes,activities"`');
+    expect(findToolDescription(toolList, "recallx_search_workspace")).toContain("preferred broad entry point");
+    expect(findToolDescription(toolList, "recallx_search_workspace")).toContain("current workspace");
+    expect(findToolDescription(toolList, "recallx_search_workspace")).toContain('["nodes", "activities"]');
+    expect(findToolDescription(toolList, "recallx_search_workspace")).toContain('comma-separated string like `"nodes,activities"`');
 
-    expect(findToolDescription(toolList, "memforge_search_nodes")).toContain("type=project");
-    expect(findToolDescription(toolList, "memforge_search_nodes")).toContain("current workspace");
+    expect(findToolDescription(toolList, "recallx_search_nodes")).toContain("type=project");
+    expect(findToolDescription(toolList, "recallx_search_nodes")).toContain("current workspace");
 
-    expect(findToolDescription(toolList, "memforge_search_activities")).toContain("recent logs");
-    expect(findToolDescription(toolList, "memforge_search_activities")).toContain("what happened recently");
+    expect(findToolDescription(toolList, "recallx_search_activities")).toContain("recent logs");
+    expect(findToolDescription(toolList, "recallx_search_activities")).toContain("what happened recently");
 
-    expect(findToolDescription(toolList, "memforge_create_node")).toContain("project node in the current workspace");
-    expect(findToolDescription(toolList, "memforge_create_node")).toContain("only create one if no suitable project already exists");
+    expect(findToolDescription(toolList, "recallx_create_node")).toContain("project node in the current workspace");
+    expect(findToolDescription(toolList, "recallx_create_node")).toContain("only create one if no suitable project already exists");
 
-    expect(findToolDescription(toolList, "memforge_capture_memory")).toContain("default write");
-    expect(findToolDescription(toolList, "memforge_capture_memory")).toContain("workspace scope");
+    expect(findToolDescription(toolList, "recallx_capture_memory")).toContain("default write");
+    expect(findToolDescription(toolList, "recallx_capture_memory")).toContain("workspace scope");
 
-    expect(findToolDescription(toolList, "memforge_append_activity")).toContain("specific Memforge node or project timeline");
-    expect(findToolDescription(toolList, "memforge_append_activity")).toContain("workspace-scope updates");
+    expect(findToolDescription(toolList, "recallx_append_activity")).toContain("specific RecallX node or project timeline");
+    expect(findToolDescription(toolList, "recallx_append_activity")).toContain("workspace-scope updates");
 
-    expect(findToolDescription(toolList, "memforge_context_bundle")).toContain("workspace-entry bundle");
-    expect(findToolDescription(toolList, "memforge_context_bundle")).toContain("project or node should anchor the context");
+    expect(findToolDescription(toolList, "recallx_context_bundle")).toContain("workspace-entry bundle");
+    expect(findToolDescription(toolList, "recallx_context_bundle")).toContain("project or node should anchor the context");
   });
 
-  it("maps search tool calls onto the Memforge HTTP API contract", async () => {
+  it("maps search tool calls onto the RecallX HTTP API contract", async () => {
     const searchPost = vi.fn().mockResolvedValue({
       items: [{ id: "node_1", title: "Agent memory", type: "note" }],
       total: 1,
@@ -141,7 +141,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         query: "agent memory"
       }
@@ -162,11 +162,11 @@ describe("Memforge MCP server", () => {
     });
   });
 
-  it("allows memforge_health calls with an optional input object and preserves detailed health payloads", async () => {
+  it("allows recallx_health calls with an optional input object and preserves detailed health payloads", async () => {
     const healthGet = vi.fn().mockResolvedValue({
       status: "ok",
       workspaceLoaded: true,
-      workspaceRoot: "/Users/test/.memforge/Memforge",
+      workspaceRoot: "/Users/test/.recallx/RecallX",
       schemaVersion: 7,
       autoRecompute: {
         enabled: true
@@ -177,7 +177,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_health",
+      name: "recallx_health",
       arguments: {
         includeDetails: true
       }
@@ -202,7 +202,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_search_workspace",
+      name: "recallx_search_workspace",
       arguments: {}
     });
     const resultContent = Array.isArray((result as { content?: unknown }).content)
@@ -224,7 +224,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         allowEmptyQuery: true
       }
@@ -272,13 +272,13 @@ describe("Memforge MCP server", () => {
     );
 
     await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         query: "first"
       }
     });
     await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         query: "second"
       }
@@ -297,7 +297,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         query: "agent memory",
         type: "note",
@@ -333,7 +333,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         limit: "1e3"
       }
@@ -343,7 +343,7 @@ describe("Memforge MCP server", () => {
     expect(searchPost).not.toHaveBeenCalled();
   });
 
-  it("maps activity and workspace search tools onto the Memforge HTTP API contract", async () => {
+  it("maps activity and workspace search tools onto the RecallX HTTP API contract", async () => {
     const searchPost = vi
       .fn()
       .mockResolvedValueOnce({
@@ -359,7 +359,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_activities",
+      name: "recallx_search_activities",
       arguments: {
         query: "what changed",
         filters: {
@@ -369,7 +369,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_workspace",
+      name: "recallx_search_workspace",
       arguments: {
         query: "cleanup",
         scopes: ["activities"],
@@ -419,7 +419,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_activities",
+      name: "recallx_search_activities",
       arguments: {
         query: "what changed",
         activityType: "agent_run_summary",
@@ -429,7 +429,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_search_workspace",
+      name: "recallx_search_workspace",
       arguments: {
         query: "cleanup",
         scope: "nodes,activities",
@@ -464,7 +464,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_search_nodes",
+      name: "recallx_search_nodes",
       arguments: {
         type: "activity"
       }
@@ -475,7 +475,7 @@ describe("Memforge MCP server", () => {
 
     expect("isError" in result && result.isError).toBe(true);
     expect(resultContent[0]?.type).toBe("text");
-    expect(resultContent[0]?.text ?? "").toContain("memforge_search_activities");
+    expect(resultContent[0]?.text ?? "").toContain("recallx_search_activities");
   });
 
   it("fills default provenance when create_node omits source", async () => {
@@ -490,7 +490,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_create_node",
+      name: "recallx_create_node",
       arguments: {
         type: "note",
         title: "Captured from MCP"
@@ -507,8 +507,8 @@ describe("Memforge MCP server", () => {
         metadata: {},
         source: expect.objectContaining({
           actorType: "agent",
-          actorLabel: "Memforge MCP",
-          toolName: "memforge-mcp"
+          actorLabel: "RecallX MCP",
+          toolName: "recallx-mcp"
         })
       })
     );
@@ -528,7 +528,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_create_nodes",
+      name: "recallx_create_nodes",
       arguments: {
         nodes: [
           {
@@ -554,8 +554,8 @@ describe("Memforge MCP server", () => {
           metadata: {},
           source: expect.objectContaining({
             actorType: "agent",
-            actorLabel: "Memforge MCP",
-            toolName: "memforge-mcp"
+            actorLabel: "RecallX MCP",
+            toolName: "recallx-mcp"
           })
         }),
         expect.objectContaining({
@@ -566,8 +566,8 @@ describe("Memforge MCP server", () => {
           metadata: {},
           source: expect.objectContaining({
             actorType: "agent",
-            actorLabel: "Memforge MCP",
-            toolName: "memforge-mcp"
+            actorLabel: "RecallX MCP",
+            toolName: "recallx-mcp"
           })
         })
       ]
@@ -586,7 +586,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_append_activity",
+      name: "recallx_append_activity",
       arguments: {
         targetNodeId: "node_1",
         activityType: "agent_run_summary",
@@ -603,14 +603,14 @@ describe("Memforge MCP server", () => {
         metadata: {},
         source: expect.objectContaining({
           actorType: "agent",
-          actorLabel: "Memforge MCP",
-          toolName: "memforge-mcp"
+          actorLabel: "RecallX MCP",
+          toolName: "recallx-mcp"
         })
       })
     );
   });
 
-  it("maps capture_memory onto the Memforge HTTP API contract", async () => {
+  it("maps capture_memory onto the RecallX HTTP API contract", async () => {
     const capturePost = vi.fn().mockResolvedValue({
       storedAs: "activity",
       activity: {
@@ -622,7 +622,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_capture_memory",
+      name: "recallx_capture_memory",
       arguments: {
         body: "Finished wiring the MCP validation recovery path."
       }
@@ -638,8 +638,8 @@ describe("Memforge MCP server", () => {
         metadata: {},
         source: expect.objectContaining({
           actorType: "agent",
-          actorLabel: "Memforge MCP",
-          toolName: "memforge-mcp"
+          actorLabel: "RecallX MCP",
+          toolName: "recallx-mcp"
         })
       })
     );
@@ -648,7 +648,7 @@ describe("Memforge MCP server", () => {
   it("adds a capture hint when create_node is rejected as short log-like content", async () => {
     const { client } = await connectTestClient({
       post: vi.fn().mockRejectedValue(
-        new MemforgeApiError("Short log-like agent output must be appended as activity, not stored as a durable node.", {
+        new RecallXApiError("Short log-like agent output must be appended as activity, not stored as a durable node.", {
           status: 403,
           code: "FORBIDDEN"
         })
@@ -656,7 +656,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_create_node",
+      name: "recallx_create_node",
       arguments: {
         type: "note",
         title: "Short update",
@@ -669,7 +669,7 @@ describe("Memforge MCP server", () => {
 
     expect("isError" in result && result.isError).toBe(true);
     expect(resultContent[0]?.type).toBe("text");
-    expect(resultContent[0]?.text ?? "").toContain("memforge_capture_memory");
+    expect(resultContent[0]?.text ?? "").toContain("recallx_capture_memory");
   });
 
   it("fills default provenance when append_search_feedback omits source", async () => {
@@ -683,7 +683,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_append_search_feedback",
+      name: "recallx_append_search_feedback",
       arguments: {
         resultType: "node",
         resultId: "node_1",
@@ -703,8 +703,8 @@ describe("Memforge MCP server", () => {
         metadata: {},
         source: expect.objectContaining({
           actorType: "agent",
-          actorLabel: "Memforge MCP",
-          toolName: "memforge-mcp"
+          actorLabel: "RecallX MCP",
+          toolName: "recallx-mcp"
         })
       })
     );
@@ -719,7 +719,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_get_related",
+      name: "recallx_get_related",
       arguments: {
         nodeId: "node_1"
       }
@@ -748,7 +748,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_semantic_status",
+      name: "recallx_semantic_status",
       arguments: {}
     });
 
@@ -780,7 +780,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_semantic_issues",
+      name: "recallx_semantic_issues",
       arguments: {
         limit: 3,
         cursor: "cursor_0",
@@ -801,7 +801,7 @@ describe("Memforge MCP server", () => {
     });
   });
 
-  it("maps inferred relation writes onto the Memforge HTTP API contract", async () => {
+  it("maps inferred relation writes onto the RecallX HTTP API contract", async () => {
     const postMock = vi.fn().mockResolvedValue({
       relation: {
         id: "irel_1"
@@ -812,7 +812,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_upsert_inferred_relation",
+      name: "recallx_upsert_inferred_relation",
       arguments: {
         fromNodeId: "node_a",
         toNodeId: "node_b",
@@ -851,7 +851,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_recompute_inferred_relations",
+      name: "recallx_recompute_inferred_relations",
       arguments: {
         generator: "deterministic-linker",
         limit: 25
@@ -877,7 +877,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_semantic_reindex",
+      name: "recallx_semantic_reindex",
       arguments: {
         limit: 20
       }
@@ -904,7 +904,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_semantic_reindex_node",
+      name: "recallx_semantic_reindex_node",
       arguments: {
         nodeId: "node target"
       }
@@ -932,7 +932,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_rank_candidates",
+      name: "recallx_rank_candidates",
       arguments: {
         query: "agent integration",
         candidateNodeIds: ["node_a", "node_b"],
@@ -995,7 +995,7 @@ describe("Memforge MCP server", () => {
     });
 
     const result = await client.callTool({
-      name: "memforge_context_bundle",
+      name: "recallx_context_bundle",
       arguments: {
         targetId: "node_1",
         mode: "compact",
@@ -1048,7 +1048,7 @@ describe("Memforge MCP server", () => {
     });
 
     await client.callTool({
-      name: "memforge_context_bundle",
+      name: "recallx_context_bundle",
       arguments: {
         mode: "compact",
         preset: "for-assistant"

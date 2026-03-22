@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { MemforgeApiClient } from "./api-client.js";
-import { createMemforgeMcpServer } from "./server.js";
-import { MEMFORGE_VERSION } from "../shared/version.js";
+import { RecallXApiClient } from "./api-client.js";
+import { createRecallXMcpServer } from "./server.js";
+import { RECALLX_VERSION } from "../shared/version.js";
 
 type ObservabilityState = {
   enabled: boolean;
@@ -15,9 +15,9 @@ type ObservabilityState = {
 };
 
 function createApiClient() {
-  return new MemforgeApiClient(
-    process.env.MEMFORGE_API_URL ?? "http://127.0.0.1:8787/api/v1",
-    process.env.MEMFORGE_API_TOKEN
+  return new RecallXApiClient(
+    process.env.RECALLX_API_URL ?? "http://127.0.0.1:8787/api/v1",
+    process.env.RECALLX_API_TOKEN
   );
 }
 
@@ -66,7 +66,7 @@ async function resolveObservabilityState() {
     return {
       enabled: values["observability.enabled"] === true,
       workspaceRoot: typeof workspace.rootPath === "string" ? workspace.rootPath : process.cwd(),
-      workspaceName: typeof workspace.workspaceName === "string" ? workspace.workspaceName : "Memforge MCP",
+      workspaceName: typeof workspace.workspaceName === "string" ? workspace.workspaceName : "RecallX MCP",
       retentionDays: typeof values["observability.retentionDays"] === "number" ? values["observability.retentionDays"] : 14,
       slowRequestMs: typeof values["observability.slowRequestMs"] === "number" ? values["observability.slowRequestMs"] : 250,
       capturePayloadShape: values["observability.capturePayloadShape"] !== false
@@ -75,7 +75,7 @@ async function resolveObservabilityState() {
     return {
       enabled: false,
       workspaceRoot: process.cwd(),
-      workspaceName: "Memforge MCP",
+      workspaceName: "RecallX MCP",
       retentionDays: 14,
       slowRequestMs: 250,
       capturePayloadShape: true
@@ -84,19 +84,19 @@ async function resolveObservabilityState() {
 }
 
 function printHelp() {
-  console.error(`Memforge MCP server
+  console.error(`RecallX MCP server
 
 Usage:
   npm run mcp
   npm run dev:mcp
   node dist/server/app/mcp/index.js --api http://127.0.0.1:8787/api/v1
-  memforge-mcp --api http://127.0.0.1:8787/api/v1
+  recallx-mcp --api http://127.0.0.1:8787/api/v1
 
 Environment:
-  MEMFORGE_API_URL            Local Memforge API base URL (default: http://127.0.0.1:8787/api/v1)
-  MEMFORGE_API_TOKEN          Optional bearer token for auth-enabled Memforge instances
-  MEMFORGE_MCP_SOURCE_LABEL   Default provenance label for writes (default: Memforge MCP)
-  MEMFORGE_MCP_TOOL_NAME      Default provenance tool name (default: memforge-mcp)
+  RECALLX_API_URL             Local RecallX API base URL (default: http://127.0.0.1:8787/api/v1)
+  RECALLX_API_TOKEN           Optional bearer token for auth-enabled RecallX instances
+  RECALLX_MCP_SOURCE_LABEL    Default provenance label for writes (default: RecallX MCP)
+  RECALLX_MCP_TOOL_NAME       Default provenance tool name (default: recallx-mcp)
 `);
 }
 
@@ -130,30 +130,30 @@ async function main() {
   }
 
   if (typeof args.api === "string") {
-    process.env.MEMFORGE_API_URL = args.api;
+    process.env.RECALLX_API_URL = args.api;
   }
   if (typeof args.token === "string") {
-    process.env.MEMFORGE_API_TOKEN = args.token;
+    process.env.RECALLX_API_TOKEN = args.token;
   }
   if (typeof args["source-label"] === "string") {
-    process.env.MEMFORGE_MCP_SOURCE_LABEL = args["source-label"];
+    process.env.RECALLX_MCP_SOURCE_LABEL = args["source-label"];
   }
   if (typeof args["tool-name"] === "string") {
-    process.env.MEMFORGE_MCP_TOOL_NAME = args["tool-name"];
+    process.env.RECALLX_MCP_TOOL_NAME = args["tool-name"];
   }
 
   const readObservabilityState = createObservabilityStateReader();
-  const server = createMemforgeMcpServer({
-    serverVersion: MEMFORGE_VERSION,
+  const server = createRecallXMcpServer({
+    serverVersion: RECALLX_VERSION,
     observabilityState: await readObservabilityState(),
     getObservabilityState: readObservabilityState
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Memforge MCP connected over stdio -> ${process.env.MEMFORGE_API_URL ?? "http://127.0.0.1:8787/api/v1"}`);
+  console.error(`RecallX MCP connected over stdio -> ${process.env.RECALLX_API_URL ?? "http://127.0.0.1:8787/api/v1"}`);
 }
 
 main().catch((error) => {
-  console.error("Memforge MCP failed to start:", error);
+  console.error("RecallX MCP failed to start:", error);
   process.exit(1);
 });

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createMemforgeApp } from "../app/server/app.js";
+import { createRecallXApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
 import { WorkspaceSessionManager } from "../app/server/workspace-session.js";
 
@@ -31,7 +31,7 @@ async function createTestServer(root: string) {
   repository.setSetting("observability.slowRequestMs", 1);
   repository.setSetting("observability.capturePayloadShape", true);
 
-  const app = createMemforgeApp({
+  const app = createRecallXApp({
     workspaceSessionManager,
     apiToken: null
   });
@@ -73,7 +73,7 @@ afterEach(() => {
 
 describe("observability API", () => {
   it("returns summary and recent error views from telemetry logs", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-observability-api-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-observability-api-"));
     tempRoots.push(root);
     const { server, baseUrl } = await createTestServer(root);
 
@@ -82,8 +82,8 @@ describe("observability API", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-memforge-trace-id": "trace_test_summary",
-          "x-memforge-mcp-tool": "memforge_search_nodes"
+          "x-recallx-trace-id": "trace_test_summary",
+          "x-recallx-mcp-tool": "recallx_search_nodes"
         },
         body: JSON.stringify({
           query: "nothing yet",

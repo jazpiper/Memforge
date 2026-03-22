@@ -1,4 +1,4 @@
-# Memforge — Build Plan
+# RecallX — Build Plan
 
 > Historical v1 design reference.
 > Some sections in this document no longer reflect the shipped v2 surface.
@@ -30,10 +30,10 @@ This plan follows the project guardrails:
 - Phase 0 foundation is implemented as a local Node/TypeScript service with SQLite-backed workspaces, migrations, and runtime workspace switching.
 - Phase 1 human-readable workspace originally shipped through renderer home/search/review/settings flows before the v2 governance transition replaced review with governance.
 - Phase 2 fast retrieval is present through local search, related lookups, decision/open-question helpers, and compact context bundle assembly.
-- Phase 3 local API and CLI bridge is live through the loopback API, the `pnw` wrapper, service index discovery at `GET /api/v1`, and runtime workspace catalog operations.
+- Phase 3 local API and CLI bridge is live through the loopback API, the `recallx` wrapper, service index discovery at `GET /api/v1`, and runtime workspace catalog operations.
 - Phase 4 append-first write-back originally landed with provenance plus review-aware curation hooks; shipped v2 now uses automatic governance instead.
 - Phase 5 review and curation was implemented in v1 through review queue endpoints and renderer review actions before the v2 governance replacement removed that surface.
-- Phase 6 real integrations now include documented `pnw`, raw HTTP bootstrap, and stdio MCP workflows in addition to the coding-agent path.
+- Phase 6 real integrations now include documented `recallx`, raw HTTP bootstrap, and stdio MCP workflows in addition to the coding-agent path.
 - Phase 7 retrieval enhancement has now shipped selectively through inferred-relation storage, deterministic inferred-link generation from tag/body/activity, project-membership, and shared-artifact signals, usage feedback capture, maintenance recompute, relation-aware ranking, and a bounded local semantic sidecar. The shipped built-in semantic provider is `local-ngram` / `chargram-v1` embedding version `2`, with version-aware lookup and automatic stale/requeue behavior when semantic configuration changes.
 
 ## 1.2 Current Plan (2026-03-19)
@@ -321,10 +321,10 @@ Expose the workspace to external tools.
 - `getContextBundle`
 
 ### Required CLI commands
-- `pnw search`
-- `pnw get`
-- `pnw related`
-- `pnw context`
+- `recallx search`
+- `recallx get`
+- `recallx related`
+- `recallx context`
 
 ### Success criteria
 - a local script can fetch project context from the workspace
@@ -347,10 +347,10 @@ Allow external tools to contribute durable records safely.
 - append-only default policy
 
 ### Required CLI commands
-- `pnw create`
-- `pnw append`
-- `pnw link`
-- `pnw attach`
+- `recallx create`
+- `recallx append`
+- `recallx link`
+- `recallx attach`
 
 ### Important constraint
 Avoid canonical overwrite workflows unless explicitly reviewed.

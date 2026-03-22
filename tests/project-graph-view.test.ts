@@ -6,7 +6,7 @@ const graph: ProjectGraphPayload = {
   nodes: [
     {
       id: "project_1",
-      title: "Memforge",
+      title: "RecallX",
       type: "project",
       status: "active",
       canonicality: "canonical",

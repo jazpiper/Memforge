@@ -1,4 +1,4 @@
-# Memforge — Integrations
+# RecallX — Integrations
 
 > Historical v1 integration reference.
 > Some sections in this document no longer reflect the shipped v2 surface.
@@ -6,7 +6,7 @@
 
 ## 1. Integration goal
 
-The purpose of integrations is not to make Memforge own every workflow.
+The purpose of integrations is not to make RecallX own every workflow.
 The goal is to let many external tools share one durable local knowledge layer.
 
 This document defines practical integration patterns for:
@@ -121,7 +121,7 @@ Most integrations should follow this sequence.
    - suggested relation
 5. user reviews high-impact changes if required
 
-This keeps Memforge as the durable memory layer rather than the execution engine.
+This keeps RecallX as the durable memory layer rather than the execution engine.
 
 ## 5.1 Scout/Main retrieval pattern
 
@@ -184,9 +184,9 @@ Claude Code is a coding-focused external tool that should be able to:
 
 ### Example CLI flow
 ```bash
-pnw context project_42 --mode standard > /tmp/pnw-context.md
+recallx context project_42 --mode standard > /tmp/recallx-context.md
 # Claude Code consumes the context
-pnw append node_project_42 --type agent_run_summary --source claude-code --file result.md
+recallx append node_project_42 --type agent_run_summary --source claude-code --file result.md
 ```
 
 ### Recommended write policy
@@ -218,7 +218,7 @@ Codex-style tools are also coding and implementation oriented, similar to Claude
 - create a new note for discovered technical debt
 
 ### Example workflow
-1. `pnw context <project>`
+1. `recallx context <project>`
 2. Codex performs implementation work
 3. Codex wrapper writes back:
    - summary note
@@ -294,7 +294,7 @@ OpenClaw writes durable records when appropriate:
 - artifact references
 
 #### Pattern C — Hybrid memory model
-OpenClaw keeps its own working/session memory but promotes durable, cross-tool knowledge into Memforge.
+OpenClaw keeps its own working/session memory but promotes durable, cross-tool knowledge into RecallX.
 
 This may be the strongest long-term model.
 
@@ -322,11 +322,11 @@ Many users will want to connect:
 Provide a stable CLI such as:
 
 ```bash
-pnw search "agent memory"
-pnw get node_123
-pnw context project_42 --mode compact
-pnw append node_123 --type note_appended --source custom-script --text "Build passed locally"
-pnw link node_123 node_456 related_to --source custom-script
+recallx search "agent memory"
+recallx get node_123
+recallx context project_42 --mode compact
+recallx append node_123 --type note_appended --source custom-script --text "Build passed locally"
+recallx link node_123 node_456 related_to --source custom-script
 ```
 
 This expands the product’s utility without waiting for polished first-party integrations everywhere.
@@ -518,7 +518,7 @@ Why this order:
 ## 17. Example end-to-end scenarios
 
 ## Scenario A — Coding task with Claude Code
-1. User selects a project in Memforge
+1. User selects a project in RecallX
 2. A fast scout stage fetches a compact task context bundle
 3. Claude Code consumes only the curated bundle
 4. Claude Code completes implementation externally
@@ -567,4 +567,4 @@ The right integration strategy is simple:
 - append-first write access
 - explicit provenance everywhere
 
-If done well, Memforge becomes the shared memory fabric across the user’s entire agent/tool ecosystem.
+If done well, RecallX becomes the shared memory fabric across the user’s entire agent/tool ecosystem.

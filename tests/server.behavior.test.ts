@@ -3,11 +3,11 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMemforgeApp } from "../app/server/app.js";
+import { createRecallXApp } from "../app/server/app.js";
 import { createServerConfig } from "../app/server/config.js";
 import { getSqliteVecExtensionRuntime, openDatabase } from "../app/server/db.js";
 import { buildProjectGraph } from "../app/server/project-graph.js";
-import { MemforgeRepository } from "../app/server/repositories.js";
+import { RecallXRepository } from "../app/server/repositories.js";
 import { embedSemanticQueryText, resolveSemanticEmbeddingProvider } from "../app/server/semantic/provider.js";
 import { isPathWithinRoot } from "../app/server/utils.js";
 import { ensureWorkspace } from "../app/server/workspace.js";
@@ -46,13 +46,13 @@ async function waitFor<T>(
 }
 
 function createRepositoryContext(options: Parameters<typeof openDatabase>[1] = {}) {
-  const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+  const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
   tempRoots.push(root);
   const workspace = ensureWorkspace(root);
   const db = openDatabase(workspace, options);
-  const repository = new MemforgeRepository(db, root);
+  const repository = new RecallXRepository(db, root);
   repository.upsertBaseSettings({
-    "workspace.name": "Memforge Test"
+    "workspace.name": "RecallX Test"
   });
   return {
     root,
@@ -72,7 +72,7 @@ function createWorkspaceSessionManager(root: string, authMode: "optional" | "bea
       port: 8787,
       bindAddress: "127.0.0.1",
       apiToken: authMode === "bearer" ? "secret-token" : null,
-      workspaceName: "Memforge Test",
+      workspaceName: "RecallX Test",
     },
     root,
     authMode,
@@ -85,7 +85,7 @@ function encodeVector(vector: number[]) {
 
 async function seedSemanticEmbeddings(params: {
   db: ReturnType<typeof openDatabase>;
-  repository: MemforgeRepository;
+  repository: RecallXRepository;
   query: string;
   relatedNodeId: string;
   distractorNodeId: string;
@@ -151,7 +151,7 @@ describe("search punctuation handling", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -189,7 +189,7 @@ describe("search punctuation handling", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -203,7 +203,7 @@ describe("search punctuation handling", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -223,13 +223,13 @@ describe("search punctuation handling", () => {
   });
 
   it("backfills legacy activities into the activity FTS index", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.upsertBaseSettings({
-      "workspace.name": "Memforge Test",
+      "workspace.name": "RecallX Test",
       "search.activityFts.version": 0
     });
 
@@ -241,7 +241,7 @@ describe("search punctuation handling", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -290,10 +290,10 @@ describe("search punctuation handling", () => {
 
 describe("capture workflow behavior", () => {
   it("routes short auto-capture writes into the workspace inbox activity timeline", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -339,10 +339,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("stores reusable auto-capture writes as durable nodes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -384,10 +384,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("stores decision capture writes as decision nodes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -426,10 +426,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("adds capture recovery hints when explicit create_node stays short-form", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -469,10 +469,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("allows short explicit question nodes through the durable path", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -510,10 +510,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("creates node batches with per-item landing metadata", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -590,10 +590,10 @@ describe("capture workflow behavior", () => {
   });
 
   it("returns partial success for node batches when one item is short-form agent output", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -625,7 +625,7 @@ describe("capture workflow behavior", () => {
             {
               type: "note",
               title: "Durable batch note",
-              body: "Use memforge_create_nodes for end-of-session writeback when several durable facts were identified.",
+              body: "Use recallx_create_nodes for end-of-session writeback when several durable facts were identified.",
               summary: "Batch durable write for multiple reusable facts.",
               source: {
                 actorType: "agent",
@@ -674,7 +674,7 @@ describe("capture workflow behavior", () => {
 
 describe("node update behavior", () => {
   it("preserves curated summaries on unrelated PATCH updates and records provenance", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -687,13 +687,13 @@ describe("node update behavior", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
       resolvedStatus: "active"
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -714,7 +714,7 @@ describe("node update behavior", () => {
           source: {
             actorType: "human",
             actorLabel: "juhwan",
-            toolName: "memforge-test"
+            toolName: "recallx-test"
           }
         })
       });
@@ -737,7 +737,7 @@ describe("node update behavior", () => {
   });
 
   it("marks curated summaries stale after body edits and refreshes them on demand", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -750,13 +750,13 @@ describe("node update behavior", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
       resolvedStatus: "active"
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -773,7 +773,7 @@ describe("node update behavior", () => {
       const source = {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       };
 
       const patchResponse = await fetch(`${baseUrl}/nodes/${node.id}`, {
@@ -850,7 +850,7 @@ describe("recent ordering", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const older = repository.createNode({
@@ -899,7 +899,7 @@ describe("inferred relation storage", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const fromNode = repository.createNode({
       type: "note",
@@ -972,7 +972,7 @@ describe("inferred relation storage", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const focus = repository.createNode({
       type: "note",
@@ -1085,7 +1085,7 @@ describe("inferred relation storage", () => {
 
 describe("semantic skeleton", () => {
   it("creates semantic index tables in a fresh workspace", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
@@ -1100,15 +1100,15 @@ describe("semantic skeleton", () => {
   });
 
   it("marks semantic index state as pending on node and activity writes", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1140,10 +1140,10 @@ describe("semantic skeleton", () => {
   });
 
   it("surfaces semantic defaults and reindex status through the HTTP API", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -1160,7 +1160,7 @@ describe("semantic skeleton", () => {
       const source = {
         actorType: "human" as const,
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       };
 
       const bootstrapResponse = await fetch(`${baseUrl}/bootstrap`);
@@ -1217,12 +1217,12 @@ describe("semantic skeleton", () => {
   });
 
   it("filters and paginates semantic issues without widening the aggregate semantic status contract", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     const db = workspaceSessionManager.getCurrent().db;
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -1230,7 +1230,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const failedNode = repository.createNode({
       type: "note",
@@ -1317,11 +1317,11 @@ describe("semantic skeleton", () => {
   });
 
   it("processes pending semantic items into chunks and marks them ready in chunk-only mode", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": false,
       "search.semantic.provider": "disabled",
@@ -1331,7 +1331,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1362,11 +1362,11 @@ describe("semantic skeleton", () => {
   });
 
   it("writes local-ngram embeddings and remains idempotent across repeated worker runs", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "local-ngram",
@@ -1376,7 +1376,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1436,11 +1436,11 @@ describe("semantic skeleton", () => {
   });
 
   it("normalizes legacy deterministic semantic settings onto the local-ngram surface", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "deterministic",
@@ -1450,7 +1450,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1481,11 +1481,11 @@ describe("semantic skeleton", () => {
   });
 
   it("queues semantic reindex when chunk settings change and skips no-op semantic updates", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "local-ngram",
@@ -1495,7 +1495,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1529,11 +1529,11 @@ describe("semantic skeleton", () => {
   });
 
   it("defers provider/model reindex until a staged semantic transition is complete", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "local-ngram",
@@ -1543,7 +1543,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1583,11 +1583,11 @@ describe("semantic skeleton", () => {
   });
 
   it("queues semantic reindex through batched setSettings updates", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": false,
       "search.semantic.provider": "disabled",
@@ -1597,7 +1597,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1643,7 +1643,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const node = repository.createNode({
       type: "note",
@@ -1699,7 +1699,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const node = repository.createNode({
       type: "note",
@@ -1744,11 +1744,11 @@ describe("semantic skeleton", () => {
   });
 
   it("fails semantic processing cleanly when a provider is configured but not implemented", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "openai",
@@ -1758,7 +1758,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
 
     const node = repository.createNode({
@@ -1798,7 +1798,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const node = repository.createNode({
       type: "note",
@@ -1849,7 +1849,7 @@ describe("semantic skeleton", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const node = repository.createNode({
       type: "note",
@@ -1887,7 +1887,7 @@ describe("relation usage events", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const first = repository.appendRelationUsageEvent({
       relationId: "irel_demo",
@@ -1924,7 +1924,7 @@ describe("relation usage events", () => {
     expect(listed[1]?.id).toBe(first.id);
     expect(listed[0]?.eventType).toBe("bundle_used_in_output");
     expect(listed[0]?.actorLabel).toBe("juhwan");
-    expect(listed[0]?.toolName).toBe("memforge-test");
+    expect(listed[0]?.toolName).toBe("recallx-test");
   });
 
   it("appends and lists search feedback events in reverse chronological order", async () => {
@@ -1932,7 +1932,7 @@ describe("relation usage events", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const first = repository.appendSearchFeedbackEvent({
       resultType: "node",
@@ -1981,7 +1981,7 @@ describe("relation usage events", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const preferredNode = repository.createNode({
       type: "note",
@@ -2036,7 +2036,7 @@ describe("relation usage events", () => {
   });
 
   it("backfills relation usage rollups from existing raw events on startup", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
@@ -2055,7 +2055,7 @@ describe("relation usage events", () => {
       "run-legacy-1",
       "human",
       "juhwan",
-      "memforge-test",
+      "recallx-test",
       0.1,
       "2025-01-01T00:00:00.000Z",
       "{}"
@@ -2074,13 +2074,13 @@ describe("relation usage events", () => {
       "run-legacy-2",
       "human",
       "juhwan",
-      "memforge-test",
+      "recallx-test",
       0.2,
       "2025-01-02T00:00:00.000Z",
       "{}"
     );
 
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     const summary = repository.getRelationUsageSummaries(["irel_legacy"]).get("irel_legacy");
     const rollup = db
       .prepare(`SELECT * FROM relation_usage_rollups WHERE relation_id = ?`)
@@ -2100,7 +2100,7 @@ describe("inferred relation maintenance", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const fromNode = repository.createNode({
       type: "project",
@@ -2159,7 +2159,7 @@ describe("inferred relation maintenance", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const fromNode = repository.createNode({
       type: "project",
@@ -2206,14 +2206,14 @@ describe("inferred relation maintenance", () => {
   });
 
   it("does not resurrect expired inferred relations during manual full recompute", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const fromNode = repository.createNode({
       type: "project",
@@ -2248,7 +2248,7 @@ describe("inferred relation maintenance", () => {
       metadata: {}
     });
 
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -2277,7 +2277,7 @@ describe("inferred relation maintenance", () => {
   });
 
   it("auto-recomputes after enough usage events and a short debounce", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -2326,7 +2326,7 @@ describe("inferred relation maintenance", () => {
       evidence: {},
       metadata: {}
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2368,7 +2368,7 @@ describe("inferred relation maintenance", () => {
   });
 
   it("catches up pending usage events on app start after downtime", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -2426,7 +2426,7 @@ describe("inferred relation maintenance", () => {
       metadata: {}
     });
 
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2447,7 +2447,7 @@ describe("inferred relation maintenance", () => {
   });
 
   it("recomputes all pending relation ids even when they exceed the batch cap", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -2455,7 +2455,7 @@ describe("inferred relation maintenance", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const nodes = Array.from({ length: 4 }, (_, index) =>
       repository.createNode({
@@ -2519,7 +2519,7 @@ describe("inferred relation maintenance", () => {
       });
     }
 
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -2549,14 +2549,14 @@ describe("inferred relation maintenance", () => {
   });
 
   it("expires stale inferred relations through the manual full recompute endpoint even without new usage events", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const fromNode = repository.createNode({
       type: "note",
@@ -2592,7 +2592,7 @@ describe("inferred relation maintenance", () => {
       metadata: {}
     });
 
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -2622,10 +2622,10 @@ describe("inferred relation maintenance", () => {
 
 describe("automatic inferred relation generation", () => {
   it("creates deterministic inferred links from shared tags and body references on node writes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2642,7 +2642,7 @@ describe("automatic inferred relation generation", () => {
       const source = {
         actorType: "human" as const,
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       const projectResponse = await fetch(`${baseUrl}/nodes`, {
@@ -2698,10 +2698,10 @@ describe("automatic inferred relation generation", () => {
   });
 
   it("creates deterministic inferred links from shared project membership when active relations are added", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2718,7 +2718,7 @@ describe("automatic inferred relation generation", () => {
       const source = {
         actorType: "human" as const,
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       const projectBody = await (await fetch(`${baseUrl}/nodes`, {
@@ -2812,10 +2812,10 @@ describe("automatic inferred relation generation", () => {
   });
 
   it("creates deterministic inferred links from shared attached artifacts", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2832,7 +2832,7 @@ describe("automatic inferred relation generation", () => {
       const source = {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       const noteABody = await (await fetch(`${baseUrl}/nodes`, {
@@ -2913,10 +2913,10 @@ describe("automatic inferred relation generation", () => {
   });
 
   it("refreshes inferred links from activity body references", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -2937,7 +2937,7 @@ describe("automatic inferred relation generation", () => {
       } = {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       const repository = workspaceSessionManager.getCurrent().repository;
@@ -2990,10 +2990,10 @@ describe("automatic inferred relation generation", () => {
   }, 15_000);
 
   it("expires stale auto-generated links when deterministic signals disappear", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3010,7 +3010,7 @@ describe("automatic inferred relation generation", () => {
       const source = {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       await fetch(`${baseUrl}/nodes`, {
@@ -3072,14 +3072,14 @@ describe("automatic inferred relation generation", () => {
   });
 
   it("backfills deterministic inferred links across existing workspace nodes through reindex", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test",
+      toolName: "recallx-test",
     };
     const first = repository.createNode({
       type: "note",
@@ -3101,7 +3101,7 @@ describe("automatic inferred relation generation", () => {
       resolvedCanonicality: "canonical",
       resolvedStatus: "active",
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3136,10 +3136,10 @@ describe("automatic inferred relation generation", () => {
 
 describe("inferred relation API integration", () => {
   it("surfaces inferred neighborhood items and includes them in context bundles", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3255,11 +3255,11 @@ describe("inferred relation API integration", () => {
   });
 
   it("includes contested decisions and open questions in target-related retrieval and context bundles", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3365,11 +3365,11 @@ describe("inferred relation API integration", () => {
   });
 
   it("builds a workspace-entry context bundle when no target is provided", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3439,14 +3439,14 @@ describe("inferred relation API integration", () => {
   });
 
   it("adds local-ngram semantic bonuses to context bundles when lexical overlap is weak", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     repository.setSetting("search.semantic.enabled", true);
     repository.setSetting("search.semantic.provider", "local-ngram");
     repository.setSetting("search.semantic.model", "chargram-v1");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3534,10 +3534,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("accepts relation usage events through the HTTP API", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3582,10 +3582,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("accepts search feedback events through the HTTP API", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3632,10 +3632,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("searches activities through the HTTP API", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3698,10 +3698,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("searches nodes and activities through the unified workspace endpoint", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3764,10 +3764,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("keeps HTTP blank-query browse behavior and marks browse match reasons", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3823,10 +3823,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("falls back to tokenized workspace search and labels fallback match reasons", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3891,10 +3891,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("uses semantic fallback for workspace search when deterministic results are empty", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -3954,7 +3954,7 @@ describe("inferred relation API integration", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-memforge-mcp-tool": "memforge_search_workspace"
+          "x-recallx-mcp-tool": "recallx_search_workspace"
         },
         body: JSON.stringify({
           query: semanticQuery,
@@ -3996,10 +3996,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("uses sqlite semantic fallback when sqlite-vec is not the active backend", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4076,10 +4076,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("skips workspace semantic fallback when deterministic results already exist", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4151,10 +4151,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("skips workspace semantic fallback for short queries", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4209,10 +4209,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("uses smart sort to keep recent activity near the top of mixed search results", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4272,10 +4272,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("uses relation usage events to reorder inferred neighborhood items", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4390,10 +4390,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("uses relation bonuses when ranking candidates for a target node", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4497,14 +4497,14 @@ describe("inferred relation API integration", () => {
   });
 
   it("adds local-ngram semantic bonuses when deterministic candidate signals are weak", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     repository.setSetting("search.semantic.enabled", true);
     repository.setSetting("search.semantic.provider", "local-ngram");
     repository.setSetting("search.semantic.model", "chargram-v1");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4566,14 +4566,14 @@ describe("inferred relation API integration", () => {
   });
 
   it("skips local-ngram semantic bonuses when a strong lexical match already exists", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     repository.setSetting("search.semantic.enabled", true);
     repository.setSetting("search.semantic.provider", "local-ngram");
     repository.setSetting("search.semantic.model", "chargram-v1");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4635,14 +4635,14 @@ describe("inferred relation API integration", () => {
   });
 
   it("respects semantic augmentation minSimilarity and maxBonus settings without changing the default gate", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
     repository.setSetting("search.semantic.enabled", true);
     repository.setSetting("search.semantic.provider", "local-ngram");
     repository.setSetting("search.semantic.model", "chargram-v1");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4721,11 +4721,11 @@ describe("inferred relation API integration", () => {
   });
 
   it("includes relation ids in context bundle items for relation-backed preview actions", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -4742,7 +4742,7 @@ describe("inferred relation API integration", () => {
       const source = {
         actorType: "human" as const,
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
       const target = repository.createNode({
         type: "project",
@@ -4806,11 +4806,11 @@ describe("inferred relation API integration", () => {
   });
 
   it("supports top-k mean semantic chunk aggregation without changing the default max strategy", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspace = ensureWorkspace(root);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, root);
+    const repository = new RecallXRepository(db, root);
     repository.ensureBaseSettings({
       "search.semantic.enabled": true,
       "search.semantic.provider": "local-ngram",
@@ -4821,7 +4821,7 @@ describe("inferred relation API integration", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const exactChunkNode = repository.createNode({
       type: "note",
@@ -4965,7 +4965,7 @@ describe("inferred relation API integration", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const exactChunkNode = repository.createNode({
       type: "note",
@@ -5035,7 +5035,7 @@ describe("inferred relation API integration", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test"
+      toolName: "recallx-test"
     };
     const legacyNode = repository.createNode({
       type: "note",
@@ -5088,7 +5088,7 @@ describe("inferred relation API integration", () => {
   });
 
   it("skips sqlite-vec semantic lookups when a strong lexical candidate match already exists", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -5097,7 +5097,7 @@ describe("inferred relation API integration", () => {
     repository.setSetting("search.semantic.provider", "local-ngram");
     repository.setSetting("search.semantic.model", "chargram-v1");
     repository.setSetting("search.semantic.indexBackend", "sqlite-vec");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -5147,10 +5147,10 @@ describe("inferred relation API integration", () => {
   });
 
   it("recomputes inferred relation scores through the HTTP API", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -5233,10 +5233,10 @@ describe("inferred relation API integration", () => {
 
 describe("project graph API", () => {
   it("returns a bounded project-scoped graph with canonical and inferred edges", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -5254,7 +5254,7 @@ describe("project graph API", () => {
       const source = {
         actorType: "human" as const,
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       const createNodeRequest = async (input: { type: string; title: string; body: string }) => {
@@ -5385,7 +5385,7 @@ describe("project graph API", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test",
+      toolName: "recallx-test",
     };
     const fixedAt = "2026-03-21T00:00:00.000Z";
 
@@ -5448,7 +5448,7 @@ describe("project graph API", () => {
     const source = {
       actorType: "human" as const,
       actorLabel: "juhwan",
-      toolName: "memforge-test",
+      toolName: "recallx-test",
     };
 
     const project = repository.createNode({
@@ -5494,10 +5494,10 @@ describe("project graph API", () => {
 
 describe("bootstrap auth metadata", () => {
   it("keeps bootstrap public without leaking the bearer token", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root, "bearer");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: "secret-token"
     });
@@ -5532,7 +5532,7 @@ describe("bootstrap auth metadata", () => {
       expect(bootstrapBody.data.authMode).toBe("bearer");
       expect(bootstrapBody.data.apiToken).toBeUndefined();
       expect(bootstrapBody.data.workspace.authMode).toBe("bearer");
-      expect(bootstrapBody.data.workspace.workspaceName).toBe("Memforge Test");
+      expect(bootstrapBody.data.workspace.workspaceName).toBe("RecallX Test");
       expect(bootstrapBody.data.workspace.bindAddress).toBe("127.0.0.1:8787");
       expect(bootstrapBody.data.workspace.enabledIntegrationModes).toEqual(["read-only", "append-only"]);
       expect(typeof bootstrapBody.data.workspace.workspaceKey).toBe("string");
@@ -5548,10 +5548,10 @@ describe("bootstrap auth metadata", () => {
 
 describe("browser origin hardening", () => {
   it("rejects non-loopback browser origins and only reflects local dev origins", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -5586,10 +5586,10 @@ describe("browser origin hardening", () => {
   });
 
   it("requires bearer auth for event streams in bearer mode", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root, "bearer");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: "secret-token"
     });
@@ -5616,10 +5616,10 @@ describe("browser origin hardening", () => {
   });
 
   it("rejects query-string bearer tokens on protected API routes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root, "bearer");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: "secret-token"
     });
@@ -5656,7 +5656,7 @@ describe("browser origin hardening", () => {
 
 describe("artifact path hardening", () => {
   it("rejects artifact registration outside the workspace root", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     const siblingRoot = `${root}-secret`;
     tempRoots.push(root, siblingRoot);
     mkdirSync(siblingRoot, { recursive: true });
@@ -5673,13 +5673,13 @@ describe("artifact path hardening", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
       resolvedStatus: "active"
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -5702,7 +5702,7 @@ describe("artifact path hardening", () => {
           source: {
             actorType: "human",
             actorLabel: "juhwan",
-            toolName: "memforge-test"
+            toolName: "recallx-test"
           },
           metadata: {}
         })
@@ -5715,7 +5715,7 @@ describe("artifact path hardening", () => {
   });
 
   it("rejects artifact registration outside the artifacts directory even when still inside the workspace", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -5727,7 +5727,7 @@ describe("artifact path hardening", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -5735,7 +5735,7 @@ describe("artifact path hardening", () => {
     });
     const workspaceLocalPath = path.join(root, "workspace-local.txt");
     writeFileSync(workspaceLocalPath, "local-but-not-artifact");
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -5758,7 +5758,7 @@ describe("artifact path hardening", () => {
           source: {
             actorType: "human",
             actorLabel: "juhwan",
-            toolName: "memforge-test"
+            toolName: "recallx-test"
           },
           metadata: {}
         })
@@ -5771,7 +5771,7 @@ describe("artifact path hardening", () => {
   });
 
   it("rejects artifact registration when the artifact path is a symlink", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     const siblingRoot = `${root}-secret`;
     tempRoots.push(root, siblingRoot);
     mkdirSync(siblingRoot, { recursive: true });
@@ -5788,7 +5788,7 @@ describe("artifact path hardening", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -5796,7 +5796,7 @@ describe("artifact path hardening", () => {
     });
     const symlinkPath = path.join(root, "artifacts", "linked-secret.txt");
     symlinkSync(outsidePath, symlinkPath);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null
     });
@@ -5819,7 +5819,7 @@ describe("artifact path hardening", () => {
           source: {
             actorType: "human",
             actorLabel: "juhwan",
-            toolName: "memforge-test"
+            toolName: "recallx-test"
           },
           metadata: {}
         })
@@ -5832,7 +5832,7 @@ describe("artifact path hardening", () => {
   });
 
   it("requires bearer auth and a registered artifact path for raw artifact downloads", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root, "bearer");
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -5844,7 +5844,7 @@ describe("artifact path hardening", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {},
       resolvedCanonicality: "canonical",
@@ -5860,14 +5860,14 @@ describe("artifact path hardening", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test"
+        toolName: "recallx-test"
       },
       metadata: {}
     });
     expect(repository.hasArtifactAtPath("artifacts/registered.txt")).toBe(true);
     expect(repository.hasArtifactAtPath("artifacts\\registered.txt")).toBe(true);
 
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: "secret-token"
     });
@@ -5903,7 +5903,7 @@ describe("artifact path hardening", () => {
   });
 
   it("treats sibling directories as outside the workspace boundary", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     const siblingRoot = `${root}-secret`;
     tempRoots.push(root, siblingRoot);
     mkdirSync(siblingRoot, { recursive: true });
@@ -5918,12 +5918,12 @@ describe("artifact path hardening", () => {
 
 describe("workspace switching", () => {
   it("switches workspaces without restarting the server", async () => {
-    const rootA = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
-    const rootB = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const rootA = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
+    const rootB = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(rootA, rootB);
 
     const workspaceSessionManager = createWorkspaceSessionManager(rootA);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -5940,7 +5940,7 @@ describe("workspace switching", () => {
       const source = {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge-test",
+        toolName: "recallx-test",
       };
 
       await fetch(`${baseUrl}/nodes`, {
@@ -6030,10 +6030,10 @@ describe("workspace switching", () => {
 
 describe("workspace event stream", () => {
   it("emits async workspace updates when recent content changes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6056,7 +6056,7 @@ describe("workspace event stream", () => {
         source: {
           actorType: "human",
           actorLabel: "juhwan",
-          toolName: "memforge-test",
+          toolName: "recallx-test",
         },
         metadata: {},
         resolvedCanonicality: "canonical",
@@ -6124,10 +6124,10 @@ describe("workspace event stream", () => {
 
 describe("node governance behavior", () => {
   it("stores low-risk agent notes as active appended nodes without review items", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6171,10 +6171,10 @@ describe("node governance behavior", () => {
   });
 
   it("keeps durable agent notes suggested for automatic governance", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6227,10 +6227,10 @@ describe("node governance behavior", () => {
   });
 
   it("keeps trusted source tool names within automatic governance for durable notes and relations", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6315,10 +6315,10 @@ describe("node governance behavior", () => {
   });
 
   it("keeps trusted source tool names within automatic governance for decisions", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6372,12 +6372,12 @@ describe("node governance behavior", () => {
   });
 
   it("preserves trusted source settings across server reopen", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
 
     const openServer = async () => {
       const workspaceSessionManager = createWorkspaceSessionManager(root);
-      const app = createMemforgeApp({
+      const app = createRecallXApp({
         workspaceSessionManager,
         apiToken: null,
       });
@@ -6428,11 +6428,11 @@ describe("node governance behavior", () => {
 
 describe("service index", () => {
   it("returns a discoverable root index for external agents", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
 
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6450,11 +6450,11 @@ describe("service index", () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.data.service.name).toBe("Memforge");
+      expect(body.data.service.name).toBe("RecallX");
       expect(body.data.service.baseUrl).toContain(`/api/v1`);
       expect(body.data.startHere.some((item: { path: string }) => item.path === "/api/v1/health")).toBe(true);
       expect(body.data.endpoints.some((item: { path: string }) => item.path === "/api/v1/nodes/search")).toBe(true);
-      expect(body.data.cli.examples.some((example: string) => example.includes("pnw search"))).toBe(true);
+      expect(body.data.cli.examples.some((example: string) => example.includes("recallx search"))).toBe(true);
       expect(body.data.mcp.command).toBe("node dist/server/app/mcp/index.js");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -6464,7 +6464,7 @@ describe("service index", () => {
 
 describe("health auto recompute status", () => {
   it("surfaces pending auto-recompute state in health output", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root);
     const repository = workspaceSessionManager.getCurrent().repository;
@@ -6513,7 +6513,7 @@ describe("health auto recompute status", () => {
       evidence: {},
       metadata: {}
     });
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6555,18 +6555,18 @@ describe("health auto recompute status", () => {
 
 describe("renderer package serving", () => {
   it("serves the renderer bundle from / when a renderer dist path is configured", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
-    const rendererRoot = mkdtempSync(path.join(tmpdir(), "memforge-renderer-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
+    const rendererRoot = mkdtempSync(path.join(tmpdir(), "recallx-renderer-test-"));
     tempRoots.push(root, rendererRoot);
     mkdirSync(path.join(rendererRoot, "assets"), { recursive: true });
-    writeFileSync(path.join(rendererRoot, "index.html"), "<!doctype html><html><head><title>Memforge</title></head><body>Renderer bundle</body></html>");
-    writeFileSync(path.join(rendererRoot, "assets", "app.js"), "console.log('memforge renderer');");
+    writeFileSync(path.join(rendererRoot, "index.html"), "<!doctype html><html><head><title>RecallX</title></head><body>Renderer bundle</body></html>");
+    writeFileSync(path.join(rendererRoot, "assets", "app.js"), "console.log('recallx renderer');");
 
-    const previousRendererDistPath = process.env.MEMFORGE_RENDERER_DIST_PATH;
-    process.env.MEMFORGE_RENDERER_DIST_PATH = rendererRoot;
+    const previousRendererDistPath = process.env.RECALLX_RENDERER_DIST_PATH;
+    process.env.RECALLX_RENDERER_DIST_PATH = rendererRoot;
 
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6583,27 +6583,27 @@ describe("renderer package serving", () => {
       const assetResponse = await fetch(`http://127.0.0.1:${address.port}/assets/app.js`);
 
       expect(rootResponse.status).toBe(200);
-      expect(await rootResponse.text()).toContain("<title>Memforge</title>");
+      expect(await rootResponse.text()).toContain("<title>RecallX</title>");
       expect(assetResponse.status).toBe(200);
-      expect(await assetResponse.text()).toContain("memforge renderer");
+      expect(await assetResponse.text()).toContain("recallx renderer");
     } finally {
       if (previousRendererDistPath === undefined) {
-        delete process.env.MEMFORGE_RENDERER_DIST_PATH;
+        delete process.env.RECALLX_RENDERER_DIST_PATH;
       } else {
-        process.env.MEMFORGE_RENDERER_DIST_PATH = previousRendererDistPath;
+        process.env.RECALLX_RENDERER_DIST_PATH = previousRendererDistPath;
       }
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
   it("returns a headless runtime notice at / when no renderer bundle is available", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const root = mkdtempSync(path.join(tmpdir(), "recallx-test-"));
     tempRoots.push(root);
-    const previousRendererDistPath = process.env.MEMFORGE_RENDERER_DIST_PATH;
-    process.env.MEMFORGE_RENDERER_DIST_PATH = path.join(root, "missing-renderer");
+    const previousRendererDistPath = process.env.RECALLX_RENDERER_DIST_PATH;
+    process.env.RECALLX_RENDERER_DIST_PATH = path.join(root, "missing-renderer");
 
     const workspaceSessionManager = createWorkspaceSessionManager(root);
-    const app = createMemforgeApp({
+    const app = createRecallXApp({
       workspaceSessionManager,
       apiToken: null,
     });
@@ -6624,9 +6624,9 @@ describe("renderer package serving", () => {
       expect(body).toContain("/api/v1");
     } finally {
       if (previousRendererDistPath === undefined) {
-        delete process.env.MEMFORGE_RENDERER_DIST_PATH;
+        delete process.env.RECALLX_RENDERER_DIST_PATH;
       } else {
-        process.env.MEMFORGE_RENDERER_DIST_PATH = previousRendererDistPath;
+        process.env.RECALLX_RENDERER_DIST_PATH = previousRendererDistPath;
       }
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

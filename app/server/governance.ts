@@ -6,7 +6,7 @@ import type {
   NodeStatus
 } from "../shared/contracts.js";
 import type { GovernanceStateRecord, NodeRecord, RelationRecord, SearchFeedbackSummary } from "../shared/types.js";
-import type { MemforgeRepository } from "./repositories.js";
+import type { RecallXRepository } from "./repositories.js";
 import { AppError } from "./errors.js";
 import { countTokensApprox, nowIso } from "./utils.js";
 
@@ -270,7 +270,7 @@ export function shouldPromoteActivitySummary(input: AppendActivityInput): boolea
 }
 
 export function maybeCreatePromotionCandidate(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   input: AppendActivityInput
 ): { suggestedNodeId?: string } {
   if (!shouldPromoteActivitySummary(input)) {
@@ -309,7 +309,7 @@ export function maybeCreatePromotionCandidate(
 }
 
 function evaluateNodeGovernance(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   node: NodeRecord,
   policy: GovernancePolicy,
   feedback = repository.getSearchFeedbackSummaries("node", [node.id]).get(node.id),
@@ -371,7 +371,7 @@ function evaluateNodeGovernance(
 }
 
 function evaluateRelationGovernance(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   relation: RelationRecord,
   policy: GovernancePolicy,
   usage = repository.getRelationUsageSummaries([relation.id]).get(relation.id),
@@ -414,7 +414,7 @@ function evaluateRelationGovernance(
 }
 
 function persistGovernanceEvaluation(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   evaluation: GovernanceEvaluation,
   options?: {
     currentState?: GovernanceStateRecord | null;
@@ -470,7 +470,7 @@ function persistGovernanceEvaluation(
 }
 
 export function recomputeAutomaticGovernance(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   input: RecomputeGovernanceInput,
   policy: GovernancePolicy = resolveGovernancePolicy(
     repository.getSettings(["review.autoApproveLowRisk", "review.trustedSourceToolNames"])
@@ -545,7 +545,7 @@ export function recomputeAutomaticGovernance(
   };
 }
 
-export function bootstrapAutomaticGovernance(repository: MemforgeRepository): GovernanceRecomputeResult {
+export function bootstrapAutomaticGovernance(repository: RecallXRepository): GovernanceRecomputeResult {
   const legacyReviewItems = repository.listLegacyReviewItems();
   if (legacyReviewItems.length === 0) {
     return {

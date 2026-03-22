@@ -5,14 +5,13 @@ const DEFAULT_API_BASE = "http://127.0.0.1:8787/api/v1";
 export function getApiBase(argvOptions = {}, env = process.env) {
   return (
     argvOptions.api ||
-    env.MEMFORGE_API_URL ||
-    env.PNW_API_URL ||
+    env.RECALLX_API_URL ||
     DEFAULT_API_BASE
   );
 }
 
 export function getAuthToken(argvOptions = {}, env = process.env) {
-  return argvOptions.token || env.MEMFORGE_TOKEN || env.PNW_TOKEN || "";
+  return argvOptions.token || env.RECALLX_TOKEN || "";
 }
 
 export async function requestJson(apiBase, path, { method = "GET", token, body } = {}) {
@@ -37,7 +36,7 @@ export async function requestJson(apiBase, path, { method = "GET", token, body }
   }
 
   if (parseError) {
-    throw new Error("INVALID_RESPONSE: Memforge API returned non-JSON output.");
+    throw new Error("INVALID_RESPONSE: RecallX API returned non-JSON output.");
   }
 
   if (payload && payload.ok === false) {

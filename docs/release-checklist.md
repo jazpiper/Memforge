@@ -1,4 +1,4 @@
-# Memforge Release Checklist
+# RecallX Release Checklist
 
 > Maintainer-only operational checklist.
 > This document is for release verification and packaging work, not for product positioning or end-user onboarding.
@@ -22,7 +22,7 @@ For the full maintainer flow, including release PR creation and publish automati
 - run `npm run build`
 - run `npm run prepare:full-package`
 - run `npm run prepare:headless-package`
-- confirm `npm pack ./release/npm-memforge` succeeds
+- confirm `npm pack ./release/npm-recallx` succeeds
 - confirm `npm pack ./release/npm-headless` succeeds
 - confirm `npm run verify:full-package` succeeds after packing the tarball
 - confirm `npm run verify:headless-package` succeeds after packing the tarball
@@ -32,13 +32,13 @@ For the full maintainer flow, including release PR creation and publish automati
 - merge the version PR opened by the `Release` workflow
 - `npm run publish:full` succeeds
 - `npm run publish:headless` succeeds
-- `npm pack ./release/npm-memforge` is followed by `npm run verify:full-package`
+- `npm pack ./release/npm-recallx` is followed by `npm run verify:full-package`
 - `npm pack ./release/npm-headless` is followed by `npm run verify:headless-package`
-- `memforge serve` starts after install
-- `pnw help` works after install
-- `pnw mcp install` creates `~/.memforge/bin/memforge-mcp`
-- `memforge-mcp --help` starts from the installed package
-- the installed MCP launcher contains `memforge-mcp.js` and `--api`, but not persisted bearer tokens
+- `recallx serve` starts after install
+- `recallx help` works after install
+- `recallx mcp install` creates `~/.recallx/bin/recallx-mcp`
+- `recallx-mcp --help` starts from the installed package
+- the installed MCP launcher contains `recallx-mcp.js` and `--api`, but not persisted bearer tokens
 - the full package serves the renderer at `/`
 - the headless package returns a root runtime notice at `/`
 

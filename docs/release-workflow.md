@@ -1,12 +1,12 @@
-# Memforge Release Workflow
+# RecallX Release Workflow
 
-This document describes the current maintainer flow for versioning and publishing `memforge` and `memforge-headless`.
+This document describes the current maintainer flow for versioning and publishing `recallx` and `recallx-headless`.
 
 ## Release Model
 
 - Changesets are the source of truth for upcoming version bumps and release notes.
 - The root [`package.json`](../package.json) version is the release version for both npm packages.
-- `memforge` and `memforge-headless` are generated from the repo at publish time, not stored as first-class packages in the repo.
+- `recallx` and `recallx-headless` are generated from the repo at publish time, not stored as first-class packages in the repo.
 
 ## Feature PR Flow
 
@@ -16,7 +16,7 @@ When a change should affect the next npm release:
 npm run changeset
 ```
 
-Choose the release type you want for `memforge`, write a short summary, and commit the generated markdown file under `.changeset/`.
+Choose the release type you want for `recallx`, write a short summary, and commit the generated markdown file under `.changeset/`.
 
 Good candidates for a changeset:
 
@@ -42,7 +42,7 @@ After the version PR merges to `main`, run the `Publish` GitHub Actions workflow
 The `Publish` workflow:
 
 1. runs `npm run release:publish`
-2. verifies whether `memforge@<version>` or `memforge-headless@<version>` are already on npm
+2. verifies whether `recallx@<version>` or `recallx-headless@<version>` are already on npm
 3. skips safely if both packages are already published
 4. otherwise runs the full verification pipeline and publishes only the missing package versions
 

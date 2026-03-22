@@ -259,9 +259,9 @@ type GuideSection = {
 function getDesktopIntegrationInfo(): DesktopIntegrationInfo | null {
   const globalInfo = (
     window as Window & {
-      __MEMFORGE_DESKTOP_INFO__?: DesktopIntegrationInfo;
+      __RECALLX_DESKTOP_INFO__?: DesktopIntegrationInfo;
     }
-  ).__MEMFORGE_DESKTOP_INFO__;
+  ).__RECALLX_DESKTOP_INFO__;
 
   return globalInfo ?? null;
 }
@@ -269,12 +269,12 @@ function getDesktopIntegrationInfo(): DesktopIntegrationInfo | null {
 function getDesktopActionBridge() {
   return (
     window as Window & {
-      __MEMFORGE_DESKTOP_ACTIONS__?: {
+      __RECALLX_DESKTOP_ACTIONS__?: {
         getRuntimeState: () => Promise<DesktopRuntimeState>;
         onAction: (callback: (payload: DesktopActionPayload) => void) => (() => void) | void;
       };
     }
-  ).__MEMFORGE_DESKTOP_ACTIONS__ ?? null;
+  ).__RECALLX_DESKTOP_ACTIONS__ ?? null;
 }
 
 function emptyDetailPanel(): DetailPanel {
@@ -296,7 +296,7 @@ export default function App() {
   const [workspaceCatalog, setWorkspaceCatalog] = useState<WorkspaceCatalogItem[]>([]);
   const [snapshot, setSnapshot] = useState<WorkspaceSeed | null>(null);
   const [view, setView] = useState<NavView>(resolveInitialView);
-  const [selectedNodeId, setSelectedNodeId] = useState<string>('node_memforge');
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('node_recallx');
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [isLoading, setIsLoading] = useState(true);
@@ -319,7 +319,7 @@ export default function App() {
   const [guideSectionId, setGuideSectionId] = useState('overview');
   const bundleUsageEventKeysRef = useRef(new Set<string>());
   const relationUsageSessionIdRef = useRef(
-    globalThis.crypto?.randomUUID?.() ?? `memforge-renderer-${Date.now()}`
+    globalThis.crypto?.randomUUID?.() ?? `recallx-renderer-${Date.now()}`
   );
 
   async function refreshSnapshotState() {
@@ -349,7 +349,7 @@ export default function App() {
     if (isAuthError(error)) {
       clearRendererToken();
       setAuthRequired(true);
-      setAuthError('Enter the Memforge API token to continue.');
+      setAuthError('Enter the RecallX API token to continue.');
       setLoadError(null);
       return;
     }
@@ -813,7 +813,7 @@ export default function App() {
   const activeGovernanceIssue =
     governanceIssues.find((item) => item.entityId === selectedGovernanceId) ?? governanceIssues[0];
 
-  const workspaceName = workspace?.name ?? 'Memforge';
+  const workspaceName = workspace?.name ?? 'RecallX';
   const apiBase = desktopInfo?.apiBase ?? formatApiBase(workspace?.apiBind ?? '127.0.0.1:8787');
   const workspaceRoot = workspace?.rootPath ?? desktopInfo?.workspaceRoot ?? '';
   const workspaceDbPath = desktopInfo?.workspaceDbPath ?? (workspaceRoot ? `${workspaceRoot}/workspace.db` : '');
@@ -835,7 +835,7 @@ export default function App() {
   const genericMcpConfig = mcpLauncherPath
     ? `{
   "mcpServers": {
-    "memforge": {
+    "recallx": {
       "command": "${mcpLauncherPath}",
       "args": []
     }
@@ -843,13 +843,13 @@ export default function App() {
 }`
     : `{
   "mcpServers": {
-    "memforge": {
+    "recallx": {
       "command": "node",
       "args": ["dist/server/app/mcp/index.js", "--api", "${apiBase}"]
     }
   }
 }`;
-  const apiAuthHeader = workspace?.authMode === 'bearer' ? ' -H "Authorization: Bearer $MEMFORGE_API_TOKEN"' : '';
+  const apiAuthHeader = workspace?.authMode === 'bearer' ? ' -H "Authorization: Bearer $RECALLX_API_TOKEN"' : '';
   const apiExample = `curl${apiAuthHeader} ${apiBase}
 curl${apiAuthHeader} ${desktopInfo?.healthUrl ?? `${apiBase}/health`}
 curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
@@ -915,7 +915,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       title: 'Use MCP when the client is an agent, not a person making raw requests.',
       body: 'Show the launcher configuration and the direct command together, but keep the page visually quiet. The important part is the connection shape, not extra chrome.',
       points: [
-        'Use the launcher config when wiring Memforge into an MCP-capable agent client.',
+        'Use the launcher config when wiring RecallX into an MCP-capable agent client.',
         'Use the direct local command when testing the server manually.',
         'Keep the API target pointed at the current workspace service.',
       ],
@@ -929,9 +929,9 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       title: 'Search first, then decide whether to anchor.',
       body: 'The guide should make the order obvious so agent clients do not jump into over-specific context too early.',
       points: [
-        '1. Start broad with memforge_search_workspace when the target is still unclear.',
-        '2. Use memforge_search_nodes when checking for an existing project or durable node.',
-        '3. Use memforge_context_bundle only after the target is actually known.',
+        '1. Start broad with recallx_search_workspace when the target is still unclear.',
+        '2. Use recallx_search_nodes when checking for an existing project or durable node.',
+        '3. Use recallx_context_bundle only after the target is actually known.',
       ],
     },
     {
@@ -942,9 +942,9 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       title: 'Write lightly unless the target is already clear.',
       body: 'This is the part that prevents over-structuring. Treat durable memory, activity logs, and anchored bundles as separate decisions.',
       points: [
-        'memforge_capture_memory is the safe default when work is not yet tied to a specific project or node.',
-        'memforge_append_activity is best for routine summaries and work logs.',
-        'memforge_context_bundle should include targetId only after the project or node is truly known.',
+        'recallx_capture_memory is the safe default when work is not yet tied to a specific project or node.',
+        'recallx_append_activity is best for routine summaries and work logs.',
+        'recallx_context_bundle should include targetId only after the project or node is truly known.',
       ],
     },
     {
@@ -1201,7 +1201,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       if (isAuthError(error)) {
         clearRendererToken();
         setAuthRequired(true);
-        setAuthError('Enter the Memforge API token to continue.');
+        setAuthError('Enter the RecallX API token to continue.');
         setCaptureError(null);
         setCaptureNotice(null);
       } else {
@@ -1356,14 +1356,14 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               <p>This workspace requires a bearer token before the renderer can use the live API.</p>
             </div>
             <form className="capture-form" onSubmit={(event) => void handleAuthSubmit(event)}>
-              <label className="search-box" htmlFor="memforge-token">
+              <label className="search-box" htmlFor="recallx-token">
                 <span>API token</span>
                 <input
-                  id="memforge-token"
+                  id="recallx-token"
                   type="password"
                   value={authTokenInput}
                   onChange={(event) => setAuthTokenInput(event.target.value)}
-                  placeholder="Paste MEMFORGE_API_TOKEN"
+                  placeholder="Paste RECALLX_API_TOKEN"
                 />
               </label>
               {authError ? <div className="empty-state compact">{authError}</div> : null}
@@ -1998,7 +1998,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                   <input
                     value={workspaceRootInput}
                     onChange={(event) => setWorkspaceRootInput(event.target.value)}
-                    placeholder="/Users/name/Documents/MyMemforge"
+                    placeholder="/Users/name/Documents/MyRecallX"
                   />
                 </label>
                 <label className="search-box">
@@ -2110,7 +2110,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 <article className="info-block">
                   <span className="info-label">MCP launcher</span>
                   <strong>{runtimeMcpLauncherPath || 'Unavailable'}</strong>
-                  <p>Stable launcher path for editor MCP configs and agent setup.</p>
+                  <p>Stable launcher path for Codex and other editor MCP configs.</p>
                 </article>
                 <article className="info-block">
                   <span className="info-label">Desktop command</span>
@@ -2138,7 +2138,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
                 <article className="info-block">
                   <span className="info-label">Background mode</span>
                   <strong>{runtimeKeepRunning ? 'Enabled' : 'Disabled'}</strong>
-                  <p>Closing the window can keep Memforge available in the tray/menu bar for fast reopen and MCP access.</p>
+                  <p>Closing the window can keep RecallX available in the tray/menu bar for fast reopen and MCP access.</p>
                 </article>
                 <article className="info-block">
                   <span className="info-label">Launch at login</span>
@@ -2341,7 +2341,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
     return (
       <section className="page-section home-section">
         <div className="home-hero">
-          <span className="eyebrow">Memforge</span>
+          <span className="eyebrow">RecallX</span>
           <h2>Local guide and graph access.</h2>
           <div className="hero-actions">
             <button type="button" className="hero-button hero-button--primary" onClick={() => selectView('search')}>

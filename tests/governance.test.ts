@@ -11,7 +11,7 @@ describe("resolveNodeGovernance", () => {
       source: {
         actorType: "human",
         actorLabel: "juhwan",
-        toolName: "memforge"
+        toolName: "recallx"
       },
       metadata: {}
     });

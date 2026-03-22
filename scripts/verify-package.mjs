@@ -6,14 +6,14 @@ import path from "node:path";
 const packageKind = process.argv[2];
 const packageConfigs = {
   full: {
-    packageDir: "release/npm-memforge",
+    packageDir: "release/npm-recallx",
     expectRenderer: true,
-    tarballPrefix: "memforge",
+    tarballPrefix: "recallx",
   },
   headless: {
     packageDir: "release/npm-headless",
     expectRenderer: false,
-    tarballPrefix: "memforge-headless",
+    tarballPrefix: "recallx-headless",
   },
 };
 
@@ -24,7 +24,7 @@ if (!selectedConfig) {
 
 const rootDir = process.cwd();
 const requestedTarballPath = process.argv[3] ? path.resolve(process.argv[3]) : null;
-const workingDir = mkdtempSync(path.join(tmpdir(), `memforge-${packageKind}-verify-`));
+const workingDir = mkdtempSync(path.join(tmpdir(), `recallx-${packageKind}-verify-`));
 const homeDir = path.join(workingDir, "home");
 const installDir = path.join(workingDir, "install");
 const packDir = path.join(workingDir, "pack");
@@ -41,11 +41,11 @@ try {
   run("npm", ["init", "-y"], { cwd: installDir });
   run("npm", ["install", tarballPath], { cwd: installDir });
 
-  runBinary(installDir, "memforge", ["--help"]);
-  runBinary(installDir, "pnw", ["help"]);
-  runBinary(installDir, "memforge-mcp", ["--help"]);
+  runBinary(installDir, "recallx", ["--help"]);
+  runBinary(installDir, "recallx", ["help"]);
+  runBinary(installDir, "recallx-mcp", ["--help"]);
 
-  const serverProcess = spawnInstalledBinary(installDir, "memforge", [
+  const serverProcess = spawnInstalledBinary(installDir, "recallx", [
     "serve",
     "--port",
     String(port),
@@ -55,12 +55,12 @@ try {
 
   try {
     await waitForHttpOk(`http://127.0.0.1:${port}/api/v1/health`);
-    runBinary(installDir, "pnw", ["health", "--api", `http://127.0.0.1:${port}/api/v1`]);
+    runBinary(installDir, "recallx", ["health", "--api", `http://127.0.0.1:${port}/api/v1`]);
 
     const rootResponse = await fetch(`http://127.0.0.1:${port}/`);
     const rootText = await rootResponse.text();
     if (selectedConfig.expectRenderer) {
-      if (!rootResponse.ok || !rootText.includes("<title>Memforge</title>")) {
+      if (!rootResponse.ok || !rootText.includes("<title>RecallX</title>")) {
         throw new Error("Expected full package to serve the renderer index at /.");
       }
     } else if (!rootText.includes("headless runtime")) {
@@ -70,21 +70,21 @@ try {
     await stopProcess(serverProcess);
   }
 
-  runBinary(installDir, "pnw", ["mcp", "install"], {
+  runBinary(installDir, "recallx", ["mcp", "install"], {
     env: {
       ...process.env,
       HOME: homeDir,
     },
   });
 
-  const launcherPath = path.join(homeDir, ".memforge", "bin", "memforge-mcp");
+  const launcherPath = path.join(homeDir, ".recallx", "bin", "recallx-mcp");
   if (!existsSync(launcherPath)) {
     throw new Error(`Expected MCP launcher to be created at ${launcherPath}`);
   }
 
   const launcherContents = readFileSync(launcherPath, "utf8");
-  if (!launcherContents.includes("memforge-mcp.js")) {
-    throw new Error("Installed MCP launcher is missing the memforge-mcp.js entrypoint.");
+  if (!launcherContents.includes("recallx-mcp.js")) {
+    throw new Error("Installed MCP launcher is missing the recallx-mcp.js entrypoint.");
   }
   if (!launcherContents.includes("--api")) {
     throw new Error("Installed MCP launcher is missing the API argument.");
@@ -92,8 +92,8 @@ try {
   if (launcherContents.includes("--token")) {
     throw new Error("Installed MCP launcher must not persist bearer tokens.");
   }
-  if (launcherContents.includes("MEMFORGE_API_TOKEN")) {
-    throw new Error("Installed MCP launcher must not inline MEMFORGE_API_TOKEN values.");
+  if (launcherContents.includes("RECALLX_API_TOKEN")) {
+    throw new Error("Installed MCP launcher must not inline RECALLX_API_TOKEN values.");
   }
 } finally {
   rmSync(workingDir, { force: true, recursive: true });

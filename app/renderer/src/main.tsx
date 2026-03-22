@@ -45,7 +45,7 @@ function renderFatalError(title: string, detail: string) {
     'text-transform': 'uppercase',
     color: '#93c5fd',
   });
-  eyebrow.textContent = 'Memforge renderer error';
+  eyebrow.textContent = 'RecallX renderer error';
 
   const heading = document.createElement('h1');
   applyStyles(heading, {
@@ -83,14 +83,14 @@ function renderFatalError(title: string, detail: string) {
 
 window.addEventListener('error', (event) => {
   const detail = event.error instanceof Error ? event.error.stack ?? event.error.message : event.message;
-  renderFatalError('Failed to start the Memforge UI.', detail || 'Unknown renderer error.');
+  renderFatalError('Failed to start the RecallX UI.', detail || 'Unknown renderer error.');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
   const reason = event.reason;
   const detail =
     reason instanceof Error ? reason.stack ?? reason.message : typeof reason === 'string' ? reason : JSON.stringify(reason, null, 2);
-  renderFatalError('Memforge hit an unhandled promise rejection.', detail || 'Unknown rejection.');
+  renderFatalError('RecallX hit an unhandled promise rejection.', detail || 'Unknown rejection.');
 });
 
 try {
@@ -101,5 +101,5 @@ try {
   );
 } catch (error) {
   const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-  renderFatalError('Memforge could not mount the root React tree.', detail);
+  renderFatalError('RecallX could not mount the root React tree.', detail);
 }

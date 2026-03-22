@@ -1,4 +1,4 @@
-# Memforge — Backup & Sync Strategy
+# RecallX — Backup & Sync Strategy
 
 > Strategy reference for backup, restore, and future sync posture.
 > This document describes the intended operating stance, not a claim that full sync is already shipped.
@@ -6,14 +6,14 @@
 
 ## At A Glance
 
-- Memforge should be easy to back up, restore, and move between machines.
+- RecallX should be easy to back up, restore, and move between machines.
 - The recommended near-term model is backup-friendly local storage plus single-writer multi-device use.
 - Cloud folders may be used as transport or backup locations, but they should not be described as real-time multi-writer sync.
 - Safety, rebuildability, and local ownership matter more than early sync complexity.
 
 ## 1. Purpose
 
-This document defines how Memforge should think about:
+This document defines how RecallX should think about:
 - backup
 - restore
 - multi-device use
@@ -35,7 +35,7 @@ It prioritizes safety and simplicity over early real-time sync ambition.
 ## 2. Core position
 
 ### Short version
-Yes, Memforge should support:
+Yes, RecallX should support:
 - reliable backup
 - restore
 - moving a workspace between machines
@@ -396,7 +396,7 @@ It adds significant complexity and could easily violate the project’s anti-blo
 The best current decision is:
 
 ### Official v1 position
-Memforge supports:
+RecallX supports:
 - strong local backups
 - export and restore
 - portable workspaces
@@ -430,7 +430,7 @@ If this design is externally reviewed, useful questions include:
 
 ## 17. Summary
 
-Memforge should absolutely support backup and practical multi-device use.
+RecallX should absolutely support backup and practical multi-device use.
 
 But the right early approach is not heavy sync.
 It is:

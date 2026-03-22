@@ -12,11 +12,11 @@ if (typeof releaseVersion !== "string" || !releaseVersion.trim()) {
 
 const releaseTargets = [
   {
-    packageName: "memforge",
-    packageDir: "./release/npm-memforge",
+    packageName: "recallx",
+    packageDir: "./release/npm-recallx",
   },
   {
-    packageName: "memforge-headless",
+    packageName: "recallx-headless",
     packageDir: "./release/npm-headless",
   },
 ];

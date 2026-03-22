@@ -5,13 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from "electron";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createMemforgeMcpServer } from "../mcp/server.js";
+import { createRecallXMcpServer } from "../mcp/server.js";
 import { openDatabase } from "../server/db.js";
 import { createObservabilityWriter } from "../server/observability.js";
-import { MemforgeRepository } from "../server/repositories.js";
+import { RecallXRepository } from "../server/repositories.js";
 import { checksumText } from "../server/utils.js";
-import { MEMFORGE_VERSION } from "../shared/version.js";
-import { memforgeHomeDir, resolveWorkspaceRoot } from "../server/workspace.js";
+import { RECALLX_VERSION } from "../shared/version.js";
+import { recallxHomeDir, resolveWorkspaceRoot } from "../server/workspace.js";
 import { ensureWorkspace } from "../server/workspace.js";
 
 type CliOptions = {
@@ -32,17 +32,17 @@ type DesktopRuntimeState = {
 };
 
 const DEFAULT_DESKTOP_PORT = 8788;
-const DESKTOP_BIND = process.env.MEMFORGE_BIND ?? "127.0.0.1";
-const DESKTOP_PORT = Number(process.env.MEMFORGE_DESKTOP_PORT ?? process.env.MEMFORGE_PORT ?? DEFAULT_DESKTOP_PORT);
-const DESKTOP_WORKSPACE_NAME = process.env.MEMFORGE_WORKSPACE_NAME?.trim() || "Memforge";
-const RENDERER_DEV_URL = process.env.MEMFORGE_DESKTOP_DEV_URL;
+const DESKTOP_BIND = process.env.RECALLX_BIND ?? "127.0.0.1";
+const DESKTOP_PORT = Number(process.env.RECALLX_DESKTOP_PORT ?? process.env.RECALLX_PORT ?? DEFAULT_DESKTOP_PORT);
+const DESKTOP_WORKSPACE_NAME = process.env.RECALLX_WORKSPACE_NAME?.trim() || "RecallX";
+const RENDERER_DEV_URL = process.env.RECALLX_DESKTOP_DEV_URL;
 const API_READY_TIMEOUT_MS = 15_000;
 const API_RETRY_DELAY_MS = 250;
 const STATUS_POLL_INTERVAL_MS = 15_000;
 const API_SHUTDOWN_TIMEOUT_MS = 2_000;
-const MCP_LAUNCHER_PATH = path.join(memforgeHomeDir(), "bin", "memforge-mcp");
-const DESKTOP_COMMAND_SHIM_PATH = path.join(os.homedir(), ".local", "bin", "Memforge");
-const DESKTOP_RUNTIME_DIR = path.join(memforgeHomeDir(), "run");
+const MCP_LAUNCHER_PATH = path.join(recallxHomeDir(), "bin", "recallx-mcp");
+const DESKTOP_COMMAND_SHIM_PATH = path.join(os.homedir(), ".local", "bin", "RecallX");
+const DESKTOP_RUNTIME_DIR = path.join(recallxHomeDir(), "run");
 const DESKTOP_API_PID_PATH = path.join(DESKTOP_RUNTIME_DIR, `desktop-api-${DESKTOP_PORT}.json`);
 const TRAY_ICON_ASSET_PATH = ["app", "desktop", "assets", "trayTemplate.png"] as const;
 const allowedExternalProtocols = new Set(["https:"]);
@@ -106,7 +106,7 @@ function quoteShellArg(value: string): string {
 
 function buildMcpCommand(): string {
   return app.isPackaged
-    ? "Memforge --mcp-stdio"
+    ? "RecallX --mcp-stdio"
     : `${quoteShellArg(process.execPath)} ${quoteShellArg(app.getAppPath())} --mcp-stdio`;
 }
 
@@ -238,13 +238,13 @@ function updateDesktopState(next: Partial<DesktopRuntimeState>) {
 function currentStatusHeadline(): string {
   switch (desktopState.serviceStatus) {
     case "running":
-      return "Memforge is running";
+      return "RecallX is running";
     case "starting":
-      return "Memforge is starting";
+      return "RecallX is starting";
     case "error":
-      return "Memforge needs attention";
+      return "RecallX needs attention";
     default:
-      return "Memforge is stopped";
+      return "RecallX is stopped";
   }
 }
 
@@ -308,7 +308,7 @@ function syncTray(): void {
       : []),
     { type: "separator" },
     {
-      label: isMainWindowVisible() ? "Hide Memforge" : "Open Memforge",
+      label: isMainWindowVisible() ? "Hide RecallX" : "Open RecallX",
       click: () => {
         const window = getLiveMainWindow();
         if (window && window.isVisible()) {
@@ -410,7 +410,7 @@ function syncTray(): void {
     },
     { type: "separator" },
     {
-      label: "Quit Memforge",
+      label: "Quit RecallX",
       click: () => {
         app.quit();
       }
@@ -435,8 +435,8 @@ function createTray(): void {
 }
 
 function resolveDesktopWorkspaceRoot(): string {
-  if (!process.env.MEMFORGE_WORKSPACE_NAME?.trim()) {
-    process.env.MEMFORGE_WORKSPACE_NAME = DESKTOP_WORKSPACE_NAME;
+  if (!process.env.RECALLX_WORKSPACE_NAME?.trim()) {
+    process.env.RECALLX_WORKSPACE_NAME = DESKTOP_WORKSPACE_NAME;
   }
 
   return resolveWorkspaceRoot({
@@ -461,7 +461,7 @@ function readDesktopObservabilityState() {
   try {
     const workspace = ensureWorkspace(desktopState.workspaceRoot);
     const db = openDatabase(workspace);
-    const repository = new MemforgeRepository(db, desktopState.workspaceRoot);
+    const repository = new RecallXRepository(db, desktopState.workspaceRoot);
     const settings = repository.getSettings([
       "observability.enabled",
       "observability.retentionDays",
@@ -601,7 +601,7 @@ async function findAvailablePort(startPort: number, attempts = 20): Promise<numb
     }
   }
 
-  throw new Error(`Unable to find an available Memforge desktop port starting at ${startPort}`);
+  throw new Error(`Unable to find an available RecallX desktop port starting at ${startPort}`);
 }
 
 async function findReusableApiBase(startPort: number, attempts = 20): Promise<string | null> {
@@ -747,10 +747,10 @@ function startApiServer(port: number): void {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
-      MEMFORGE_BIND: DESKTOP_BIND,
-      MEMFORGE_PORT: String(port),
-      MEMFORGE_WORKSPACE_ROOT: DESKTOP_WORKSPACE_ROOT,
-      MEMFORGE_WORKSPACE_NAME: DESKTOP_WORKSPACE_NAME
+      RECALLX_BIND: DESKTOP_BIND,
+      RECALLX_PORT: String(port),
+      RECALLX_WORKSPACE_ROOT: DESKTOP_WORKSPACE_ROOT,
+      RECALLX_WORKSPACE_NAME: DESKTOP_WORKSPACE_NAME
     },
     stdio: "pipe"
   });
@@ -760,16 +760,16 @@ function startApiServer(port: number): void {
   }
 
   apiProcess.stdout?.on("data", (chunk) => {
-    process.stderr.write(`[memforge-api] ${String(chunk)}`);
+    process.stderr.write(`[recallx-api] ${String(chunk)}`);
   });
   apiProcess.stderr?.on("data", (chunk) => {
-    process.stderr.write(`[memforge-api] ${String(chunk)}`);
+    process.stderr.write(`[recallx-api] ${String(chunk)}`);
   });
   apiProcess.on("exit", (code) => {
     apiProcess = null;
     clearManagedApiPidRecord();
     if (!quitting && code && code !== 0) {
-      console.error(`Memforge API exited with code ${code}`);
+      console.error(`RecallX API exited with code ${code}`);
       recordDesktopError("desktop.api_child_exit", new Error(`Local service exited with code ${code}`), {
         exitCode: code
       });
@@ -885,7 +885,7 @@ async function waitForApiReady(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, API_RETRY_DELAY_MS));
   }
 
-  throw new Error(`Memforge API did not become ready within ${API_READY_TIMEOUT_MS}ms`);
+  throw new Error(`RecallX API did not become ready within ${API_READY_TIMEOUT_MS}ms`);
 }
 
 async function runMcpStdioMode(): Promise<void> {
@@ -896,14 +896,14 @@ async function runMcpStdioMode(): Promise<void> {
   await waitForApiReady();
   ensureLauncherScripts();
 
-  process.env.MEMFORGE_API_URL = await resolveApiBase();
+  process.env.RECALLX_API_URL = await resolveApiBase();
   const span = desktopObservability.startSpan({
     surface: "desktop",
     operation: "desktop.mcp_stdio_start"
   });
 
   try {
-    const server = createMemforgeMcpServer({
+    const server = createRecallXMcpServer({
       observabilityState: readDesktopObservabilityState(),
       getObservabilityState: readDesktopObservabilityState
     });
@@ -912,7 +912,7 @@ async function runMcpStdioMode(): Promise<void> {
     await span.finish({
       outcome: "success"
     });
-    console.error(`Memforge MCP connected over stdio -> ${process.env.MEMFORGE_API_URL}`);
+    console.error(`RecallX MCP connected over stdio -> ${process.env.RECALLX_API_URL}`);
   } catch (error) {
     await span.finish({
       outcome: "error",
@@ -939,7 +939,7 @@ async function openMainWindow(): Promise<BrowserWindow> {
 async function dispatchDesktopAction(action: DesktopAction): Promise<void> {
   const window = await openMainWindow();
   const sendAction = () => {
-    window.webContents.send("memforge-desktop-action", { type: action });
+    window.webContents.send("recallx-desktop-action", { type: action });
   };
 
   if (window.webContents.isLoadingMainFrame()) {
@@ -1018,16 +1018,16 @@ async function createMainWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       additionalArguments: [
-        `--memforge-api-base=${apiBase}`,
-        `--memforge-health-url=${apiBase}/health`,
-        `--memforge-workspace-home=${memforgeHomeDir()}`,
-        `--memforge-workspace-root=${DESKTOP_WORKSPACE_ROOT}`,
-        `--memforge-command-shim-path=${DESKTOP_COMMAND_SHIM_PATH}`,
-        `--memforge-mcp-launcher-path=${MCP_LAUNCHER_PATH}`,
-        `--memforge-mcp-command=${buildMcpCommand()}`,
-        `--memforge-app-executable=${process.execPath}`,
-        `--memforge-is-packaged=${app.isPackaged ? "1" : "0"}`,
-        `--memforge-app-version=${MEMFORGE_VERSION}`
+        `--recallx-api-base=${apiBase}`,
+        `--recallx-health-url=${apiBase}/health`,
+        `--recallx-workspace-home=${recallxHomeDir()}`,
+        `--recallx-workspace-root=${DESKTOP_WORKSPACE_ROOT}`,
+        `--recallx-command-shim-path=${DESKTOP_COMMAND_SHIM_PATH}`,
+        `--recallx-mcp-launcher-path=${MCP_LAUNCHER_PATH}`,
+        `--recallx-mcp-command=${buildMcpCommand()}`,
+        `--recallx-app-executable=${process.execPath}`,
+        `--recallx-is-packaged=${app.isPackaged ? "1" : "0"}`,
+        `--recallx-app-version=${RECALLX_VERSION}`
       ]
     }
   });
@@ -1036,20 +1036,20 @@ async function createMainWindow(): Promise<void> {
     revealWindow(window);
   });
   window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    console.error(`[memforge-renderer:${level}] ${message} (${sourceId}:${line})`);
+    console.error(`[recallx-renderer:${level}] ${message} (${sourceId}:${line})`);
   });
   window.webContents.on("did-finish-load", () => {
     revealWindow(window);
   });
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
-    console.error(`Memforge renderer failed to load (${errorCode}): ${errorDescription}`);
+    console.error(`RecallX renderer failed to load (${errorCode}): ${errorDescription}`);
     recordDesktopError("desktop.renderer_load_failed", new Error(errorDescription), {
       errorCode
     });
     revealWindow(window);
   });
   window.webContents.on("render-process-gone", (_event, details) => {
-    console.error(`Memforge renderer process gone: ${details.reason}`);
+    console.error(`RecallX renderer process gone: ${details.reason}`);
     recordDesktopError("desktop.renderer_process_gone", new Error(details.reason));
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -1154,10 +1154,10 @@ if (!cliOptions.mcpStdio) {
   }
 }
 
-ipcMain.handle("memforge-desktop-runtime-state", async () => ({
+ipcMain.handle("recallx-desktop-runtime-state", async () => ({
   ...desktopState,
-  appVersion: MEMFORGE_VERSION,
-  workspaceHome: memforgeHomeDir(),
+  appVersion: RECALLX_VERSION,
+  workspaceHome: recallxHomeDir(),
   commandShimPath: DESKTOP_COMMAND_SHIM_PATH,
   mcpLauncherPath: MCP_LAUNCHER_PATH,
   mcpCommand: buildMcpCommand(),

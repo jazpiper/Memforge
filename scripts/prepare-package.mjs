@@ -17,10 +17,10 @@ const runtimeDependencyAllowlist = [
 
 const packageConfigs = {
   full: {
-    outputDir: path.join(rootDir, "release", "npm-memforge"),
+    outputDir: path.join(rootDir, "release", "npm-recallx"),
     readmeSource: path.join(rootDir, "README.md"),
-    description: "Local-first Memforge runtime with API, renderer, CLI, and MCP entrypoint.",
-    packageName: "memforge",
+    description: "Local-first RecallX runtime with API, renderer, CLI, and MCP entrypoint.",
+    packageName: "recallx",
     files: ["app/cli", "app/mcp", "app/shared", "app/server", "dist/renderer", "README.md"],
     directoriesToCopy: [
       ["app", "cli", "bin"],
@@ -35,8 +35,8 @@ const packageConfigs = {
   headless: {
     outputDir: path.join(rootDir, "release", "npm-headless"),
     readmeSource: path.join(rootDir, "app", "cli", "README.md"),
-    description: "Headless Memforge runtime with API, CLI, and MCP entrypoint.",
-    packageName: "memforge-headless",
+    description: "Headless RecallX runtime with API, CLI, and MCP entrypoint.",
+    packageName: "recallx-headless",
     files: ["app/cli", "app/mcp", "app/shared", "app/server", "README.md"],
     directoriesToCopy: [
       ["app", "cli", "bin"],
@@ -111,23 +111,23 @@ writeFileSync(
       description: selectedConfig.description,
       type: "module",
       bin: {
-        memforge: "./app/cli/bin/pnw.js",
-        pnw: "./app/cli/bin/pnw.js",
-        "memforge-mcp": "./app/cli/bin/memforge-mcp.js",
+        recallx: "./app/cli/bin/recallx.js",
+        recallx: "./app/cli/bin/recallx.js",
+        "recallx-mcp": "./app/cli/bin/recallx-mcp.js",
       },
       files: selectedConfig.files,
       dependencies: packageDependencies,
       engines: {
         node: ">=20",
       },
-      keywords: ["memforge", packageKind, "cli", "mcp", "knowledge", "local-first"],
+      keywords: ["recallx", packageKind, "cli", "mcp", "knowledge", "local-first"],
       repository: {
         type: "git",
-        url: "git+https://github.com/jazpiper/Memforge.git",
+        url: "git+https://github.com/jazpiper/RecallX.git",
       },
-      homepage: "https://github.com/jazpiper/Memforge#readme",
+      homepage: "https://github.com/jazpiper/RecallX#readme",
       bugs: {
-        url: "https://github.com/jazpiper/Memforge/issues",
+        url: "https://github.com/jazpiper/RecallX/issues",
       },
       publishConfig: {
         access: "public",

@@ -19,9 +19,9 @@ import {
   sourceTypes
 } from "../shared/contracts.js";
 import type { Source } from "../shared/contracts.js";
-import { MEMFORGE_VERSION } from "../shared/version.js";
+import { RECALLX_VERSION } from "../shared/version.js";
 import { createObservabilityWriter, summarizePayloadShape } from "../server/observability.js";
-import { MemforgeApiClient, MemforgeApiError } from "./api-client.js";
+import { RecallXApiClient, RecallXApiError } from "./api-client.js";
 
 const jsonRecordSchema = z.record(z.string(), z.any()).default({});
 const stringOrStringArraySchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
@@ -138,22 +138,22 @@ const healthOutputSchema = z.object({
 }).passthrough();
 
 const sourceDescription =
-  "Optional provenance override. If omitted, Memforge MCP uses its own agent identity so durable writes still keep attribution.";
+  "Optional provenance override. If omitted, RecallX MCP uses its own agent identity so durable writes still keep attribution.";
 const readOnlyToolAnnotations = {
   readOnlyHint: true,
   idempotentHint: true
 } as const;
 
-function createGetToolHandler(apiClient: Pick<MemforgeApiClient, "get">, path: string) {
+function createGetToolHandler(apiClient: Pick<RecallXApiClient, "get">, path: string) {
   return async () => toolResult(await apiClient.get<Record<string, unknown>>(path));
 }
 
-function createPostToolHandler(apiClient: Pick<MemforgeApiClient, "post">, path: string) {
+function createPostToolHandler(apiClient: Pick<RecallXApiClient, "post">, path: string) {
   return async (input: Record<string, unknown>) => toolResult(await apiClient.post<Record<string, unknown>>(path, input));
 }
 
 function createNormalizedPostToolHandler<TInput extends Record<string, unknown>>(
-  apiClient: Pick<MemforgeApiClient, "post">,
+  apiClient: Pick<RecallXApiClient, "post">,
   path: string,
   normalize: (input: TInput) => Record<string, unknown>
 ) {
@@ -171,7 +171,7 @@ function withReadOnlyAnnotations(config: any) {
 }
 
 function classifyMcpError(error: unknown) {
-  if (error instanceof MemforgeApiError) {
+  if (error instanceof RecallXApiError) {
     if (error.code === "NETWORK_ERROR") {
       return { errorKind: "network_error" as const, errorCode: error.code, statusCode: error.status };
     }
@@ -282,16 +282,16 @@ function normalizeNodeSearchInput(input: Record<string, unknown>) {
   const rawFilters = (typeof input.filters === "object" && input.filters ? input.filters : {}) as Record<string, unknown>;
   const filters = {
     types: assertSupportedEnumValues(
-      "memforge_search_nodes",
+      "recallx_search_nodes",
       "node type",
       mergeStringLists(input.type, input.types, rawFilters.types),
       nodeTypes,
       {
-        activity: "`activity` is not a node type. Use `memforge_search_activities` for operational logs."
+        activity: "`activity` is not a node type. Use `recallx_search_activities` for operational logs."
       }
     ),
     status: assertSupportedEnumValues(
-      "memforge_search_nodes",
+      "recallx_search_nodes",
       "node status",
       mergeStringLists(input.status, rawFilters.status),
       nodeStatuses
@@ -300,7 +300,7 @@ function normalizeNodeSearchInput(input: Record<string, unknown>) {
     tags: mergeStringLists(input.tag, rawFilters.tags)
   };
   return {
-    query: readSearchQuery("memforge_search_nodes", input),
+    query: readSearchQuery("recallx_search_nodes", input),
     filters,
     limit: Number(input.limit ?? 10),
     offset: Number(input.offset ?? 0),
@@ -313,7 +313,7 @@ function normalizeActivitySearchInput(input: Record<string, unknown>) {
   const filters = {
     targetNodeIds: mergeStringLists(input.targetNodeId, rawFilters.targetNodeIds),
     activityTypes: assertSupportedEnumValues(
-      "memforge_search_activities",
+      "recallx_search_activities",
       "activity type",
       mergeStringLists(input.activityType, rawFilters.activityTypes),
       activityTypes
@@ -323,7 +323,7 @@ function normalizeActivitySearchInput(input: Record<string, unknown>) {
     createdBefore: typeof rawFilters.createdBefore === "string" ? rawFilters.createdBefore : undefined
   };
   return {
-    query: readSearchQuery("memforge_search_activities", input),
+    query: readSearchQuery("recallx_search_activities", input),
     filters,
     limit: Number(input.limit ?? 10),
     offset: Number(input.offset ?? 0),
@@ -337,20 +337,20 @@ function normalizeWorkspaceSearchInput(input: Record<string, unknown>) {
     typeof input.activityFilters === "object" && input.activityFilters ? (input.activityFilters as Record<string, unknown>) : {};
   const scopes =
     assertSupportedEnumValues(
-      "memforge_search_workspace",
+      "recallx_search_workspace",
       "scope",
       mergeStringLists(normalizeCommaSeparatedList(input.scope), normalizeCommaSeparatedList(input.scopes)),
       workspaceSearchScopes
     ) ?? [...workspaceSearchScopes];
   const nodeFilters = {
     types: assertSupportedEnumValues(
-      "memforge_search_workspace",
+      "recallx_search_workspace",
       "node type",
       mergeStringLists(rawNodeFilters.types),
       nodeTypes
     ),
     status: assertSupportedEnumValues(
-      "memforge_search_workspace",
+      "recallx_search_workspace",
       "node status",
       mergeStringLists(rawNodeFilters.status),
       nodeStatuses
@@ -361,7 +361,7 @@ function normalizeWorkspaceSearchInput(input: Record<string, unknown>) {
   const activityFilters = {
     targetNodeIds: mergeStringLists(rawActivityFilters.targetNodeIds),
     activityTypes: assertSupportedEnumValues(
-      "memforge_search_workspace",
+      "recallx_search_workspace",
       "activity type",
       mergeStringLists(rawActivityFilters.activityTypes),
       activityTypes
@@ -371,7 +371,7 @@ function normalizeWorkspaceSearchInput(input: Record<string, unknown>) {
     createdBefore: typeof rawActivityFilters.createdBefore === "string" ? rawActivityFilters.createdBefore : undefined
   };
   return {
-    query: readSearchQuery("memforge_search_workspace", input),
+    query: readSearchQuery("recallx_search_workspace", input),
     scopes,
     nodeFilters,
     activityFilters,
@@ -381,8 +381,8 @@ function normalizeWorkspaceSearchInput(input: Record<string, unknown>) {
   };
 }
 
-export function createMemforgeMcpServer(params?: {
-  apiClient?: Pick<MemforgeApiClient, "get" | "post" | "patch">;
+export function createRecallXMcpServer(params?: {
+  apiClient?: Pick<RecallXApiClient, "get" | "post" | "patch">;
   defaultSource?: Source;
   serverVersion?: string;
   observabilityState?: {
@@ -413,18 +413,21 @@ export function createMemforgeMcpServer(params?: {
 }) {
   const apiClient =
     params?.apiClient ??
-    new MemforgeApiClient(process.env.MEMFORGE_API_URL ?? "http://127.0.0.1:8787/api/v1", process.env.MEMFORGE_API_TOKEN);
+    new RecallXApiClient(
+      process.env.RECALLX_API_URL ?? "http://127.0.0.1:8787/api/v1",
+      process.env.RECALLX_API_TOKEN
+    );
   const defaultSource: Source = params?.defaultSource ?? {
     actorType: "agent",
-    actorLabel: process.env.MEMFORGE_MCP_SOURCE_LABEL ?? "Memforge MCP",
-    toolName: process.env.MEMFORGE_MCP_TOOL_NAME ?? "memforge-mcp",
-    toolVersion: params?.serverVersion ?? MEMFORGE_VERSION
+    actorLabel: process.env.RECALLX_MCP_SOURCE_LABEL ?? "RecallX MCP",
+    toolName: process.env.RECALLX_MCP_TOOL_NAME ?? "recallx-mcp",
+    toolVersion: params?.serverVersion ?? RECALLX_VERSION
   };
   const sourceSchema = buildSourceSchema(defaultSource).describe(sourceDescription);
   const defaultObservabilityState = {
     enabled: false,
     workspaceRoot: process.cwd(),
-    workspaceName: "Memforge MCP",
+    workspaceName: "RecallX MCP",
     retentionDays: 14,
     slowRequestMs: 250,
     capturePayloadShape: true
@@ -449,12 +452,12 @@ export function createMemforgeMcpServer(params?: {
 
   const server = new McpServer(
     {
-      name: "memforge-mcp",
-      version: params?.serverVersion ?? MEMFORGE_VERSION
+      name: "recallx-mcp",
+      version: params?.serverVersion ?? RECALLX_VERSION
     },
     {
       instructions:
-        "Use Memforge as a local knowledge backend. Treat the current workspace as the default scope, and do not create or open another workspace unless the user explicitly asks. When the work is clearly project-shaped, search for an existing project inside the current workspace first: prefer memforge_search_nodes with type=project, broaden with memforge_search_workspace when needed, create a project node only if no suitable one exists, and then anchor follow-up context with memforge_context_bundle targetId. If the conversation is not project-specific, keep memory at workspace scope. Prefer read tools first, and include source details on durable writes when you want caller-specific provenance.",
+        "Use RecallX as a local knowledge backend. Treat the current workspace as the default scope, and do not create or open another workspace unless the user explicitly asks. When the work is clearly project-shaped, search for an existing project inside the current workspace first: prefer recallx_search_nodes with type=project, broaden with recallx_search_workspace when needed, create a project node only if no suitable one exists, and then anchor follow-up context with recallx_context_bundle targetId. If the conversation is not project-specific, keep memory at workspace scope. Prefer read tools first, and include source details on durable writes when you want caller-specific provenance.",
       capabilities: {
         logging: {}
       }
@@ -514,10 +517,10 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_health",
+    "recallx_health",
     {
-      title: "Memforge Health",
-      description: "Check whether the running local Memforge API is healthy and which workspace is loaded.",
+      title: "RecallX Health",
+      description: "Check whether the running local RecallX API is healthy and which workspace is loaded.",
       inputSchema: z.object({
         includeDetails: z.boolean().optional().default(true)
       }),
@@ -528,11 +531,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_workspace_current",
+    "recallx_workspace_current",
     {
       title: "Current Workspace",
       description:
-        "Read the currently active Memforge workspace and auth mode. Use this to confirm the default workspace scope before deciding whether an explicit user request justifies switching workspaces.",
+        "Read the currently active RecallX workspace and auth mode. Use this to confirm the default workspace scope before deciding whether an explicit user request justifies switching workspaces.",
       outputSchema: workspaceInfoSchema
     },
     createGetToolHandler(apiClient, "/workspace")
@@ -540,10 +543,10 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_workspace_list",
+    "recallx_workspace_list",
     {
       title: "List Workspaces",
-      description: "List known Memforge workspaces and identify the currently active one.",
+      description: "List known RecallX workspaces and identify the currently active one.",
       outputSchema: z.object({
         current: workspaceInfoSchema,
         items: z.array(workspaceInfoSchema.extend({ isCurrent: z.boolean(), lastOpenedAt: z.string() }))
@@ -554,11 +557,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_workspace_create",
+    "recallx_workspace_create",
     {
       title: "Create Workspace",
       description:
-        "Create a Memforge workspace on disk and switch the running service to it without restarting. Only use this when the user explicitly requests creating or switching to a new workspace.",
+        "Create a RecallX workspace on disk and switch the running service to it without restarting. Only use this when the user explicitly requests creating or switching to a new workspace.",
       inputSchema: {
         rootPath: z.string().min(1).describe("Absolute or user-resolved path for the new workspace root."),
         workspaceName: z.string().min(1).optional().describe("Human-friendly workspace name.")
@@ -569,11 +572,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_workspace_open",
+    "recallx_workspace_open",
     {
       title: "Open Workspace",
       description:
-        "Switch the running Memforge service to another existing workspace. Only use this when the user explicitly requests opening or switching workspaces.",
+        "Switch the running RecallX service to another existing workspace. Only use this when the user explicitly requests opening or switching workspaces.",
       inputSchema: {
         rootPath: z.string().min(1).describe("Existing workspace root path to open.")
       }
@@ -583,7 +586,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_semantic_status",
+    "recallx_semantic_status",
     {
       title: "Semantic Index Status",
       description: "Read the current semantic indexing status, provider configuration, and queued item counts.",
@@ -607,7 +610,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_semantic_issues",
+    "recallx_semantic_issues",
     {
       title: "Semantic Index Issues",
       description: "Read semantic indexing issues with optional status filters and cursor pagination.",
@@ -644,11 +647,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_search_nodes",
+    "recallx_search_nodes",
     {
       title: "Search Nodes",
       description:
-        "Search durable Memforge nodes by keyword and optional filters. Prefer this for durable-only recall, especially when checking for an existing project in the current workspace by filtering with type=project. Valid node types include note, project, idea, question, decision, reference, artifact_ref, and conversation. `activity` is not a node type.",
+        "Search durable RecallX nodes by keyword and optional filters. Prefer this for durable-only recall, especially when checking for an existing project in the current workspace by filtering with type=project. Valid node types include note, project, idea, question, decision, reference, artifact_ref, and conversation. `activity` is not a node type.",
       inputSchema: {
         query: z.string().default("").describe("Keyword or phrase query."),
         allowEmptyQuery: coerceBooleanSchema(false).describe("Set true to browse recent durable nodes without a query."),
@@ -674,7 +677,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_search_activities",
+    "recallx_search_activities",
     {
       title: "Search Activities",
       description:
@@ -703,7 +706,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_search_workspace",
+    "recallx_search_workspace",
     {
       title: "Search Workspace",
       description:
@@ -740,7 +743,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_get_node",
+    "recallx_get_node",
     {
       title: "Get Node",
       description: "Fetch a node together with its related nodes, activities, artifacts, and provenance.",
@@ -753,10 +756,10 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_get_related",
+    "recallx_get_related",
     {
       title: "Get Node Neighborhood",
-      description: "Fetch the canonical Memforge node neighborhood with optional inferred relations.",
+      description: "Fetch the canonical RecallX node neighborhood with optional inferred relations.",
       inputSchema: {
         nodeId: z.string().min(1).describe("Target node id."),
         depth: coerceIntegerSchema(1, 1, 1),
@@ -780,7 +783,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_upsert_inferred_relation",
+    "recallx_upsert_inferred_relation",
     {
       title: "Upsert Inferred Relation",
       description: "Upsert a lightweight inferred relation for retrieval, graph expansion, and later weight adjustment.",
@@ -803,7 +806,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_append_relation_usage_event",
+    "recallx_append_relation_usage_event",
     {
       title: "Append Relation Usage Event",
       description: "Append a lightweight usage signal after a relation actually helped retrieval or final output.",
@@ -823,7 +826,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_append_search_feedback",
+    "recallx_append_search_feedback",
     {
       title: "Append Search Feedback",
       description: "Append a usefulness signal for a node or activity search result after it helped or failed a task.",
@@ -844,7 +847,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_recompute_inferred_relations",
+    "recallx_recompute_inferred_relations",
     {
       title: "Recompute Inferred Relations",
       description: "Run an explicit maintenance pass that refreshes inferred relation usage_score and final_score from usage events.",
@@ -859,11 +862,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_append_activity",
+    "recallx_append_activity",
     {
       title: "Append Activity",
       description:
-        "Append an activity entry to a specific Memforge node or project timeline with provenance. Use this when you already know the target node or project; otherwise prefer memforge_capture_memory for general workspace-scope updates.",
+        "Append an activity entry to a specific RecallX node or project timeline with provenance. Use this when you already know the target node or project; otherwise prefer recallx_capture_memory for general workspace-scope updates.",
       inputSchema: {
         targetNodeId: z.string().min(1).describe("Target node id."),
         activityType: z.enum(activityTypes),
@@ -877,7 +880,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_capture_memory",
+    "recallx_capture_memory",
     {
       title: "Capture Memory",
       description:
@@ -898,11 +901,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_create_node",
+    "recallx_create_node",
     {
       title: "Create Node",
       description:
-        "Create a durable Memforge node with provenance. Use this for reusable knowledge; when creating a project node in the current workspace, search first and only create one if no suitable project already exists. Short work-log updates are usually better captured with `memforge_capture_memory` or `memforge_append_activity`.",
+        "Create a durable RecallX node with provenance. Use this for reusable knowledge; when creating a project node in the current workspace, search first and only create one if no suitable project already exists. Short work-log updates are usually better captured with `recallx_capture_memory` or `recallx_append_activity`.",
       inputSchema: {
         type: z.enum(nodeTypes),
         title: z.string().min(1),
@@ -920,12 +923,12 @@ export function createMemforgeMcpServer(params?: {
         return toolResult(await apiClient.post<Record<string, unknown>>("/nodes", input));
       } catch (error) {
         if (
-          error instanceof MemforgeApiError &&
+          error instanceof RecallXApiError &&
           error.code === "FORBIDDEN" &&
           error.message.includes("Short log-like agent output")
         ) {
           const redirectError = new Error(
-            `${error.message} Hint: use memforge_capture_memory with mode=auto or mode=activity instead.`
+            `${error.message} Hint: use recallx_capture_memory with mode=auto or mode=activity instead.`
           ) as Error & { code?: string };
           redirectError.code = "SHORT_LOG_REDIRECT";
           throw redirectError;
@@ -937,11 +940,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_create_nodes",
+    "recallx_create_nodes",
     {
       title: "Create Nodes",
       description:
-        "Create multiple durable Memforge nodes with provenance. This batch endpoint allows partial success and returns per-item landing or error details.",
+        "Create multiple durable RecallX nodes with provenance. This batch endpoint allows partial success and returns per-item landing or error details.",
       inputSchema: {
         nodes: z
           .array(
@@ -966,7 +969,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_create_relation",
+    "recallx_create_relation",
     {
       title: "Create Relation",
       description: "Create a relation between two nodes. Agent-created relations typically start suggested and are promoted automatically when confidence improves.",
@@ -984,7 +987,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_list_governance_issues",
+    "recallx_list_governance_issues",
     {
       title: "List Governance Issues",
       description: "List contested or low-confidence governance items that may need inspection.",
@@ -1004,7 +1007,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_get_governance_state",
+    "recallx_get_governance_state",
     {
       title: "Get Governance State",
       description: "Read the current automatic governance state and recent events for a node or relation.",
@@ -1019,7 +1022,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_recompute_governance",
+    "recallx_recompute_governance",
     {
       title: "Recompute Governance",
       description: "Run a bounded automatic governance recompute pass for nodes, relations, or both.",
@@ -1034,11 +1037,11 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_context_bundle",
+    "recallx_context_bundle",
     {
       title: "Build Context Bundle",
       description:
-        "Build a compact Memforge context bundle for coding, research, writing, or decision support. Omit targetId to get a workspace-entry bundle when the work is not yet tied to a specific project or node, and add targetId only after you know which project or node should anchor the context.",
+        "Build a compact RecallX context bundle for coding, research, writing, or decision support. Omit targetId to get a workspace-entry bundle when the work is not yet tied to a specific project or node, and add targetId only after you know which project or node should anchor the context.",
       inputSchema: {
         targetId: z.string().min(1).optional(),
         mode: z.enum(bundleModes).default("compact"),
@@ -1081,7 +1084,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_semantic_reindex",
+    "recallx_semantic_reindex",
     {
       title: "Queue Semantic Reindex",
       description: "Queue semantic reindexing for a bounded set of recent active workspace nodes.",
@@ -1094,7 +1097,7 @@ export function createMemforgeMcpServer(params?: {
 
   registerTool(
     server,
-    "memforge_semantic_reindex_node",
+    "recallx_semantic_reindex_node",
     {
       title: "Queue Node Semantic Reindex",
       description: "Queue semantic reindexing for a specific node id.",
@@ -1107,10 +1110,10 @@ export function createMemforgeMcpServer(params?: {
 
   registerReadOnlyTool(
     server,
-    "memforge_rank_candidates",
+    "recallx_rank_candidates",
     {
       title: "Rank Candidate Nodes",
-      description: "Rank a bounded set of candidate node ids for a target using Memforge request-time retrieval scoring.",
+      description: "Rank a bounded set of candidate node ids for a target using RecallX request-time retrieval scoring.",
       inputSchema: {
         query: z.string().default(""),
         candidateNodeIds: z.array(z.string().min(1)).min(1).max(100),

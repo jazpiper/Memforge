@@ -1,4 +1,4 @@
-# Memforge — Schema
+# RecallX — Schema
 
 ## At A Glance
 
@@ -498,7 +498,7 @@ They should stay separate even if some operations create both.
 
 ## 11. Governance tables
 
-Memforge v2 uses automatic governance instead of a user-facing review queue.
+RecallX v2 uses automatic governance instead of a user-facing review queue.
 
 ## 11.1 `governance_state`
 - `entity_type TEXT NOT NULL`
@@ -819,7 +819,7 @@ This rule, combined with the promotion table, guarantees the graph stays trustwo
   "type": "project",
   "status": "active",
   "canonicality": "canonical",
-  "title": "Memforge",
+  "title": "RecallX",
   "body": "A local-first knowledge layer for humans and agents.",
   "summary": "Shared personal knowledge substrate.",
   "created_by": "human:juhwan",
@@ -870,7 +870,7 @@ This rule, combined with the promotion table, guarantees the graph stays trustwo
   "operation_type": "create",
   "actor_type": "human",
   "actor_label": "juhwan",
-  "tool_name": "pnw-desktop",
+  "tool_name": "recallx-desktop",
   "tool_version": "1.0.0",
   "timestamp": "2026-03-17T13:30:00Z"
 }

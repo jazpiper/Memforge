@@ -17,7 +17,7 @@ import type {
   WorkspaceCatalogItem,
   WorkspaceSeed,
 } from './types';
-import { MEMFORGE_VERSION } from '../../../shared/version';
+import { RECALLX_VERSION } from '../../../shared/version';
 
 type LandingInfo = {
   storedAs: 'node' | 'relation' | 'activity';
@@ -28,12 +28,12 @@ type LandingInfo = {
 };
 
 const API_BASE =
-  (window as Window & { __MEMFORGE_API_BASE__?: string }).__MEMFORGE_API_BASE__ ?? '/api/v1';
+  (window as Window & { __RECALLX_API_BASE__?: string }).__RECALLX_API_BASE__ ?? '/api/v1';
 const DEFAULT_SOURCE = {
   actorType: 'human',
-  actorLabel: 'memforge-renderer',
-  toolName: 'memforge-renderer',
-  toolVersion: MEMFORGE_VERSION,
+  actorLabel: 'recallx-renderer',
+  toolName: 'recallx-renderer',
+  toolVersion: RECALLX_VERSION,
 } as const;
 let rendererToken: string | null = null;
 
@@ -84,7 +84,7 @@ function getFallbackState() {
 function mapWorkspace(payload: any): Workspace {
   const data = payload?.data ?? payload;
   return {
-    name: data.workspaceName ?? data.name ?? 'Memforge',
+    name: data.workspaceName ?? data.name ?? 'RecallX',
     rootPath: data.rootPath ?? data.workspaceRoot ?? '',
     schemaVersion: data.schemaVersion ?? 1,
     apiBind: data.bindAddress ?? data.apiBind ?? '127.0.0.1:8787',
@@ -341,7 +341,7 @@ function mapNeighborhoodConnection(targetNodeId: string, raw: any): GraphConnect
     toNodeId: edge.direction === 'incoming' ? targetNodeId : node.id,
     relationType: edge.relationType ?? edge.relation_type ?? 'related_to',
     status: edge.relationStatus ?? edge.relation_status ?? 'active',
-    createdBy: edge.generator ?? edge.relationSource ?? 'memforge',
+    createdBy: edge.generator ?? edge.relationSource ?? 'recallx',
     sourceType: edge.relationSource === 'inferred' ? 'system' : 'human',
     sourceLabel: edge.relationSource === 'inferred' ? `inferred:${edge.generator ?? 'derived'}` : 'canonical',
     createdAt: new Date().toISOString(),
@@ -550,7 +550,7 @@ async function withFallback<T>(remote: () => Promise<T>, fallback: () => Promise
 }
 
 function getRendererToken(): string | null {
-  const globalToken = (window as Window & { __MEMFORGE_API_TOKEN__?: string }).__MEMFORGE_API_TOKEN__;
+  const globalToken = (window as Window & { __RECALLX_API_TOKEN__?: string }).__RECALLX_API_TOKEN__;
   if (globalToken) {
     return globalToken;
   }

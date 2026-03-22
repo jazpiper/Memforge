@@ -1,4 +1,4 @@
-# Memforge — Scalable Retrieval, DB, And Relation Architecture
+# RecallX — Scalable Retrieval, DB, And Relation Architecture
 
 > Historical v1 architecture reference.
 > Some sections in this document no longer reflect the shipped v2 surface.
@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-This document defines a retrieval and storage architecture that should remain robust as Memforge grows from small workspaces to very large local memory sets.
+This document defines a retrieval and storage architecture that should remain robust as RecallX grows from small workspaces to very large local memory sets.
 
 It is intentionally **not** anchored to a single note count.
 
@@ -27,7 +27,7 @@ The design target is:
 
 ## 2. Executive summary
 
-The recommended Memforge architecture is:
+The recommended RecallX architecture is:
 
 - **SQLite remains canonical**
 - **FTS + structured filters + shallow graph stay hot-path primary**
@@ -165,7 +165,7 @@ That is workable early, but not a complete long-note strategy.
 
 ## 4. Architectural invariants
 
-These should remain true even as Memforge grows.
+These should remain true even as RecallX grows.
 
 ## Invariant 1 — SQLite is canonical
 
@@ -190,7 +190,7 @@ The hot path should not depend on:
 - background jobs being caught up
 - model calls succeeding
 
-If semantic infrastructure is stale or absent, Memforge should still search well.
+If semantic infrastructure is stale or absent, RecallX should still search well.
 
 ## Invariant 3 — Relation truth and retrieval hints stay separate
 
@@ -832,7 +832,7 @@ Fix:
 
 ## 13. Bottom line
 
-The right long-term Memforge architecture is not "vector-first".
+The right long-term RecallX architecture is not "vector-first".
 It is:
 
 - SQLite-first

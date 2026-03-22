@@ -1,4 +1,4 @@
-# Memforge — Promotion Rules (v2)
+# RecallX — Promotion Rules (v2)
 
 ## Purpose
 Define the append-first path from activity to durable memory under fully automatic governance.

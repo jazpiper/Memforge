@@ -11,14 +11,14 @@ const now = '2026-03-18T01:13:09.680Z';
 
 const nodes: Node[] = [
   {
-    id: 'node_memforge',
+    id: 'node_recallx',
     type: 'project',
     status: 'active',
     canonicality: 'canonical',
     visibility: 'normal',
-    title: 'Memforge',
+    title: 'RecallX',
     body:
-      'Memforge is a local-first knowledge substrate for durable notes, projects, decisions, references, activities, and graph relationships shared across humans and tools.\n\nThe current slice focuses on durable storage, fast retrieval, provenance, and automatic governance.',
+      'RecallX is a local-first knowledge substrate for durable notes, projects, decisions, references, activities, and graph relationships shared across humans and tools.\n\nThe current slice focuses on durable storage, fast retrieval, provenance, and automatic governance.',
     summary: 'Shared local memory layer for humans and agents.',
     createdBy: '고주환',
     sourceType: 'human',
@@ -140,7 +140,7 @@ const relations: Relation[] = [
   {
     id: 'rel_1',
     fromNodeId: 'node_v1_governance',
-    toNodeId: 'node_memforge',
+    toNodeId: 'node_recallx',
     relationType: 'relevant_to',
     status: 'active',
     createdBy: '고주환',
@@ -152,7 +152,7 @@ const relations: Relation[] = [
   {
     id: 'rel_2',
     fromNodeId: 'node_api_surface',
-    toNodeId: 'node_memforge',
+    toNodeId: 'node_recallx',
     relationType: 'relevant_to',
     status: 'active',
     createdBy: 'Codex',
@@ -164,7 +164,7 @@ const relations: Relation[] = [
   {
     id: 'rel_3',
     fromNodeId: 'node_retrieval',
-    toNodeId: 'node_memforge',
+    toNodeId: 'node_recallx',
     relationType: 'relevant_to',
     status: 'active',
     createdBy: 'Codex',
@@ -175,7 +175,7 @@ const relations: Relation[] = [
   },
   {
     id: 'rel_4',
-    fromNodeId: 'node_memforge',
+    fromNodeId: 'node_recallx',
     toNodeId: 'node_api_surface',
     relationType: 'related_to',
     status: 'suggested',
@@ -202,9 +202,9 @@ const relations: Relation[] = [
 const activities: Activity[] = [
   {
     id: 'act_1',
-    targetNodeId: 'node_memforge',
+    targetNodeId: 'node_recallx',
     activityType: 'note_appended',
-    body: 'Created the project hub and aligned the workspace name to Memforge.',
+    body: 'Created the project hub and aligned the workspace name to RecallX.',
     createdBy: '고주환',
     sourceType: 'human',
     sourceLabel: 'manual',
@@ -244,7 +244,7 @@ const artifacts: Artifact[] = [
     path: 'artifacts/reports/api-contract.md',
     mimeType: 'text/markdown',
     sizeBytes: 4096,
-    checksum: 'sha256:memforge-api-contract',
+    checksum: 'sha256:recallx-api-contract',
     createdBy: 'Codex',
     sourceLabel: 'docs synthesis',
     createdAt: now,
@@ -275,8 +275,8 @@ const integrations: Integration[] = [
 
 export const mockWorkspace: WorkspaceSeed = {
   workspace: {
-    name: 'Memforge',
-    rootPath: '/Users/name/Documents/Memforge',
+    name: 'RecallX',
+    rootPath: '/Users/name/Documents/RecallX',
     schemaVersion: 1,
     apiBind: '127.0.0.1:8787',
     integrationModes: ['read-only', 'append-only'],
@@ -287,6 +287,6 @@ export const mockWorkspace: WorkspaceSeed = {
   activities,
   artifacts,
   integrations,
-  pinnedProjectIds: ['node_memforge'],
+  pinnedProjectIds: ['node_recallx'],
   recentNodeIds: ['node_api_surface', 'node_v1_governance', 'node_retrieval'],
 };

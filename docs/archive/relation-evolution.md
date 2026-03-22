@@ -1,4 +1,4 @@
-# Memforge — Relation Evolution
+# RecallX — Relation Evolution
 
 > Design-note reference for relation evolution.
 > This document mixes shipped pieces with future-facing relation work and should not be treated as the current contract by itself.
@@ -496,7 +496,7 @@ Goal:
 
 ---
 
-## 12. Why this fits Memforge
+## 12. Why this fits RecallX
 
 This design preserves the product's current strengths:
 - local-first canonical storage
@@ -512,7 +512,7 @@ It also addresses the real scaling problem:
 
 ## 13. Recommendation
 
-The recommended direction for Memforge is:
+The recommended direction for RecallX is:
 
 1. Keep v1 canonical relations minimal and trusted
 2. Add a separate inferred relation layer for retrieval and graph support
@@ -520,4 +520,4 @@ The recommended direction for Memforge is:
 4. Let real retrieval usage adjust weights over time
 5. Avoid human review for the high-volume inferred layer
 
-This gives Memforge a dense, useful graph without turning relation maintenance into human moderation work.
+This gives RecallX a dense, useful graph without turning relation maintenance into human moderation work.

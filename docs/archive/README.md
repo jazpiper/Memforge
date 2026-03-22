@@ -1,4 +1,4 @@
-# Memforge Archive Docs
+# RecallX Archive Docs
 
 This directory contains historical planning and design-reference documents that are no longer part of the current product contract.
 

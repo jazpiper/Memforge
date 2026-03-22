@@ -20,7 +20,7 @@ async function waitFor<T>(check: () => T | null | undefined | Promise<T | null |
 }
 
 function createWriter() {
-  const root = mkdtempSync(path.join(tmpdir(), "memforge-observability-"));
+  const root = mkdtempSync(path.join(tmpdir(), "recallx-observability-"));
   mkdirSync(path.join(root, "logs"), { recursive: true });
   tempRoots.push(root);
   return {
@@ -109,7 +109,7 @@ describe("observability writer", () => {
     });
     await writer.recordError({
       surface: "mcp",
-      operation: "memforge_search_nodes",
+      operation: "recallx_search_nodes",
       durationMs: 8,
       errorCode: "NETWORK_ERROR",
       errorKind: "network_error"
@@ -128,7 +128,7 @@ describe("observability writer", () => {
 
     expect(summary.totalEvents).toBe(4);
     expect(summary.operationSummaries.some((item) => item.operation === "nodes.search")).toBe(true);
-    expect(summary.mcpToolFailures).toEqual([{ operation: "memforge_search_nodes", count: 1 }]);
+    expect(summary.mcpToolFailures).toEqual([{ operation: "recallx_search_nodes", count: 1 }]);
     expect(summary.ftsFallbackRate.fallbackCount).toBe(1);
     expect(summary.semanticAugmentationRate.usedCount).toBe(1);
     expect(summary.semanticFallbackRate).toEqual({
@@ -139,7 +139,7 @@ describe("observability writer", () => {
       hitRatio: 1
     });
     expect(errors.items).toHaveLength(1);
-    expect(errors.items[0]?.operation).toBe("memforge_search_nodes");
+    expect(errors.items[0]?.operation).toBe("recallx_search_nodes");
   });
 
   it("prunes telemetry files outside retention window", async () => {

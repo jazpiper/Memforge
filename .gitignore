@@ -5,9 +5,9 @@ release
 .vite
 .env
 .env.*
-.memforge-workspace
-.memforge-smoke
-.memforge-test-workspace
+.recallx-workspace
+.recallx-smoke
+.recallx-test-workspace
 *.log
 .DS_Store
 *.tsbuildinfo

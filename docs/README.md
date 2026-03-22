@@ -1,8 +1,8 @@
-# Memforge Docs Map
+# RecallX Docs Map
 
-This directory is the main entry point for Memforge product and maintainer documentation.
+This directory is the main entry point for RecallX product and maintainer documentation.
 
-If you are reading Memforge for the first time, start here.
+If you are reading RecallX for the first time, start here.
 
 ## Current Product Docs
 

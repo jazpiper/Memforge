@@ -1,6 +1,6 @@
 import type { JsonMap, NodeRecord } from "../shared/types.js";
 import type { RelationType } from "../shared/contracts.js";
-import type { MemforgeRepository } from "./repositories.js";
+import type { RecallXRepository } from "./repositories.js";
 
 const AUTO_INFERRED_GENERATORS = [
   "deterministic-tag-overlap",
@@ -193,7 +193,7 @@ function buildSharedArtifactCandidate(
 }
 
 function collectGeneratedCandidates(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   target: NodeRecord,
   trigger: "node-write" | "activity-append" | "reindex"
 ): GeneratedCandidate[] {
@@ -265,7 +265,7 @@ function collectGeneratedCandidates(
 }
 
 export function refreshAutomaticInferredRelationsForNode(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   nodeId: string,
   trigger: "node-write" | "activity-append" | "reindex"
 ): { upsertedCount: number; expiredCount: number; relationIds: string[] } {
@@ -313,7 +313,7 @@ export function refreshAutomaticInferredRelationsForNode(
 }
 
 export function reindexAutomaticInferredRelations(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   input?: { limit?: number }
 ): { processedNodes: number; upsertedCount: number; expiredCount: number; relationIds: string[] } {
   const targetNodeIds = repository.listInferenceTargetNodeIds(input?.limit ?? 250);

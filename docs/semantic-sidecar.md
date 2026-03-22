@@ -1,6 +1,6 @@
-# Memforge — Semantic Sidecar
+# RecallX — Semantic Sidecar
 
-This document defines the current local-first semantic retrieval design for Memforge.
+This document defines the current local-first semantic retrieval design for RecallX.
 
 ## Goals
 
@@ -78,7 +78,7 @@ Status fields:
 - `indexBackend` reflects the active runtime backend
 - `extensionStatus`
   - `loaded` when `sqlite-vec` is active
-  - `fallback` when `sqlite-vec` was requested but Memforge downgraded to `sqlite`
+  - `fallback` when `sqlite-vec` was requested but RecallX downgraded to `sqlite`
   - `disabled` when the workspace explicitly uses plain `sqlite`
 - `extensionLoadError` exposes the startup load failure message when fallback is active
 - `embedding_version` is part of the stored semantic ledger and is used for compatibility filtering
@@ -91,7 +91,7 @@ Install dependencies normally:
 npm install
 ```
 
-`sqlite-vec` ships platform-specific optional packages for supported environments. When an optional package is available, Memforge attempts to load the extension automatically at startup.
+`sqlite-vec` ships platform-specific optional packages for supported environments. When an optional package is available, RecallX attempts to load the extension automatically at startup.
 
 No separate database process is required.
 

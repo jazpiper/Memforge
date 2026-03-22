@@ -1,10 +1,10 @@
-# Memforge — UX Design
+# RecallX — UX Design
 
 ## 1. Purpose
 
-This document describes the current Memforge desktop UX and the product rules that should guide future UI changes.
+This document describes the current RecallX desktop UX and the product rules that should guide future UI changes.
 
-Memforge should feel:
+RecallX should feel:
 - fast
 - calm
 - local
@@ -61,7 +61,7 @@ The quickest paths should stay clear:
 
 ## 3. Current app shape
 
-Memforge currently ships as a 3-pane desktop shell.
+RecallX currently ships as a 3-pane desktop shell.
 
 ### Left sidebar
 - workspace identity
@@ -131,7 +131,7 @@ It should answer:
 
 ### Important notes
 - Home currently does not include a search bar
-- Home intentionally mixes product usage and local operations because Memforge is both an app and a local memory service
+- Home intentionally mixes product usage and local operations because RecallX is both an app and a local memory service
 - semantic indexing belongs here as an operational card, not as a dedicated page
 
 ### Design rule

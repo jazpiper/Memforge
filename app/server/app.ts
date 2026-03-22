@@ -67,12 +67,12 @@ const updateNodeRequestSchema = updateNodeSchema.extend({
 });
 const defaultCaptureSource = {
   actorType: "system" as const,
-  actorLabel: "Memforge API",
-  toolName: "memforge-api"
+  actorLabel: "RecallX API",
+  toolName: "recallx-api"
 };
 
 export function resolveRendererDistDir(): string | null {
-  const configured = process.env.MEMFORGE_RENDERER_DIST_PATH;
+  const configured = process.env.RECALLX_RENDERER_DIST_PATH;
   if (typeof configured === "string" && configured.trim()) {
     const resolved = path.resolve(configured.trim());
     return existsSync(path.join(resolved, "index.html")) ? resolved : null;
@@ -398,7 +398,7 @@ function buildServiceIndex(workspaceInfo: {
   const apiBaseUrl = formatApiBaseUrl(workspaceInfo.bindAddress);
   return {
     service: {
-      name: "Memforge",
+      name: "RecallX",
       description: "Local-first personal knowledge layer for humans and agents.",
       apiVersion: "v1",
       baseUrl: apiBaseUrl,
@@ -415,7 +415,7 @@ function buildServiceIndex(workspaceInfo: {
       {
         method: "GET",
         path: "/api/v1/health",
-        purpose: "Check whether the running local Memforge service is healthy."
+        purpose: "Check whether the running local RecallX service is healthy."
       },
       {
         method: "GET",
@@ -441,24 +441,24 @@ function buildServiceIndex(workspaceInfo: {
       "create or open workspaces without restarting the server"
     ],
     cli: {
-      binary: "pnw",
+      binary: "recallx",
       examples: [
-        `pnw health --api ${apiBaseUrl}`,
-        `pnw search --api ${apiBaseUrl} "agent memory"`,
-        `pnw search workspace --api ${apiBaseUrl} "cleanup"`,
-        `pnw create --api ${apiBaseUrl} --type note --title "Idea" --body "..."`,
-        `pnw context --api ${apiBaseUrl} <node-id> --mode compact --preset for-coding`,
-        `pnw governance issues --api ${apiBaseUrl}`,
-        `pnw workspace list --api ${apiBaseUrl}`,
-        `pnw observability summary --api ${apiBaseUrl} --since 24h`
+        `recallx health --api ${apiBaseUrl}`,
+        `recallx search --api ${apiBaseUrl} "agent memory"`,
+        `recallx search workspace --api ${apiBaseUrl} "cleanup"`,
+        `recallx create --api ${apiBaseUrl} --type note --title "Idea" --body "..."`,
+        `recallx context --api ${apiBaseUrl} <node-id> --mode compact --preset for-coding`,
+        `recallx governance issues --api ${apiBaseUrl}`,
+        `recallx workspace list --api ${apiBaseUrl}`,
+        `recallx observability summary --api ${apiBaseUrl} --since 24h`
       ]
     },
     mcp: {
       transport: "stdio",
       command: "node dist/server/app/mcp/index.js",
       env: {
-        MEMFORGE_API_URL: apiBaseUrl,
-        MEMFORGE_API_TOKEN: workspaceInfo.authMode === "bearer" ? "<set the active bearer token here>" : null
+        RECALLX_API_URL: apiBaseUrl,
+        RECALLX_API_TOKEN: workspaceInfo.authMode === "bearer" ? "<set the active bearer token here>" : null
       },
       docs: "docs/mcp.md"
     },
@@ -662,7 +662,7 @@ function buildServiceIndex(workspaceInfo: {
         path: "/api/v1/workspaces",
         purpose: "Create and switch to a new workspace at runtime.",
         requestExample: {
-          rootPath: "/Users/name/Documents/Memforge-Work",
+          rootPath: "/Users/name/Documents/RecallX-Work",
           workspaceName: "Work"
         }
       },
@@ -671,7 +671,7 @@ function buildServiceIndex(workspaceInfo: {
         path: "/api/v1/workspaces/open",
         purpose: "Switch the running service to another existing workspace.",
         requestExample: {
-          rootPath: "/Users/name/Documents/Memforge-Personal"
+          rootPath: "/Users/name/Documents/RecallX-Personal"
         }
       }
     ],
@@ -689,7 +689,7 @@ function buildServiceIndex(workspaceInfo: {
   };
 }
 
-export function createMemforgeApp(params: {
+export function createRecallXApp(params: {
   workspaceSessionManager: WorkspaceSessionManager;
   apiToken: string | null;
 }) {
@@ -1512,7 +1512,7 @@ export function createMemforgeApp(params: {
 
   app.use((request, response, next) => {
     const requestId = createId("req");
-    const traceId = request.header("x-memforge-trace-id")?.trim() || createId("trace");
+    const traceId = request.header("x-recallx-trace-id")?.trim() || createId("trace");
     const operation = `${request.method.toUpperCase()} ${normalizeApiRequestPath(request.path)}`;
     const observabilityState = currentObservabilityConfig();
     const requestSpan = observability.startSpan({
@@ -1522,15 +1522,15 @@ export function createMemforgeApp(params: {
       traceId,
       details: {
         ...(observabilityState.capturePayloadShape ? summarizePayloadShape(request.body) : {}),
-        mcpTool: request.header("x-memforge-mcp-tool") ?? null
+        mcpTool: request.header("x-recallx-mcp-tool") ?? null
       }
     });
 
     response.locals.requestId = requestId;
     response.locals.traceId = traceId;
     response.locals.telemetryRequestSpan = requestSpan;
-    response.setHeader("x-memforge-request-id", requestId);
-    response.setHeader("x-memforge-trace-id", traceId);
+    response.setHeader("x-recallx-request-id", requestId);
+    response.setHeader("x-recallx-trace-id", traceId);
     response.on("finish", () => {
       void requestSpan.finish({
         outcome: response.statusCode >= 400 ? "error" : "success",
@@ -1546,7 +1546,7 @@ export function createMemforgeApp(params: {
         requestId,
         workspaceRoot: currentWorkspaceRoot(),
         workspaceName: currentWorkspaceInfo().workspaceName,
-        toolName: request.header("x-memforge-mcp-tool") ?? null,
+        toolName: request.header("x-recallx-mcp-tool") ?? null,
         surface: "api"
       },
       next
@@ -1814,7 +1814,7 @@ export function createMemforgeApp(params: {
           runSemanticFallbackSpan: async (details, callback) =>
             runObservedSpan("workspace.search.semantic_fallback", {
               ...details,
-              mcpTool: request.header("x-memforge-mcp-tool") ?? null
+              mcpTool: request.header("x-recallx-mcp-tool") ?? null
             }, async (semanticSpan) => {
               const semanticResult = await callback();
               if (
@@ -2768,7 +2768,7 @@ export function createMemforgeApp(params: {
     app.get("/", (_request, response) => {
       response
         .type("text/plain")
-        .send("Memforge headless runtime is running. Use /api/v1 for the API or install the full memforge package for the renderer.");
+        .send("RecallX headless runtime is running. Use /api/v1 for the API or install the full recallx package for the renderer.");
     });
   }
 

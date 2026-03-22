@@ -5,16 +5,16 @@ function readArgument(prefix: string): string | null {
   return value ? value.slice(prefix.length) : null;
 }
 
-const apiBase = readArgument("--memforge-api-base=") ?? "http://127.0.0.1:8788/api/v1";
-const healthUrl = readArgument("--memforge-health-url=") ?? `${apiBase}/health`;
-const workspaceHome = readArgument("--memforge-workspace-home=");
-const workspaceRoot = readArgument("--memforge-workspace-root=");
-const commandShimPath = readArgument("--memforge-command-shim-path=");
-const mcpLauncherPath = readArgument("--memforge-mcp-launcher-path=");
-const mcpCommand = readArgument("--memforge-mcp-command=");
-const executablePath = readArgument("--memforge-app-executable=") ?? process.execPath;
-const isPackaged = readArgument("--memforge-is-packaged=") === "1";
-const appVersion = readArgument("--memforge-app-version=") ?? "1.0.0";
+const apiBase = readArgument("--recallx-api-base=") ?? "http://127.0.0.1:8788/api/v1";
+const healthUrl = readArgument("--recallx-health-url=") ?? `${apiBase}/health`;
+const workspaceHome = readArgument("--recallx-workspace-home=");
+const workspaceRoot = readArgument("--recallx-workspace-root=");
+const commandShimPath = readArgument("--recallx-command-shim-path=");
+const mcpLauncherPath = readArgument("--recallx-mcp-launcher-path=");
+const mcpCommand = readArgument("--recallx-mcp-command=");
+const executablePath = readArgument("--recallx-app-executable=") ?? process.execPath;
+const isPackaged = readArgument("--recallx-is-packaged=") === "1";
+const appVersion = readArgument("--recallx-app-version=") ?? "1.0.0";
 
 function joinWorkspacePath(root: string | null, child: string): string | null {
   if (!root) {
@@ -40,19 +40,19 @@ const desktopInfo = {
   appVersion
 };
 
-contextBridge.exposeInMainWorld("__MEMFORGE_API_BASE__", apiBase);
-contextBridge.exposeInMainWorld("__MEMFORGE_DESKTOP_INFO__", desktopInfo);
-contextBridge.exposeInMainWorld("__MEMFORGE_DESKTOP_ACTIONS__", {
+contextBridge.exposeInMainWorld("__RECALLX_API_BASE__", apiBase);
+contextBridge.exposeInMainWorld("__RECALLX_DESKTOP_INFO__", desktopInfo);
+contextBridge.exposeInMainWorld("__RECALLX_DESKTOP_ACTIONS__", {
   getRuntimeState() {
-    return ipcRenderer.invoke("memforge-desktop-runtime-state");
+    return ipcRenderer.invoke("recallx-desktop-runtime-state");
   },
   onAction(callback: (payload: { type: string }) => void) {
     const listener = (_event: unknown, payload: { type: string }) => {
       callback(payload);
     };
-    ipcRenderer.on("memforge-desktop-action", listener);
+    ipcRenderer.on("recallx-desktop-action", listener);
     return () => {
-      ipcRenderer.removeListener("memforge-desktop-action", listener);
+      ipcRenderer.removeListener("recallx-desktop-action", listener);
     };
   }
 });

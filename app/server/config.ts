@@ -12,10 +12,10 @@ export interface ServerConfig {
 
 export function createServerConfig(workspaceRoot: string): ServerConfig {
   return {
-    port: Number(process.env.MEMFORGE_PORT ?? 8787),
-    bindAddress: process.env.MEMFORGE_BIND ?? "127.0.0.1",
-    apiToken: process.env.MEMFORGE_API_TOKEN ?? null,
-    workspaceName: process.env.MEMFORGE_WORKSPACE_NAME ?? defaultWorkspaceName(workspaceRoot)
+    port: Number(process.env.RECALLX_PORT ?? 8787),
+    bindAddress: process.env.RECALLX_BIND ?? "127.0.0.1",
+    apiToken: process.env.RECALLX_API_TOKEN ?? null,
+    workspaceName: process.env.RECALLX_WORKSPACE_NAME ?? defaultWorkspaceName(workspaceRoot)
   };
 }
 

@@ -1,13 +1,12 @@
 {
-  "name": "memforge-headless-source",
+  "name": "recallx-headless-source",
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "Source package for the Memforge headless CLI and runtime wrapper.",
+  "description": "Source package for the RecallX headless CLI and runtime wrapper.",
   "bin": {
-    "memforge": "./bin/pnw.js",
-    "pnw": "./bin/pnw.js",
-    "memforge-mcp": "./bin/memforge-mcp.js"
+    "recallx": "./bin/recallx.js",
+    "recallx-mcp": "./bin/recallx-mcp.js"
   },
   "engines": {
     "node": ">=20"

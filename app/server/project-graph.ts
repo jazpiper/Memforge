@@ -1,7 +1,7 @@
 import type { RelationType } from "../shared/contracts.js";
 import type { ProjectGraphEdge, ProjectGraphNode, ProjectGraphPayload, ProjectGraphTimelineEvent } from "../shared/types.js";
 import { AppError } from "./errors.js";
-import type { MemforgeRepository } from "./repositories.js";
+import type { RecallXRepository } from "./repositories.js";
 
 const DEFAULT_PROJECT_MEMBER_LIMIT = 120;
 const DEFAULT_PROJECT_ACTIVITY_LIMIT = 200;
@@ -13,7 +13,7 @@ function relationLabel(value: RelationType) {
 }
 
 export function buildProjectGraph(
-  repository: MemforgeRepository,
+  repository: RecallXRepository,
   projectId: string,
   options?: {
     includeInferred?: boolean;

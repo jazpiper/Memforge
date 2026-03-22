@@ -2,16 +2,16 @@ import type { ApiEnvelope, ApiErrorEnvelope } from "../shared/types.js";
 import { buildApiRequestInit, buildApiUrl, parseApiJsonBody } from "../shared/request-runtime.js";
 import { currentTelemetryContext } from "../server/observability.js";
 
-export class MemforgeApiError extends Error {
+export class RecallXApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details?: unknown;
 
   constructor(message: string, options?: { status?: number; code?: string; details?: unknown }) {
     super(message);
-    this.name = "MemforgeApiError";
+    this.name = "RecallXApiError";
     this.status = options?.status ?? 500;
-    this.code = options?.code ?? "MEMFORGE_API_ERROR";
+    this.code = options?.code ?? "RECALLX_API_ERROR";
     this.details = options?.details;
   }
 }
@@ -28,7 +28,7 @@ function isApiErrorEnvelope(payload: unknown): payload is ApiErrorEnvelope {
   );
 }
 
-export class MemforgeApiClient {
+export class RecallXApiClient {
   readonly baseUrl: string;
   readonly apiToken: string | null;
 
@@ -54,10 +54,10 @@ export class MemforgeApiClient {
 
     const telemetryContext = currentTelemetryContext();
     if (telemetryContext?.traceId) {
-      headers.set("x-memforge-trace-id", telemetryContext.traceId);
+      headers.set("x-recallx-trace-id", telemetryContext.traceId);
     }
     if (telemetryContext?.toolName) {
-      headers.set("x-memforge-mcp-tool", telemetryContext.toolName);
+      headers.set("x-recallx-mcp-tool", telemetryContext.toolName);
     }
 
     let response: Response;
@@ -72,7 +72,7 @@ export class MemforgeApiClient {
         })
       );
     } catch (error) {
-      throw new MemforgeApiError("Failed to reach the local Memforge API.", {
+      throw new RecallXApiError("Failed to reach the local RecallX API.", {
         status: 503,
         code: "NETWORK_ERROR",
         details: error
@@ -83,14 +83,14 @@ export class MemforgeApiClient {
     try {
       payload = await parseApiJsonBody(response) as ApiEnvelope<unknown> | ApiErrorEnvelope | Record<string, unknown> | null;
     } catch (error) {
-      throw new MemforgeApiError("Memforge API returned non-JSON output.", {
+      throw new RecallXApiError("RecallX API returned non-JSON output.", {
         status: response.status,
         code: "INVALID_RESPONSE",
         details: error
       });
     }
     if (!payload || typeof payload !== "object") {
-      throw new MemforgeApiError("Memforge API returned an empty response.", {
+      throw new RecallXApiError("RecallX API returned an empty response.", {
         status: response.status,
         code: "EMPTY_RESPONSE"
       });
@@ -101,7 +101,7 @@ export class MemforgeApiClient {
     }
 
     if (isApiErrorEnvelope(payload)) {
-      throw new MemforgeApiError(payload.error.message, {
+      throw new RecallXApiError(payload.error.message, {
         status: response.status,
         code: payload.error.code,
         details: payload.error.details
@@ -109,7 +109,7 @@ export class MemforgeApiClient {
     }
 
     if (!response.ok) {
-      throw new MemforgeApiError(`Memforge API request failed with status ${response.status}.`, {
+      throw new RecallXApiError(`RecallX API request failed with status ${response.status}.`, {
         status: response.status,
         code: "HTTP_ERROR",
         details: payload

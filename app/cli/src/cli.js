@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getApiBase, getAuthToken, requestJson } from "./http.js";
-import { MEMFORGE_VERSION } from "../../shared/version.js";
+import { RECALLX_VERSION } from "../../shared/version.js";
 import {
   renderActivitySearchResults,
   renderBundleMarkdown,
@@ -22,11 +22,11 @@ import {
 
 const DEFAULT_SOURCE = {
   actorType: "human",
-  actorLabel: "memforge-cli",
-  toolName: "memforge-cli",
-  toolVersion: MEMFORGE_VERSION,
+  actorLabel: "recallx-cli",
+  toolName: "recallx-cli",
+  toolVersion: RECALLX_VERSION,
 };
-const DEFAULT_MCP_LAUNCHER_PATH = path.join(os.homedir(), ".memforge", "bin", "memforge-mcp");
+const DEFAULT_MCP_LAUNCHER_PATH = path.join(os.homedir(), ".recallx", "bin", "recallx-mcp");
 
 export async function runCli(argv) {
   const { command, args, options, positionals } = parseArgv(argv.slice(2));
@@ -83,22 +83,24 @@ async function runHealth(apiBase, token, format) {
 
 async function runServe(args) {
   if (typeof args.port === "string" && args.port.trim()) {
-    process.env.MEMFORGE_PORT = args.port.trim();
+    process.env.RECALLX_PORT = args.port.trim();
   }
   if (typeof args.bind === "string" && args.bind.trim()) {
-    process.env.MEMFORGE_BIND = args.bind.trim();
+    process.env.RECALLX_BIND = args.bind.trim();
   }
   if (typeof args["workspace-root"] === "string" && args["workspace-root"].trim()) {
-    process.env.MEMFORGE_WORKSPACE_ROOT = path.resolve(args["workspace-root"].trim());
+    const workspaceRoot = path.resolve(args["workspace-root"].trim());
+    process.env.RECALLX_WORKSPACE_ROOT = workspaceRoot;
   }
   if (typeof args["workspace-name"] === "string" && args["workspace-name"].trim()) {
-    process.env.MEMFORGE_WORKSPACE_NAME = args["workspace-name"].trim();
+    process.env.RECALLX_WORKSPACE_NAME = args["workspace-name"].trim();
   }
   if (typeof args["api-token"] === "string" && args["api-token"].trim()) {
-    process.env.MEMFORGE_API_TOKEN = args["api-token"].trim();
+    process.env.RECALLX_API_TOKEN = args["api-token"].trim();
   }
   if (typeof args["renderer-dist"] === "string" && args["renderer-dist"].trim()) {
-    process.env.MEMFORGE_RENDERER_DIST_PATH = path.resolve(args["renderer-dist"].trim());
+    const rendererDist = path.resolve(args["renderer-dist"].trim());
+    process.env.RECALLX_RENDERER_DIST_PATH = rendererDist;
   }
 
   await import(pathToFileURL(resolveServerEntryScript()).href);
@@ -131,8 +133,12 @@ async function runMcp(apiBase, token, format, args, positionals) {
           command: launcherCommandParts.map(quoteShellArg).join(" "),
           config: buildMcpConfigPayload(launcherPath),
           notes: token
-            ? ["Set MEMFORGE_API_TOKEN in the MCP client environment. The launcher intentionally does not persist bearer tokens."]
-            : ["If the target API uses bearer auth, set MEMFORGE_API_TOKEN in the MCP client environment before launching MCP."],
+            ? [
+                "Use the `recallx` server key in Codex MCP configs and set RECALLX_API_TOKEN in the MCP client environment. The launcher intentionally does not persist bearer tokens.",
+              ]
+            : [
+                "Use the `recallx` server key in Codex MCP configs. If the target API uses bearer auth, set RECALLX_API_TOKEN in the MCP client environment before launching MCP.",
+              ],
         },
         format,
         "mcp-install",
@@ -740,38 +746,38 @@ function parseArgv(argv) {
 }
 
 function renderHelp() {
-  return `Memforge CLI
+  return `RecallX CLI
 
 Usage:
-  memforge serve [--port 8787] [--bind 127.0.0.1] [--workspace-root /path/to/workspace]
-  memforge serve [--workspace-name Personal] [--api-token secret]
-  memforge serve [--renderer-dist /path/to/dist/renderer]
-  pnw health
-  pnw mcp config
-  pnw mcp install [--path ~/.memforge/bin/memforge-mcp]
-  pnw mcp path
-  pnw mcp command
-  pnw search "agent memory" [--type project] [--limit 5]
-  pnw search activities "what changed" [--activity-type agent_run_summary]
-  pnw search workspace "cleanup" [--scopes nodes,activities]
-  pnw get <node-id>
-  pnw neighborhood <node-id> [--depth 1] [--include-inferred true] [--max-inferred 4]
-  pnw related <node-id> [--depth 1]  # legacy compatibility alias
-  pnw context <target-id> [--mode compact] [--preset for-coding]
-  pnw create --type note --title "..." [--body "..." | --file path.md]
-  pnw append --target <node-id> --type agent_run_summary --text "..."
-  pnw link <from-id> <to-id> <relation-type>
-  pnw attach --node <node-id> --path artifacts/file.md
-  pnw feedback --result-type node --result-id <id> --verdict useful [--query "..."]
-  pnw governance issues [--states contested,low_confidence]
-  pnw governance show --entity-type node --entity-id <id>
-  pnw governance recompute [--entity-type node] [--entity-ids id1,id2]
-  pnw workspace current
-  pnw workspace list
-  pnw workspace create --root /path/to/workspace [--name "Personal"]
-  pnw workspace open --root /path/to/workspace
-  pnw observability summary [--since 24h]
-  pnw observability errors [--since 24h] [--surface mcp] [--limit 50]
+  recallx serve [--port 8787] [--bind 127.0.0.1] [--workspace-root /path/to/workspace]
+  recallx serve [--workspace-name Personal] [--api-token secret]
+  recallx serve [--renderer-dist /path/to/dist/renderer]
+  recallx health
+  recallx mcp config
+  recallx mcp install [--path ~/.recallx/bin/recallx-mcp]
+  recallx mcp path
+  recallx mcp command
+  recallx search "agent memory" [--type project] [--limit 5]
+  recallx search activities "what changed" [--activity-type agent_run_summary]
+  recallx search workspace "cleanup" [--scopes nodes,activities]
+  recallx get <node-id>
+  recallx neighborhood <node-id> [--depth 1] [--include-inferred true] [--max-inferred 4]
+  recallx related <node-id> [--depth 1]
+  recallx context <target-id> [--mode compact] [--preset for-coding]
+  recallx create --type note --title "..." [--body "..." | --file path.md]
+  recallx append --target <node-id> --type agent_run_summary --text "..."
+  recallx link <from-id> <to-id> <relation-type>
+  recallx attach --node <node-id> --path artifacts/file.md
+  recallx feedback --result-type node --result-id <id> --verdict useful [--query "..."]
+  recallx governance issues [--states contested,low_confidence]
+  recallx governance show --entity-type node --entity-id <id>
+  recallx governance recompute [--entity-type node] [--entity-ids id1,id2]
+  recallx workspace current
+  recallx workspace list
+  recallx workspace create --root /path/to/workspace [--name "Personal"]
+  recallx workspace open --root /path/to/workspace
+  recallx observability summary [--since 24h]
+  recallx observability errors [--since 24h] [--surface mcp] [--limit 50]
 
 Global flags:
   --api <url>        Override API base URL
@@ -781,7 +787,7 @@ Global flags:
 }
 
 function resolveMcpEntryScript() {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bin/memforge-mcp.js");
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bin/recallx-mcp.js");
 }
 
 function resolveServerEntryScript() {
@@ -796,7 +802,7 @@ function resolveServerEntryScript() {
     return builtEntry;
   }
 
-  throw new Error("Unable to locate the Memforge server entrypoint. Build the project or use an installed npm package.");
+  throw new Error("Unable to locate the RecallX server entrypoint. Build the project or use an installed npm package.");
 }
 
 function buildMcpCommandParts(apiBase, token) {
@@ -810,11 +816,11 @@ function buildMcpCommandParts(apiBase, token) {
 function buildMcpConfigPayload(launcherPath) {
   return {
     mcpServers: {
-      memforge: {
+      recallx: {
         command: launcherPath,
         args: [],
         env: {
-          MEMFORGE_API_TOKEN: "<set at runtime for bearer-mode services>",
+          RECALLX_API_TOKEN: "<set at runtime for bearer-mode services>",
         },
       },
     },

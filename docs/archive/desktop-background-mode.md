@@ -1,4 +1,4 @@
-# Memforge — Desktop Background Mode
+# RecallX — Desktop Background Mode
 
 > Historical implementation plan.
 > Parts of this document describe completed work and older planned states rather than the current source of truth.
@@ -10,7 +10,7 @@ Implemented today:
 - single-instance desktop shell
 - background mode after window close
 - menu bar item
-- `Open Memforge`
+- `Open RecallX`
 - `Quick Capture`
 - `Open Search`
 - `Copy API URL`
@@ -18,7 +18,7 @@ Implemented today:
 - `Reveal Workspace Folder`
 - `Restart Local Service`
 - `Launch at Login`
-- `Quit Memforge`
+- `Quit RecallX`
 
 Still planned, not implemented:
 - richer tray visual states such as degraded/error-specific icons
@@ -30,11 +30,11 @@ Still planned, not implemented:
 
 ## 1. Goal
 
-Let Memforge behave like a local memory utility instead of only a foreground windowed app.
+Let RecallX behave like a local memory utility instead of only a foreground windowed app.
 
 The desktop app should be able to:
 
-- keep the local Memforge API alive in the background
+- keep the local RecallX API alive in the background
 - remain discoverable from the macOS menu bar
 - expose basic health and integration status without opening the full window
 - provide a few high-value quick actions
@@ -53,11 +53,11 @@ It should not become:
 
 ## 2. Product stance
 
-Memforge background mode is primarily a **local service shell**.
+RecallX background mode is primarily a **local service shell**.
 
 The menu bar item is not a second app. Its job is:
 
-- tell the user whether Memforge is alive
+- tell the user whether RecallX is alive
 - provide fast access to the main app
 - provide a few operational controls
 - make MCP and API access easy to confirm
@@ -71,9 +71,9 @@ The full renderer window remains the main place for retrieval, review, and editi
 Default packaged behavior on macOS:
 
 - launching the app starts or reuses the managed local API
-- closing the main window hides the window and keeps Memforge running
+- closing the main window hides the window and keeps RecallX running
 - the app remains available from the menu bar
-- explicit `Quit Memforge` stops the managed API and exits the app
+- explicit `Quit RecallX` stops the managed API and exits the app
 
 Recommended supporting behaviors:
 
@@ -101,7 +101,7 @@ Possible later option:
 
 ## 4. Menu bar status model
 
-The menu bar icon should reflect only the **desktop-managed Memforge service** for the current packaged app session.
+The menu bar icon should reflect only the **desktop-managed RecallX service** for the current packaged app session.
 
 Recommended states:
 
@@ -140,12 +140,12 @@ Do not expose in v1:
 Recommended top-level menu:
 
 1. Status header
-- `Memforge is healthy`
+- `RecallX is healthy`
 - `127.0.0.1:8788`
-- `Workspace: Memforge`
+- `Workspace: RecallX`
 
 2. Open surfaces
-- `Open Memforge`
+- `Open RecallX`
 - `Quick Capture`
 - `Open Settings`
 
@@ -170,7 +170,7 @@ Recommended top-level menu:
 - `Show dock icon when closed`
 
 7. Exit
-- `Quit Memforge`
+- `Quit RecallX`
 
 ## 6. Quick actions
 
@@ -187,9 +187,9 @@ Recommended behavior:
 Why this matters:
 
 - it proves the value of background mode immediately
-- it makes Memforge useful even when the full app is closed
+- it makes RecallX useful even when the full app is closed
 
-## 6.2 Open Memforge
+## 6.2 Open RecallX
 
 Always present.
 
@@ -255,13 +255,13 @@ Ship the minimum useful background utility:
 - add Electron `Tray`
 - add menu bar icon asset
 - keep app alive after window close
-- add `Open Memforge`, `Restart Local Service`, `Copy API URL`, `Quit`
+- add `Open RecallX`, `Restart Local Service`, `Copy API URL`, `Quit`
 - add main-process health polling for the managed API
 - expose current desktop-managed workspace and API state to the tray menu
 
 Success criteria:
 
-- user can close the window and still see Memforge alive in the menu bar
+- user can close the window and still see RecallX alive in the menu bar
 - user can reopen the app from the menu bar
 - user can confirm the current API and workspace without reopening the full app
 
@@ -295,7 +295,7 @@ Success criteria:
 Current desktop shell facts:
 
 - the Electron main process already manages a child API process
-- the packaged app already resolves a dedicated workspace root under `~/.memforge/{workspaceName}`
+- the packaged app already resolves a dedicated workspace root under `~/.recallx/{workspaceName}`
 - the packaged app already avoids reusing an API whose workspace root points somewhere else
 
 That means the best ownership split is:
@@ -306,7 +306,7 @@ That means the best ownership split is:
 
 Important rule:
 
-The tray should reflect the **desktop-managed** API, not any random Memforge API found on loopback.
+The tray should reflect the **desktop-managed** API, not any random RecallX API found on loopback.
 
 ## 11. Risks and guardrails
 
@@ -329,13 +329,13 @@ If we start now, the best first cut is:
 
 - close-to-hide behavior
 - menu bar icon
-- `Open Memforge`
+- `Open RecallX`
 - `Quick Capture`
 - `Server: Healthy/Starting/Failed`
 - `Workspace: <name>`
 - `Copy API URL`
 - `Copy MCP Command`
 - `Restart Local Service`
-- `Quit Memforge`
+- `Quit RecallX`
 
-That is enough to make Memforge feel like a real local utility without overbuilding the tray surface.
+That is enough to make RecallX feel like a real local utility without overbuilding the tray surface.
