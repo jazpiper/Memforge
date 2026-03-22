@@ -1,5 +1,6 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import mime from "mime-types";
@@ -69,6 +70,38 @@ const defaultCaptureSource = {
   actorLabel: "Memforge API",
   toolName: "memforge-api"
 };
+
+export function resolveRendererDistDir(): string | null {
+  const configured = process.env.MEMFORGE_RENDERER_DIST_PATH;
+  if (typeof configured === "string" && configured.trim()) {
+    const resolved = path.resolve(configured.trim());
+    return existsSync(path.join(resolved, "index.html")) ? resolved : null;
+  }
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "../../../renderer"),
+    path.resolve(moduleDir, "../../dist/renderer")
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, "index.html"))) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+export function resolveRendererIndexPath(): string | null {
+  const rendererDistDir = resolveRendererDistDir();
+  if (!rendererDistDir) {
+    return null;
+  }
+
+  const indexPath = path.join(rendererDistDir, "index.html");
+  return existsSync(indexPath) ? indexPath : null;
+}
 
 function formatApiBaseUrl(bindAddress: string): string {
   if (bindAddress.startsWith("[")) {
@@ -661,6 +694,8 @@ export function createMemforgeApp(params: {
   apiToken: string | null;
 }) {
   const app = express();
+  const rendererDistDir = resolveRendererDistDir();
+  const rendererIndexPath = rendererDistDir ? path.join(rendererDistDir, "index.html") : null;
   app.use((request, _response, next) => {
     const origin = request.header("origin");
     if (origin && !isAllowedBrowserOrigin(origin)) {
@@ -2718,6 +2753,24 @@ export function createMemforgeApp(params: {
     response.type(mime.lookup(artifactPath) || "application/octet-stream");
     response.sendFile(artifactPath);
   });
+
+  if (rendererDistDir && rendererIndexPath) {
+    app.use(express.static(rendererDistDir, { index: false }));
+    app.get(/^(?!\/api\/v1(?:\/|$)|\/artifacts(?:\/|$)).*/, (request, response, next) => {
+      if (path.posix.extname(request.path)) {
+        next();
+        return;
+      }
+
+      response.sendFile(rendererIndexPath);
+    });
+  } else {
+    app.get("/", (_request, response) => {
+      response
+        .type("text/plain")
+        .send("Memforge headless runtime is running. Use /api/v1 for the API or install the full memforge package for the renderer.");
+    });
+  }
 
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (error instanceof AppError) {

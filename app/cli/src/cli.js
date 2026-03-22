@@ -1,7 +1,8 @@
+import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getApiBase, getAuthToken, requestJson } from "./http.js";
 import { MEMFORGE_VERSION } from "../../shared/version.js";
 import {
@@ -41,6 +42,8 @@ export async function runCli(argv) {
   switch (command) {
     case "health":
       return runHealth(apiBase, token, format);
+    case "serve":
+      return runServe(args);
     case "mcp":
       return runMcp(apiBase, token, format, args, positionals);
     case "search":
@@ -76,6 +79,29 @@ export async function runCli(argv) {
 async function runHealth(apiBase, token, format) {
   const data = await requestJson(apiBase, "/health", { token });
   outputData(data, format, "health");
+}
+
+async function runServe(args) {
+  if (typeof args.port === "string" && args.port.trim()) {
+    process.env.MEMFORGE_PORT = args.port.trim();
+  }
+  if (typeof args.bind === "string" && args.bind.trim()) {
+    process.env.MEMFORGE_BIND = args.bind.trim();
+  }
+  if (typeof args["workspace-root"] === "string" && args["workspace-root"].trim()) {
+    process.env.MEMFORGE_WORKSPACE_ROOT = path.resolve(args["workspace-root"].trim());
+  }
+  if (typeof args["workspace-name"] === "string" && args["workspace-name"].trim()) {
+    process.env.MEMFORGE_WORKSPACE_NAME = args["workspace-name"].trim();
+  }
+  if (typeof args["api-token"] === "string" && args["api-token"].trim()) {
+    process.env.MEMFORGE_API_TOKEN = args["api-token"].trim();
+  }
+  if (typeof args["renderer-dist"] === "string" && args["renderer-dist"].trim()) {
+    process.env.MEMFORGE_RENDERER_DIST_PATH = path.resolve(args["renderer-dist"].trim());
+  }
+
+  await import(pathToFileURL(resolveServerEntryScript()).href);
 }
 
 async function runMcp(apiBase, token, format, args, positionals) {
@@ -717,6 +743,9 @@ function renderHelp() {
   return `Memforge CLI
 
 Usage:
+  memforge serve [--port 8787] [--bind 127.0.0.1] [--workspace-root /path/to/workspace]
+  memforge serve [--workspace-name Personal] [--api-token secret]
+  memforge serve [--renderer-dist /path/to/dist/renderer]
   pnw health
   pnw mcp config
   pnw mcp install [--path ~/.memforge/bin/memforge-mcp]
@@ -753,6 +782,21 @@ Global flags:
 
 function resolveMcpEntryScript() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bin/memforge-mcp.js");
+}
+
+function resolveServerEntryScript() {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const packagedEntry = path.resolve(moduleDir, "../../server/index.js");
+  if (existsSync(packagedEntry)) {
+    return packagedEntry;
+  }
+
+  const builtEntry = path.resolve(moduleDir, "../../../dist/server/app/server/index.js");
+  if (existsSync(builtEntry)) {
+    return builtEntry;
+  }
+
+  throw new Error("Unable to locate the Memforge server entrypoint. Build the project or use an installed npm package.");
 }
 
 function buildMcpCommandParts(apiBase, token) {

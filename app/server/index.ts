@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createServerConfig, ensureApiToken } from "./config.js";
-import { createMemforgeApp } from "./app.js";
+import { createMemforgeApp, resolveRendererDistDir } from "./app.js";
 import { resolveWorkspaceRoot } from "./workspace.js";
 import { WorkspaceSessionManager } from "./workspace-session.js";
 
@@ -19,6 +19,11 @@ const app = createMemforgeApp({
 
 createServer(app).listen(config.port, config.bindAddress, () => {
   console.log(`Memforge API listening on http://${config.bindAddress}:${config.port}`);
+  if (resolveRendererDistDir()) {
+    console.log(`Memforge UI available at http://${config.bindAddress}:${config.port}/`);
+  } else {
+    console.log("Renderer bundle: not installed (headless mode)");
+  }
   console.log(`Workspace root: ${workspaceSessionManager.getCurrent().workspaceRoot}`);
   if (!config.apiToken) {
     console.log("Auth mode: optional (set MEMFORGE_API_TOKEN to enforce bearer auth)");

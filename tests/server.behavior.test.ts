@@ -6552,3 +6552,83 @@ describe("health auto recompute status", () => {
     }
   });
 });
+
+describe("renderer package serving", () => {
+  it("serves the renderer bundle from / when a renderer dist path is configured", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const rendererRoot = mkdtempSync(path.join(tmpdir(), "memforge-renderer-test-"));
+    tempRoots.push(root, rendererRoot);
+    mkdirSync(path.join(rendererRoot, "assets"), { recursive: true });
+    writeFileSync(path.join(rendererRoot, "index.html"), "<!doctype html><html><head><title>Memforge</title></head><body>Renderer bundle</body></html>");
+    writeFileSync(path.join(rendererRoot, "assets", "app.js"), "console.log('memforge renderer');");
+
+    const previousRendererDistPath = process.env.MEMFORGE_RENDERER_DIST_PATH;
+    process.env.MEMFORGE_RENDERER_DIST_PATH = rendererRoot;
+
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+
+      const rootResponse = await fetch(`http://127.0.0.1:${address.port}/`);
+      const assetResponse = await fetch(`http://127.0.0.1:${address.port}/assets/app.js`);
+
+      expect(rootResponse.status).toBe(200);
+      expect(await rootResponse.text()).toContain("<title>Memforge</title>");
+      expect(assetResponse.status).toBe(200);
+      expect(await assetResponse.text()).toContain("memforge renderer");
+    } finally {
+      if (previousRendererDistPath === undefined) {
+        delete process.env.MEMFORGE_RENDERER_DIST_PATH;
+      } else {
+        process.env.MEMFORGE_RENDERER_DIST_PATH = previousRendererDistPath;
+      }
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("returns a headless runtime notice at / when no renderer bundle is available", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    tempRoots.push(root);
+    const previousRendererDistPath = process.env.MEMFORGE_RENDERER_DIST_PATH;
+    process.env.MEMFORGE_RENDERER_DIST_PATH = path.join(root, "missing-renderer");
+
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null,
+    });
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+
+      const response = await fetch(`http://127.0.0.1:${address.port}/`);
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(body).toContain("headless runtime");
+      expect(body).toContain("/api/v1");
+    } finally {
+      if (previousRendererDistPath === undefined) {
+        delete process.env.MEMFORGE_RENDERER_DIST_PATH;
+      } else {
+        process.env.MEMFORGE_RENDERER_DIST_PATH = previousRendererDistPath;
+      }
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+});

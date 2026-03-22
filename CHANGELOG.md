@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- reworked distribution planning around three supported paths: Git source-run, npm full runtime `memforge`, and npm headless runtime `memforge-headless`
+- added package prep and verification flows for both the full and headless npm distributions
+- added `memforge serve` so installed packages can start the local API directly
+- added optional renderer serving from the packaged runtime and a root runtime notice for headless installs
+
 ## 1.0.0
 
 - published the first public Memforge release around two supported distribution paths: Git source-run and npm terminal-only

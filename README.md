@@ -29,10 +29,11 @@ The core idea is simple: one brain, many tools.
 
 ## Distribution Paths
 
-Memforge is documented around two public ways to use it:
+Memforge is documented around three public ways to use it:
 
 1. Git public repo for direct source execution
-2. npm package for the terminal-only product
+2. npm package `memforge` for the full local runtime
+3. npm package `memforge-headless` for the headless runtime
 
 ## 1. Git Public Repo
 
@@ -78,39 +79,88 @@ npm test
 npm run build
 ```
 
-If you want installed terminal commands like `memforge`, `pnw`, and `memforge-mcp`, use the npm distribution path below.
+If you want an installable runtime instead of source-run workflows, use one of the npm distribution paths below.
 
-## 2. npm Terminal-Only Product
+## 2. npm Full Runtime (`memforge`)
 
-Use the npm package when you want terminal-native commands only:
+Use the full npm package when you want a local install that includes the API, renderer, CLI, and MCP entrypoint:
 
 ```bash
 npm install -g memforge
-memforge --help
+memforge serve
+```
+
+In another shell:
+
+```bash
+pnw health
 pnw mcp install
 memforge-mcp --help
 ```
 
-The npm package includes:
+The full npm package includes:
 
+- local API under `/api/v1`
+- browser renderer served from `/`
 - `memforge`
 - `pnw`
 - `memforge-mcp`
 
-The npm package does not include:
+The full npm package does not include:
 
-- renderer pages
 - desktop release artifacts
 
 `pnw mcp install` writes a stable launcher to `~/.memforge/bin/memforge-mcp`, which is the recommended command path for editor MCP configs.
 
 If the API is running in bearer mode, set `MEMFORGE_API_TOKEN` in the MCP client environment. The launcher does not write tokens to disk.
 
-The terminal-only npm package expects a running local Memforge API. If you want the full source-run product surface, use the Git public repo path above.
+Start the packaged runtime with:
+
+```bash
+memforge serve
+```
+
+Optional runtime overrides:
+
+```bash
+memforge serve --port 8787 --bind 127.0.0.1
+memforge serve --workspace-root /Users/name/Documents/Memforge
+memforge serve --api-token secret-token
+```
+
+## 3. npm Headless Runtime (`memforge-headless`)
+
+Use the headless npm package when you want the local API, CLI, and MCP entrypoint without shipping the renderer bundle:
+
+```bash
+npm install -g memforge-headless
+memforge serve
+```
+
+In another shell:
+
+```bash
+pnw health
+memforge-mcp --help
+```
+
+The headless npm package includes:
+
+- local API under `/api/v1`
+- `memforge`
+- `pnw`
+- `memforge-mcp`
+
+The headless npm package does not include:
+
+- renderer pages
+- desktop release artifacts
+
+At `/`, the headless runtime returns a small runtime notice instead of the renderer.
 
 Node requirements:
 
-- npm CLI package: Node 20+
+- npm packages: Node 20+
 - local source development: Node 25+ is recommended because the backend uses `node:sqlite`
 
 ## Use From Other Coding Agents
@@ -147,7 +197,7 @@ For launcher paths, environment variables, and editor-specific setup, see `docs/
 ## Docs
 
 - `docs/README.md` for the full documentation map and reading order
-- `app/cli/README.md` for the npm terminal-only package
+- `app/cli/README.md` for the npm headless package
 - `docs/concept.md` for product positioning
 - `docs/api.md` for the local HTTP and CLI contract
 - `docs/mcp.md` for MCP bridge setup

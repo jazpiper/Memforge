@@ -1,27 +1,33 @@
-# Memforge CLI
+# Memforge Headless
 
 ## At A Glance
 
-- This package is the npm-distributed terminal-only product for Memforge.
+- This package is the npm-distributed headless runtime for Memforge.
 - It provides the `memforge`, `pnw`, and `memforge-mcp` commands.
-- The CLI stays intentionally thin and maps back to the local Memforge HTTP API.
+- It can start the local Memforge API directly through `memforge serve`.
 - It does not include the renderer or desktop release artifacts.
 
 It defers behavior to the local Memforge API contract in [`docs/api.md`](../../docs/api.md).
 
 ## What You Get
 
-- `memforge` as the main CLI entrypoint
+- `memforge` as the runtime and CLI entrypoint
 - `pnw` as the short command for day-to-day workspace and memory operations
 - `memforge-mcp` as the direct stdio MCP entrypoint for agent clients
 
-This distribution is for terminal workflows only. If you want the full source-run product surface, use the public Git repo path from the root [`README.md`](../../README.md).
+This distribution is for headless workflows. If you want the packaged renderer too, use the `memforge` npm package described in the root [`README.md`](../../README.md).
 
 ## Install
 
 ```bash
-npm install -g memforge
-memforge --help
+npm install -g memforge-headless
+memforge serve
+```
+
+In another shell:
+
+```bash
+pnw health
 memforge-mcp --help
 pnw mcp install
 ```
@@ -34,7 +40,22 @@ pnw mcp install
 
 If the API is running in bearer mode, set `MEMFORGE_API_TOKEN` in the MCP client environment. The launcher intentionally does not persist tokens to disk.
 
-The npm package expects a running local Memforge API and does not ship renderer pages or desktop release artifacts.
+Start the local headless runtime with:
+
+```bash
+memforge serve
+```
+
+Useful runtime overrides:
+
+```bash
+memforge serve --port 8787 --bind 127.0.0.1
+memforge serve --workspace-root /Users/name/Documents/Memforge
+memforge serve --workspace-name "Personal Workspace"
+memforge serve --api-token secret-token
+```
+
+The headless package does not ship renderer pages or desktop release artifacts. At `/`, it returns a runtime notice instead of the renderer app.
 
 You can also print the direct MCP command or a config snippet:
 
@@ -112,12 +133,14 @@ pnw workspace open --root /Users/name/Documents/Memforge-Test
 
 - `MEMFORGE_API_URL` or `PNW_API_URL` to override the local API base URL
 - `MEMFORGE_TOKEN` or `PNW_TOKEN` to pass a bearer token
-- Node 20+ is recommended for the CLI package
+- `MEMFORGE_PORT`, `MEMFORGE_BIND`, `MEMFORGE_WORKSPACE_ROOT`, `MEMFORGE_WORKSPACE_NAME`, and `MEMFORGE_API_TOKEN` are respected by `memforge serve`
+- Node 20+ is recommended for the headless package
 
 ## Notes
 
 - Default API base: `http://127.0.0.1:8787/api/v1`
-- The CLI is intentionally thin and defers behavior to the HTTP API contract
+- `memforge serve` starts the local Memforge API in-process from the installed package
+- The CLI stays thin for day-to-day API operations and defers behavior to the HTTP API contract
 - `--format json` is useful when scripting, while `--format markdown` is best for `context`
 - `workspace open` switches the active workspace in the running local Memforge service without restarting the server
 - `memforge-mcp` is the direct stdio MCP entrypoint from the npm package

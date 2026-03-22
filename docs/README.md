@@ -8,8 +8,8 @@ If you are reading Memforge for the first time, start here.
 
 These documents best match the shipped product surface.
 
-- `../README.md` for the two public distribution paths: source-run from Git and the npm terminal-only product
-- `../app/cli/README.md` for the npm terminal-only package
+- `../README.md` for the three public distribution paths: source-run from Git, the full npm runtime, and the headless npm runtime
+- `../app/cli/README.md` for the npm headless package
 - `concept.md` for product positioning and rationale
 - `api.md` for the current local HTTP contract
 - `mcp.md` for the current MCP bridge contract and setup
@@ -25,6 +25,7 @@ These are useful for maintainers and contributors working on the product.
 
 - `guardrails.md` for product and architecture decision constraints
 - `release-checklist.md` for release verification and packaging checks
+- `release-workflow.md` for the Changesets and npm publish flow
 - `semantic-sidecar.md` for semantic sidecar design and local development notes
 - `sync-backup.md` for backup and sync strategy
 

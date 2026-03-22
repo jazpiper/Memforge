@@ -15,6 +15,8 @@
   },
   "description": "Local-first memory workspace with source-run UI, local API, CLI, and MCP tools.",
   "scripts": {
+    "changeset": "changeset",
+    "changeset:status": "changeset status --verbose",
     "dev": "concurrently -n server,renderer -c blue,green \"npm:dev:server\" \"npm:dev:renderer\"",
     "dev:server": "tsx watch app/server/index.ts",
     "dev:mcp": "tsx app/mcp/index.ts",
@@ -30,10 +32,17 @@
     "start:run": "MEMFORGE_PORT=8787 node dist/server/app/server/index.js",
     "start:desktop": "npm run build && concurrently -n server,desktop -c blue,magenta \"npm:start:run\" \"npm:desktop:run\"",
     "mcp": "node dist/server/app/mcp/index.js",
-    "prepare:cli-package": "node scripts/prepare-cli-package.mjs",
-    "verify:cli-package": "node scripts/verify-cli-package.mjs",
-    "pack:cli": "npm run build && npm run prepare:cli-package && npm pack ./release/npm-cli",
-    "publish:cli": "npm run build && npm run prepare:cli-package && npm publish ./release/npm-cli --provenance",
+    "prepare:full-package": "node scripts/prepare-package.mjs full",
+    "prepare:headless-package": "node scripts/prepare-package.mjs headless",
+    "release:verify": "npm run check && npm test && npm run build && npm run prepare:full-package && npm run prepare:headless-package && npm run verify:full-package && npm run verify:headless-package",
+    "release:publish": "node scripts/publish-release-packages.mjs",
+    "verify:full-package": "node scripts/verify-package.mjs full",
+    "verify:headless-package": "node scripts/verify-package.mjs headless",
+    "version:release": "changeset version && node scripts/sync-package-versions.mjs",
+    "pack:full": "npm run build && npm run prepare:full-package && npm pack ./release/npm-memforge",
+    "pack:headless": "npm run build && npm run prepare:headless-package && npm pack ./release/npm-headless",
+    "publish:full": "npm run build && npm run prepare:full-package && npm publish ./release/npm-memforge --provenance",
+    "publish:headless": "npm run build && npm run prepare:headless-package && npm publish ./release/npm-headless --provenance",
     "start": "node dist/server/app/server/index.js",
     "test": "vitest run",
     "check": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
@@ -53,6 +62,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.30.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/mime-types": "^2.1.4",

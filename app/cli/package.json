@@ -1,9 +1,9 @@
 {
-  "name": "memforge-cli-source",
+  "name": "memforge-headless-source",
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "Thin local CLI wrapper for the Memforge API.",
+  "description": "Source package for the Memforge headless CLI and runtime wrapper.",
   "bin": {
     "memforge": "./bin/pnw.js",
     "pnw": "./bin/pnw.js",
