@@ -94,7 +94,7 @@ There are two realistic paths.
 - fastest path if UI is web-tech heavy
 - rich ecosystem
 - easy local HTTP/service integration
-- straightforward packaging for macOS/Windows/Linux
+- straightforward desktop distribution path
 
 **Cons**
 - heavier runtime footprint

@@ -91,7 +91,7 @@ Install dependencies normally:
 npm install
 ```
 
-`sqlite-vec` ships platform-specific optional packages for supported environments. On macOS and Linux, Memforge attempts to load the extension automatically at startup.
+`sqlite-vec` ships platform-specific optional packages for supported environments. When an optional package is available, Memforge attempts to load the extension automatically at startup.
 
 No separate database process is required.
 

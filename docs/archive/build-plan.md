@@ -90,14 +90,14 @@ This is a practical recommendation, not a rigid requirement.
 
 ### Why
 - fast iteration
-- easy local desktop packaging
+- easy local desktop development
 - simple local service integration
 - low friction if the UI is built with familiar web tooling
 
 ### Alternative
 Tauri is still a strong option later if footprint becomes a strategic concern.
 
-For now, speed of execution matters more than elegance of packaging.
+For now, speed of execution matters more than polish around desktop distribution.
 
 ---
 
