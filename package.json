@@ -32,7 +32,6 @@
     "mcp": "node dist/server/app/mcp/index.js",
     "package:desktop": "npm run build && electron-builder --publish never",
     "package:desktop:mac": "npm run build && electron-builder --publish never --mac zip dmg --arm64 && node scripts/repair-macos-artifacts.mjs",
-    "package:desktop:linux": "npm run build && electron-builder --publish never --linux AppImage deb",
     "verify:desktop:mac-release": "node scripts/verify-macos-artifacts.mjs",
     "prepare:cli-package": "node scripts/prepare-cli-package.mjs",
     "verify:cli-package": "node scripts/verify-cli-package.mjs",
@@ -60,10 +59,6 @@
       "icon": "app/desktop/assets/memforge.icns",
       "category": "public.app-category.productivity",
       "target": ["zip", "dmg"]
-    },
-    "linux": {
-      "category": "Office",
-      "target": ["AppImage", "deb"]
     }
   },
   "dependencies": {

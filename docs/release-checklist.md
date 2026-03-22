@@ -13,7 +13,7 @@
 - confirm `npm pack ./release/npm-cli` succeeds
 - confirm `npm run verify:cli-package` succeeds after packing the tarball
 - confirm `npm run verify:desktop:mac-release` succeeds on macOS
-- confirm desktop packaging smoke tests on macOS and Linux
+- confirm desktop packaging smoke tests on macOS
 
 ## Desktop release
 
@@ -21,7 +21,6 @@
 - macOS codesign verification passes
 - macOS notarization succeeds
 - macOS artifact verification checks the rebuilt `.zip`, `.dmg`, and `latest-mac.yml`
-- Linux x64 artifacts generated: `AppImage`, `.deb`
 - tray actions work in packaged mode:
   - `Open Settings`
   - `Server Status...`
