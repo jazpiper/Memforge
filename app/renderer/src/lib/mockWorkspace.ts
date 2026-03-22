@@ -131,7 +131,7 @@ const nodes: Node[] = [
     createdAt: now,
     updatedAt: now,
     metadata: {
-      importSource: 'docs/integrations.md',
+      importSource: 'docs/archive/integrations.md',
     },
   },
 ];
@@ -276,7 +276,7 @@ const integrations: Integration[] = [
 export const mockWorkspace: WorkspaceSeed = {
   workspace: {
     name: 'Memforge',
-    rootPath: '/Users/kojuhwan/Documents/ideabank/Memforge',
+    rootPath: '/Users/name/Documents/Memforge',
     schemaVersion: 1,
     apiBind: '127.0.0.1:8787',
     integrationModes: ['read-only', 'append-only'],

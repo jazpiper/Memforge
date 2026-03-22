@@ -1,5 +1,12 @@
 # Memforge — Retrieval & Context Assembly
 
+## At A Glance
+
+- Memforge retrieval is designed to return a compact working set, not dump the whole workspace.
+- The shipped runtime already uses node/activity search, neighborhood lookup, context bundles, inferred-relation boosts, and bounded optional semantic augmentation.
+- Deterministic retrieval stays first; semantic retrieval is optional and bounded.
+- The retrieval layer exists to help scout-stage tools stay cheap and fast so main agents can spend their time reasoning instead of browsing.
+
 ## 1. Document purpose
 
 This document defines how Memforge should retrieve, rank, compress, and hand off knowledge to external tools and agents.
@@ -21,8 +28,6 @@ The core goal is simple:
 > **Main agents should think and act, not waste time browsing a large workspace.**
 
 The retrieval layer exists to make the workspace feel fast, compact, and useful even as it grows.
-
-For the broader long-term scaling design, including DB shape and relation-layer evolution, see `docs/scalable-retrieval-architecture.md`.
 
 ---
 

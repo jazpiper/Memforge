@@ -1,4 +1,3 @@
-import path from "node:path";
 import { contextBridge, ipcRenderer } from "electron";
 
 function readArgument(prefix: string): string | null {
@@ -17,6 +16,14 @@ const executablePath = readArgument("--memforge-app-executable=") ?? process.exe
 const isPackaged = readArgument("--memforge-is-packaged=") === "1";
 const appVersion = readArgument("--memforge-app-version=") ?? "1.0.0";
 
+function joinWorkspacePath(root: string | null, child: string): string | null {
+  if (!root) {
+    return null;
+  }
+
+  return `${root.replace(/[\\/]+$/, "")}/${child}`;
+}
+
 const desktopInfo = {
   apiBase,
   healthUrl,
@@ -27,8 +34,8 @@ const desktopInfo = {
   mcpLauncherPath,
   mcpCommand,
   workspaceRoot,
-  workspaceDbPath: workspaceRoot ? path.join(workspaceRoot, "workspace.db") : null,
-  artifactsPath: workspaceRoot ? path.join(workspaceRoot, "artifacts") : null,
+  workspaceDbPath: joinWorkspacePath(workspaceRoot, "workspace.db"),
+  artifactsPath: joinWorkspacePath(workspaceRoot, "artifacts"),
   isPackaged,
   appVersion
 };

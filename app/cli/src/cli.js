@@ -82,6 +82,7 @@ async function runMcp(apiBase, token, format, args, positionals) {
   const action = positionals[0] || args.action || "config";
   const launcherPath = args.path || args.launcher || DEFAULT_MCP_LAUNCHER_PATH;
   const commandParts = buildMcpCommandParts(apiBase, token);
+  const launcherCommandParts = buildMcpCommandParts(apiBase, null);
 
   switch (action) {
     case "path": {
@@ -97,12 +98,15 @@ async function runMcp(apiBase, token, format, args, positionals) {
       return;
     }
     case "install": {
-      await installMcpLauncher(launcherPath, commandParts);
+      await installMcpLauncher(launcherPath, launcherCommandParts);
       outputData(
         {
           path: launcherPath,
-          command: commandParts.map(quoteShellArg).join(" "),
+          command: launcherCommandParts.map(quoteShellArg).join(" "),
           config: buildMcpConfigPayload(launcherPath),
+          notes: token
+            ? ["Set MEMFORGE_API_TOKEN in the MCP client environment. The launcher intentionally does not persist bearer tokens."]
+            : ["If the target API uses bearer auth, set MEMFORGE_API_TOKEN in the MCP client environment before launching MCP."],
         },
         format,
         "mcp-install",
@@ -620,6 +624,7 @@ function outputData(data, format, command) {
         [
           `Installed launcher: ${payload.path}`,
           `Direct command: ${payload.command}`,
+          ...(Array.isArray(payload.notes) ? payload.notes : []),
           "",
           JSON.stringify(payload.config, null, 2),
           "",
@@ -764,6 +769,9 @@ function buildMcpConfigPayload(launcherPath) {
       memforge: {
         command: launcherPath,
         args: [],
+        env: {
+          MEMFORGE_API_TOKEN: "<set at runtime for bearer-mode services>",
+        },
       },
     },
   };

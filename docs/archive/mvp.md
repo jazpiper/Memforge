@@ -380,7 +380,7 @@ The MVP is successful if a user can:
 
 ## 14. Suggested next build docs
 
-1. `docs/architecture.md` — storage model, local API, and provenance design
-2. `docs/integrations.md` — concrete patterns for Claude Code, Codex, Gemini CLI, OpenClaw
+1. `docs/archive/architecture.md` — storage model, local API, and provenance design
+2. `docs/archive/integrations.md` — concrete patterns for Claude Code, Codex, Gemini CLI, OpenClaw
 3. `docs/ux.md` — screen-by-screen flow for the human UI
 4. `docs/schema.md` — node, relation, activity, provenance schemas

@@ -1,4 +1,8 @@
-# Relation Layer V2
+# Memforge — Relation Evolution
+
+> Design-note reference for relation evolution.
+> This document mixes shipped pieces with future-facing relation work and should not be treated as the current contract by itself.
+> For shipped behavior, prefer `README.md`, `docs/api.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
 
 ## 1. Goal
 
@@ -10,7 +14,6 @@ The core idea:
 - let retrieval and agent usage continuously adjust the usefulness of those derived links
 
 This document is intentionally a v2 design note. It does not replace the current shipped relation and governance rules.
-For current behavior, prefer `README.md`, `docs/api.md`, `docs/schema.md`, and `docs/promotion-rules.md`.
 
 ## 1.1 Status snapshot (2026-03-18)
 

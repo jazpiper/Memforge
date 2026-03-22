@@ -1,5 +1,16 @@
 # Memforge — Backup & Sync Strategy
 
+> Strategy reference for backup, restore, and future sync posture.
+> This document describes the intended operating stance, not a claim that full sync is already shipped.
+> For current product behavior, prefer `README.md` and the current app/runtime documentation.
+
+## At A Glance
+
+- Memforge should be easy to back up, restore, and move between machines.
+- The recommended near-term model is backup-friendly local storage plus single-writer multi-device use.
+- Cloud folders may be used as transport or backup locations, but they should not be described as real-time multi-writer sync.
+- Safety, rebuildability, and local ownership matter more than early sync complexity.
+
 ## 1. Purpose
 
 This document defines how Memforge should think about:

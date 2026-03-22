@@ -576,7 +576,7 @@ Use append-first writes, provenance, and review queue early.
 
 ## Appendix A — Inferred relation implementation track
 
-This appendix defines a concrete implementation track for the v2 inferred relation direction described in `docs/relation-layer-v2.md`.
+This appendix defines a concrete implementation track for the v2 inferred relation direction described in `docs/archive/relation-evolution.md`.
 
 ### Goal
 Increase graph density and retrieval usefulness without requiring humans to review large volumes of relation suggestions.

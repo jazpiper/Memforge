@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync, type Stats } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type {
@@ -3907,14 +3907,52 @@ export class MemforgeRepository {
     const id = createId("art");
     const now = nowIso();
     const absolutePath = path.isAbsolute(input.path) ? input.path : path.resolve(this.workspaceRoot, input.path);
+    const realWorkspaceRoot = realpathSync(this.workspaceRoot);
     if (!isPathWithinRoot(this.workspaceRoot, absolutePath)) {
       throw new AppError(403, "FORBIDDEN", "Artifact path escapes workspace root.");
     }
     const artifactRoot = path.join(this.workspaceRoot, "artifacts");
+    const realArtifactRoot = realpathSync(artifactRoot);
     if (!isPathWithinRoot(artifactRoot, absolutePath)) {
       throw new AppError(403, "FORBIDDEN", "Artifact path must stay inside the workspace artifacts directory.");
     }
-    const stats = statSync(absolutePath);
+    let resolvedPath = "";
+    let stats: Stats | null = null;
+    try {
+      const entryStats = lstatSync(absolutePath);
+      if (entryStats.isSymbolicLink()) {
+        throw new AppError(403, "FORBIDDEN", "Artifact path must not be a symbolic link.");
+      }
+
+      resolvedPath = realpathSync(absolutePath);
+      if (!isPathWithinRoot(realWorkspaceRoot, resolvedPath)) {
+        throw new AppError(403, "FORBIDDEN", "Artifact path escapes workspace root.");
+      }
+      if (!isPathWithinRoot(realArtifactRoot, resolvedPath)) {
+        throw new AppError(403, "FORBIDDEN", "Artifact path must stay inside the workspace artifacts directory.");
+      }
+
+      stats = statSync(resolvedPath);
+      if (!stats.isFile()) {
+        throw new AppError(400, "INVALID_INPUT", "Artifact path must reference a regular file.");
+      }
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ELOOP")
+      ) {
+        throw new AppError(404, "NOT_FOUND", "Artifact path does not exist.");
+      }
+      throw error;
+    }
+    if (!stats) {
+      throw new AppError(500, "INTERNAL_ERROR", "Artifact metadata could not be read.");
+    }
+
     this.db
       .prepare(
         `INSERT INTO artifacts (
@@ -3927,7 +3965,7 @@ export class MemforgeRepository {
         normalizeArtifactPath(path.relative(this.workspaceRoot, absolutePath)),
         input.mimeType ?? null,
         stats.size,
-        checksumText(`${absolutePath}:${stats.size}:${stats.mtimeMs}`),
+        checksumText(`${resolvedPath}:${stats.size}:${stats.mtimeMs}`),
         input.source.actorLabel,
         input.source.actorLabel,
         now,
@@ -3950,6 +3988,10 @@ export class MemforgeRepository {
   getArtifact(id: string): ArtifactRecord {
     const row = this.db.prepare(`SELECT * FROM artifacts WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     return mapArtifact(assertPresent(row, `Artifact ${id} not found`));
+  }
+
+  getWorkspaceKey(): string {
+    return this.workspaceKey;
   }
 
   hasArtifactAtPath(relativePath: string): boolean {

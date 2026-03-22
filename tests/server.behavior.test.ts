@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -5513,6 +5513,7 @@ describe("bootstrap auth metadata", () => {
 
       const bootstrapResponse = await fetch(`http://127.0.0.1:${address.port}/api/v1/bootstrap`);
       const bootstrapBody = await bootstrapResponse.json();
+      const workspaceResponse = await fetch(`http://127.0.0.1:${address.port}/api/v1/workspace`);
       const searchResponse = await fetch(`http://127.0.0.1:${address.port}/api/v1/nodes/search`, {
         method: "POST",
         headers: {
@@ -5530,8 +5531,14 @@ describe("bootstrap auth metadata", () => {
       expect(bootstrapResponse.status).toBe(200);
       expect(bootstrapBody.data.authMode).toBe("bearer");
       expect(bootstrapBody.data.apiToken).toBeUndefined();
-      expect(bootstrapBody.data.autoRecompute.enabled).toBe(true);
-      expect(typeof bootstrapBody.data.autoRecompute.pendingEventCount).toBe("number");
+      expect(bootstrapBody.data.workspace.authMode).toBe("bearer");
+      expect(bootstrapBody.data.workspace.workspaceName).toBe("Memforge Test");
+      expect(bootstrapBody.data.workspace.bindAddress).toBe("127.0.0.1:8787");
+      expect(bootstrapBody.data.workspace.enabledIntegrationModes).toEqual(["read-only", "append-only"]);
+      expect(typeof bootstrapBody.data.workspace.workspaceKey).toBe("string");
+      expect(bootstrapBody.data.workspace.rootPath).toBeUndefined();
+      expect(bootstrapBody.data.workspace.autoRecompute).toBeUndefined();
+      expect(workspaceResponse.status).toBe(401);
       expect(searchResponse.status).toBe(401);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -5578,7 +5585,7 @@ describe("browser origin hardening", () => {
     }
   });
 
-  it("allows loopback event streams without query tokens in bearer mode", async () => {
+  it("requires bearer auth for event streams in bearer mode", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
     tempRoots.push(root);
     const workspaceSessionManager = createWorkspaceSessionManager(root, "bearer");
@@ -5602,9 +5609,7 @@ describe("browser origin hardening", () => {
         }
       });
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toContain("text/event-stream");
-      await response.body?.cancel();
+      expect(response.status).toBe(401);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
@@ -5750,6 +5755,67 @@ describe("artifact path hardening", () => {
         body: JSON.stringify({
           nodeId: node.id,
           path: workspaceLocalPath,
+          source: {
+            actorType: "human",
+            actorLabel: "juhwan",
+            toolName: "memforge-test"
+          },
+          metadata: {}
+        })
+      });
+
+      expect(response.status).toBe(403);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("rejects artifact registration when the artifact path is a symlink", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "memforge-test-"));
+    const siblingRoot = `${root}-secret`;
+    tempRoots.push(root, siblingRoot);
+    mkdirSync(siblingRoot, { recursive: true });
+    const outsidePath = path.join(siblingRoot, "leak.txt");
+    writeFileSync(outsidePath, "secret");
+
+    const workspaceSessionManager = createWorkspaceSessionManager(root);
+    const repository = workspaceSessionManager.getCurrent().repository;
+    const node = repository.createNode({
+      type: "note",
+      title: "Artifact target",
+      body: "Testing symlink boundaries",
+      tags: [],
+      source: {
+        actorType: "human",
+        actorLabel: "juhwan",
+        toolName: "memforge-test"
+      },
+      metadata: {},
+      resolvedCanonicality: "canonical",
+      resolvedStatus: "active"
+    });
+    const symlinkPath = path.join(root, "artifacts", "linked-secret.txt");
+    symlinkSync(outsidePath, symlinkPath);
+    const app = createMemforgeApp({
+      workspaceSessionManager,
+      apiToken: null
+    });
+
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/artifacts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          nodeId: node.id,
+          path: symlinkPath,
           source: {
             actorType: "human",
             actorLabel: "juhwan",

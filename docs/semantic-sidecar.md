@@ -1,4 +1,4 @@
-# SQLite-Vec Semantic Sidecar v1
+# Memforge — Semantic Sidecar
 
 This document defines the current local-first semantic retrieval design for Memforge.
 

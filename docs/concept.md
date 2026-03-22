@@ -2,10 +2,10 @@
 
 ## 1. One-line definition
 
-**Memforge** is a local-first personal knowledge layer where humans and multiple AI agents can read, write, search, and connect ideas through a shared neural workspace.
+**Memforge** is a local-first personal knowledge layer where humans and multiple AI agents can read, write, search, and connect ideas through one shared workspace.
 
 It is not primarily an AI note-taking app.
-It is a **durable personal knowledge substrate** for notes, projects, questions, decisions, references, and relationships — designed to be usable by both people and tools such as Claude Code, Codex, Gemini CLI, OpenClaw, and other local or remote agents.
+It is a **durable knowledge layer** for notes, projects, questions, decisions, references, and relationships, designed to be usable by both people and tools such as Claude Code, Codex, Gemini CLI, OpenClaw, and other local or remote agents.
 
 ---
 
@@ -50,13 +50,13 @@ The opportunity is a **shared knowledge layer for people and agents**.
 - ideas, projects, questions, and decisions persist across tools
 - any single model can be replaced without losing the knowledge base
 
-This makes the product closer to a **personal context OS** than a simple note app.
+This makes the product closer to a shared personal context layer than a simple note app.
 
 ---
 
 ## 4. Product vision
 
-Build a workspace that acts like a personal neural layer:
+Build a workspace that acts like a durable personal context layer:
 
 - knowledge stays local and portable
 - thoughts are stored as nodes, not just flat files
@@ -76,7 +76,7 @@ The system should feel like:
 
 ### It is
 - a local-first knowledge repository
-- a neural-style graph of personal context
+- a graph-backed personal context layer
 - a human UI for browsing and maintaining knowledge
 - an agent-readable and agent-writable memory layer
 - a portable context system for multiple tools
@@ -189,7 +189,7 @@ Examples:
 - Codex result
 - Gemini CLI run output
 
-This allows the system to behave like a personal neural history, not just a static notebook.
+This allows the system to behave like a durable history of context and decisions, not just a static notebook.
 
 ---
 
@@ -306,7 +306,7 @@ The first version should be intentionally narrow.
 - **One brain, many tools.**
 - **A personal knowledge layer for humans and agents.**
 - **Keep your knowledge local. Let every agent think with it.**
-- **Your local neural workspace for Claude Code, Codex, Gemini CLI, OpenClaw, and beyond.**
+- **Your local shared workspace for Claude Code, Codex, Gemini CLI, OpenClaw, and beyond.**
 - **Bring your own model. Keep your own mind.**
 
 ---
@@ -349,7 +349,7 @@ If executed well, it becomes the user’s canonical knowledge layer across model
 
 After this concept doc, the next useful artifacts are:
 
-1. `docs/mvp.md` — scope, features, boundaries, and phased rollout
-2. `docs/architecture.md` — local storage, node schema, API, provenance, and integration plan
-3. `docs/integrations.md` — Claude Code / Codex / Gemini CLI / OpenClaw integration patterns
-4. `docs/ux.md` — human UI flows for search, browse, review, and graph inspection
+1. `docs/api.md` — current local HTTP contract
+2. `docs/schema.md` — current durable data model
+3. `docs/mcp.md` — coding-agent MCP setup and tool surface
+4. `docs/ux.md` — current human UI model

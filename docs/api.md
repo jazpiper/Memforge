@@ -1,5 +1,13 @@
 # Memforge — API Contract
 
+## At A Glance
+
+- Memforge exposes one local HTTP API for the desktop app, CLI, and external agent tools.
+- The current base path is `/api/v1`.
+- The most important bootstrap endpoints are `GET /api/v1`, `GET /api/v1/health`, `GET /api/v1/workspace`, and `GET /api/v1/bootstrap`.
+- Durable writes are append-first and provenance-aware.
+- MCP and CLI behavior should map back to this API instead of introducing a second contract.
+
 ## 1. Purpose
 
 This document defines the first concrete API contract for Memforge.
@@ -94,11 +102,10 @@ Authorization: Bearer <local-token>
 ### Public endpoints in bearer mode
 The current implementation keeps these endpoints public even when bearer auth is enabled:
 - `GET /api/v1/health`
-- `GET /api/v1/workspace`
 - `GET /api/v1/bootstrap`
-- `GET /api/v1/events` for browser clients on loopback origins only
 
 The machine-readable service index at `GET /api/v1` is still protected in bearer mode.
+`GET /api/v1/workspace` and `GET /api/v1/events` require a bearer token in bearer mode.
 
 ### Browser origin policy
 The local API only accepts browser requests from loopback HTTP origins such as `http://127.0.0.1:*` and `http://localhost:*`.
@@ -1059,6 +1066,7 @@ May be separate actions or integrated into PATCH depending on implementation.
 
 ### Behavior
 Provides a Server-Sent Events stream for lightweight workspace update notifications.
+In bearer mode, clients must authenticate the request. Browser `EventSource` cannot attach the `Authorization` header, so browser clients should use an authenticated fetch-based stream or polling fallback instead.
 
 - Event name: `workspace.updated`
 - Payload fields:

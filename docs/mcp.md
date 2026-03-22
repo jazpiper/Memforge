@@ -1,5 +1,12 @@
 # Memforge — MCP Bridge
 
+## At A Glance
+
+- Memforge ships a stdio MCP bridge for coding agents that want tool discovery instead of raw HTTP prompts.
+- The MCP bridge is an adapter over the existing local HTTP API, not a second storage or runtime layer.
+- The current recommended transport is stdio only.
+- MCP writes remain provenance-aware because all durable operations still flow through the local Memforge API.
+
 ## 1. Goal
 
 Memforge's durable product surface remains:

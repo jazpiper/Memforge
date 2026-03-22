@@ -46,6 +46,7 @@ type DetailPanel = {
 };
 
 type GraphMode = 'neighborhood' | 'project-map';
+const BEARER_RECENT_POLL_INTERVAL_MS = 15000;
 
 const navigation: { id: NavView; label: string; hint: string }[] = [
   { id: 'home', label: 'Home', hint: 'landing' },
@@ -62,6 +63,24 @@ const utilityNavigation: Array<
   { id: 'project-map', label: 'Project map', graphMode: 'project-map' },
   { id: 'governance', label: 'Governance' },
 ];
+
+function formatApiBase(apiBind: string): string {
+  if (apiBind.startsWith('[')) {
+    return `http://${apiBind}/api/v1`;
+  }
+
+  const colonCount = (apiBind.match(/:/g) ?? []).length;
+  if (colonCount > 1) {
+    const lastColonIndex = apiBind.lastIndexOf(':');
+    const host = apiBind.slice(0, lastColonIndex);
+    const port = apiBind.slice(lastColonIndex + 1);
+    if (host && /^\d+$/.test(port)) {
+      return `http://[${host}]:${port}/api/v1`;
+    }
+  }
+
+  return `http://${apiBind}/api/v1`;
+}
 
 const ProjectGraphCanvas = lazy(async () => {
   const module = await import('./components/ProjectGraphCanvas');
@@ -505,7 +524,20 @@ export default function App() {
       onWorkspaceUpdate: () => {
         void refreshRecentView();
       },
+      onError: () => {
+        if (!document.hidden) {
+          void refreshRecentView();
+        }
+      },
     });
+    const pollTimer =
+      workspace?.authMode === 'bearer'
+        ? window.setInterval(() => {
+            if (!document.hidden) {
+              void refreshRecentView();
+            }
+          }, BEARER_RECENT_POLL_INTERVAL_MS)
+        : null;
 
     void refreshRecentView();
     window.addEventListener('focus', handleVisibilityChange);
@@ -514,10 +546,13 @@ export default function App() {
     return () => {
       cancelled = true;
       unsubscribe();
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+      }
       window.removeEventListener('focus', handleVisibilityChange);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [authRequired, isLoading, view]);
+  }, [authRequired, isLoading, view, workspace?.authMode]);
 
   const nodeMap = useMemo(() => {
     const map = new Map<string, Node>();
@@ -779,7 +814,7 @@ export default function App() {
     governanceIssues.find((item) => item.entityId === selectedGovernanceId) ?? governanceIssues[0];
 
   const workspaceName = workspace?.name ?? 'Memforge';
-  const apiBase = desktopInfo?.apiBase ?? `http://${workspace?.apiBind ?? '127.0.0.1:8787'}/api/v1`;
+  const apiBase = desktopInfo?.apiBase ?? formatApiBase(workspace?.apiBind ?? '127.0.0.1:8787');
   const workspaceRoot = workspace?.rootPath ?? desktopInfo?.workspaceRoot ?? '';
   const workspaceDbPath = desktopInfo?.workspaceDbPath ?? (workspaceRoot ? `${workspaceRoot}/workspace.db` : '');
   const artifactsPath = desktopInfo?.artifactsPath ?? (workspaceRoot ? `${workspaceRoot}/artifacts` : '');
@@ -1256,10 +1291,16 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
   }
 
   async function handleOpenWorkspace(rootPath: string) {
+    const trimmedRootPath = rootPath.trim();
+    if (!trimmedRootPath) {
+      setWorkspaceActionError('Workspace root is required.');
+      return;
+    }
+
     setWorkspaceActionError(null);
     setIsSwitchingWorkspace(true);
     try {
-      const catalog = await openWorkspaceSession(rootPath);
+      const catalog = await openWorkspaceSession(trimmedRootPath);
       const nextSnapshot = await refreshWorkspaceState({
         workspaceOverride: catalog.current,
         catalogOverride: catalog,
@@ -1305,7 +1346,7 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
       );
     }
 
-    if (authRequired && !snapshot) {
+    if (authRequired) {
       return (
         <section className="page-section page-section--centered">
           <div className="card auth-card">

@@ -7,6 +7,9 @@ module.exports = async function notarizeApp(context) {
 
   const { APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env;
   if (!APPLE_ID || !APPLE_APP_SPECIFIC_PASSWORD || !APPLE_TEAM_ID) {
+    if (process.env.CI === "true" || process.env.MEMFORGE_REQUIRE_NOTARIZATION === "1") {
+      throw new Error("Missing Apple notarization credentials for macOS release packaging.");
+    }
     return;
   }
 

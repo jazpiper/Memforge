@@ -77,6 +77,28 @@ describe("runCli mcp", () => {
       expect(contents).toContain("--api");
       expect(output).toContain(`Installed launcher: ${launcherPath}`);
       expect(output).toContain("\"mcpServers\"");
+      expect(output).toContain("MEMFORGE_API_TOKEN");
+      expect(output).toContain("bearer auth");
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not persist bearer tokens into the installed launcher script", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "memforge-cli-test-"));
+    const launcherPath = path.join(tempDir, "memforge-mcp");
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    try {
+      await runCli(["node", "memforge", "mcp", "install", "--path", launcherPath, "--token", "secret-token"]);
+      const contents = readFileSync(launcherPath, "utf8");
+      const output = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+
+      expect(contents).not.toContain("secret-token");
+      expect(contents).not.toContain("--token");
+      expect(output).toContain("MEMFORGE_API_TOKEN");
+      expect(output).toContain("does not persist bearer tokens");
+      expect(output).toContain("bearer-mode services");
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }

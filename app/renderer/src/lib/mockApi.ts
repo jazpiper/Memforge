@@ -865,28 +865,108 @@ export function subscribeWorkspaceEvents(handlers: {
   onWorkspaceUpdate?: (event: WorkspaceEvent) => void;
   onError?: () => void;
 }): () => void {
-  if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+  if (typeof window === 'undefined' || typeof window.fetch === 'undefined') {
     return () => {};
   }
 
-  const stream = new window.EventSource(buildEventStreamUrl());
-  const handleWorkspaceUpdate = (event: MessageEvent<string>) => {
-    try {
-      handlers.onWorkspaceUpdate?.(JSON.parse(event.data) as WorkspaceEvent);
-    } catch {
-      // Ignore malformed events and keep the stream open.
-    }
-  };
+  const controller = new AbortController();
+  let reconnectTimer: number | null = null;
 
-  stream.addEventListener('workspace.updated', handleWorkspaceUpdate as EventListener);
-  stream.onerror = () => {
-    handlers.onError?.();
-  };
+  async function connect() {
+    try {
+      const token = getRendererToken();
+      const response = await fetch(buildEventStreamUrl(), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Workspace event stream failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        let boundaryIndex = findEventBoundary(buffer);
+        while (boundaryIndex >= 0) {
+          const chunk = buffer.slice(0, boundaryIndex);
+          buffer = buffer.slice(skipEventBoundary(buffer, boundaryIndex));
+          emitWorkspaceEventChunk(chunk, handlers.onWorkspaceUpdate);
+          boundaryIndex = findEventBoundary(buffer);
+        }
+      }
+    } catch {
+      if (controller.signal.aborted) {
+        return;
+      }
+      handlers.onError?.();
+    }
+
+    if (!controller.signal.aborted) {
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, 1000);
+    }
+  }
+
+  void connect();
 
   return () => {
-    stream.removeEventListener('workspace.updated', handleWorkspaceUpdate as EventListener);
-    stream.close();
+    controller.abort();
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer);
+    }
   };
+}
+
+function findEventBoundary(buffer: string): number {
+  const lfBoundary = buffer.indexOf('\n\n');
+  const crlfBoundary = buffer.indexOf('\r\n\r\n');
+  if (lfBoundary < 0) {
+    return crlfBoundary;
+  }
+  if (crlfBoundary < 0) {
+    return lfBoundary;
+  }
+  return Math.min(lfBoundary, crlfBoundary);
+}
+
+function skipEventBoundary(buffer: string, boundaryIndex: number): number {
+  return buffer.startsWith('\r\n\r\n', boundaryIndex) ? boundaryIndex + 4 : boundaryIndex + 2;
+}
+
+function emitWorkspaceEventChunk(chunk: string, onWorkspaceUpdate?: (event: WorkspaceEvent) => void) {
+  const lines = chunk.split(/\r?\n/);
+  let eventName = 'message';
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      eventName = line.slice('event:'.length).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart());
+    }
+  }
+
+  if (eventName !== 'workspace.updated' || dataLines.length === 0) {
+    return;
+  }
+
+  try {
+    onWorkspaceUpdate?.(JSON.parse(dataLines.join('\n')) as WorkspaceEvent);
+  } catch {
+    // Ignore malformed events and keep the stream open.
+  }
 }
 
 export async function createNode(input: {

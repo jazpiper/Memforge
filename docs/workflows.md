@@ -1,5 +1,11 @@
 # Memforge - Validated External Workflows
 
+## At A Glance
+
+- This document covers external paths that are already supported by the current implementation.
+- The main validated routes are terminal-native workspace management, raw HTTP API usage, and stdio MCP access.
+- Use this file to understand what is already proven to work today, not to infer future integration plans.
+
 This document captures the external-tool paths that are already supported by the current implementation and documented in the codebase.
 
 The two workflows below are the important non-coding-agent routes. The MCP bridge is still useful, but it is the agent-native path rather than the one this doc is trying to prove out.
@@ -27,12 +33,12 @@ Why this is validated:
 
 ## 2. Raw HTTP client workflow
 
-A non-agent client can bootstrap from the service index and then use the API directly:
+A non-agent client can bootstrap from health and bootstrap, then use the API directly:
 
-- `GET /api/v1`
 - `GET /api/v1/health`
-- `GET /api/v1/workspace`
 - `GET /api/v1/bootstrap`
+- `GET /api/v1` after auth or in optional mode
+- `GET /api/v1/workspace` after auth or in optional mode
 - `POST /api/v1/capture`
 - `POST /api/v1/nodes/search`
 - `POST /api/v1/activities/search`

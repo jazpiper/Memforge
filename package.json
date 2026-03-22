@@ -29,9 +29,10 @@
     "package:desktop": "npm run build && electron-builder --publish never",
     "package:desktop:mac": "npm run build && electron-builder --publish never --mac zip dmg --arm64 && node scripts/repair-macos-artifacts.mjs",
     "package:desktop:linux": "npm run build && electron-builder --publish never --linux AppImage deb",
+    "verify:desktop:mac-release": "node scripts/verify-macos-artifacts.mjs",
     "prepare:cli-package": "node scripts/prepare-cli-package.mjs",
     "pack:cli": "npm run build && npm run prepare:cli-package && npm pack ./release/npm-cli",
-    "publish:cli": "npm run build && npm run prepare:cli-package && npm publish ./release/npm-cli",
+    "publish:cli": "npm run build && npm run prepare:cli-package && npm publish ./release/npm-cli --provenance",
     "start": "node dist/server/app/server/index.js",
     "test": "vitest run",
     "check": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"

@@ -9,6 +9,7 @@ import { createMemforgeMcpServer } from "../mcp/server.js";
 import { openDatabase } from "../server/db.js";
 import { createObservabilityWriter } from "../server/observability.js";
 import { MemforgeRepository } from "../server/repositories.js";
+import { checksumText } from "../server/utils.js";
 import { MEMFORGE_VERSION } from "../shared/version.js";
 import { memforgeHomeDir, resolveWorkspaceRoot } from "../server/workspace.js";
 import { ensureWorkspace } from "../server/workspace.js";
@@ -44,6 +45,8 @@ const DESKTOP_COMMAND_SHIM_PATH = path.join(os.homedir(), ".local", "bin", "Memf
 const DESKTOP_RUNTIME_DIR = path.join(memforgeHomeDir(), "run");
 const DESKTOP_API_PID_PATH = path.join(DESKTOP_RUNTIME_DIR, `desktop-api-${DESKTOP_PORT}.json`);
 const TRAY_ICON_ASSET_PATH = ["app", "desktop", "assets", "trayTemplate.png"] as const;
+const allowedExternalProtocols = new Set(["https:"]);
+const allowedLoopbackExternalHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: ChildProcess | null = null;
@@ -82,6 +85,19 @@ function shortenPath(value: string): string {
   }
 
   return value;
+}
+
+function isAllowedExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (allowedExternalProtocols.has(parsed.protocol)) {
+      return true;
+    }
+
+    return parsed.protocol === "http:" && allowedLoopbackExternalHostnames.has(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function quoteShellArg(value: string): string {
@@ -429,6 +445,7 @@ function resolveDesktopWorkspaceRoot(): string {
 }
 
 const DESKTOP_WORKSPACE_ROOT = resolveDesktopWorkspaceRoot();
+const DESKTOP_WORKSPACE_KEY = checksumText(path.resolve(DESKTOP_WORKSPACE_ROOT));
 
 const desktopState: DesktopRuntimeState = {
   serviceStatus: "starting",
@@ -492,7 +509,8 @@ function recordDesktopError(operation: string, error: unknown, details?: Record<
 }
 
 function apiBaseForPort(port: number): string {
-  return `http://${DESKTOP_BIND}:${port}/api/v1`;
+  const host = DESKTOP_BIND.includes(":") && !DESKTOP_BIND.startsWith("[") ? `[${DESKTOP_BIND}]` : DESKTOP_BIND;
+  return `http://${host}:${port}/api/v1`;
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -529,17 +547,37 @@ async function isApiReady(apiBase: string): Promise<boolean> {
   }
 }
 
-async function readWorkspaceRoot(apiBase: string): Promise<string | null> {
+async function readWorkspaceIdentity(apiBase: string): Promise<{ rootPath: string | null; workspaceKey: string | null }> {
   try {
-    const response = await fetch(`${apiBase}/workspace`);
+    const response = await fetch(`${apiBase}/bootstrap`);
     if (!response.ok) {
-      return null;
+      return {
+        rootPath: null,
+        workspaceKey: null
+      };
     }
 
-    const payload = (await response.json()) as { data?: { rootPath?: string } };
-    return typeof payload?.data?.rootPath === "string" ? payload.data.rootPath : null;
+    const payload = (await response.json()) as {
+      data?: {
+        workspace?: {
+          rootPath?: string;
+          workspaceKey?: string;
+        };
+        rootPath?: string;
+        workspaceKey?: string;
+      };
+    };
+    const data = payload?.data ?? {};
+    const workspace = typeof data.workspace === "object" && data.workspace ? data.workspace : data;
+    return {
+      rootPath: typeof workspace.rootPath === "string" ? workspace.rootPath : null,
+      workspaceKey: typeof workspace.workspaceKey === "string" ? workspace.workspaceKey : null
+    };
   } catch {
-    return null;
+    return {
+      rootPath: null,
+      workspaceKey: null
+    };
   }
 }
 
@@ -574,8 +612,11 @@ async function findReusableApiBase(startPort: number, attempts = 20): Promise<st
       continue;
     }
 
-    const candidateWorkspaceRoot = await readWorkspaceRoot(candidateApiBase);
-    if (candidateWorkspaceRoot === DESKTOP_WORKSPACE_ROOT) {
+    const candidateWorkspace = await readWorkspaceIdentity(candidateApiBase);
+    if (
+      candidateWorkspace.rootPath === DESKTOP_WORKSPACE_ROOT ||
+      candidateWorkspace.workspaceKey === DESKTOP_WORKSPACE_KEY
+    ) {
       managedApiPort = candidatePort;
       managedApiBase = candidateApiBase;
       return candidateApiBase;
@@ -627,8 +668,11 @@ async function resolveManagedApiBase(): Promise<string> {
   const preferredIsReady = await isApiReady(preferredApiBase);
 
   if (preferredIsReady) {
-    const existingWorkspaceRoot = await readWorkspaceRoot(preferredApiBase);
-    if (existingWorkspaceRoot === DESKTOP_WORKSPACE_ROOT) {
+    const existingWorkspace = await readWorkspaceIdentity(preferredApiBase);
+    if (
+      existingWorkspace.rootPath === DESKTOP_WORKSPACE_ROOT ||
+      existingWorkspace.workspaceKey === DESKTOP_WORKSPACE_KEY
+    ) {
       managedApiPort = DESKTOP_PORT;
       managedApiBase = preferredApiBase;
       return managedApiBase;
@@ -756,25 +800,39 @@ async function refreshDesktopStatus(): Promise<void> {
       return;
     }
 
-    const response = await fetch(`${apiBase}/workspace`);
+    const response = await fetch(`${apiBase}/bootstrap`);
     if (!response.ok) {
       throw new Error(`Workspace status request failed (${response.status})`);
     }
 
     const payload = (await response.json()) as {
       data?: {
+        authMode?: string;
+        workspace?: {
+          rootPath?: string;
+          workspaceName?: string;
+          authMode?: string;
+          workspaceKey?: string;
+        };
         rootPath?: string;
         workspaceName?: string;
-        authMode?: string;
+        workspaceKey?: string;
       };
     };
     const data = payload?.data ?? {};
+    const workspace = typeof data.workspace === "object" && data.workspace ? data.workspace : data;
+    const resolvedRoot =
+      typeof workspace.rootPath === "string"
+        ? workspace.rootPath
+        : workspace.workspaceKey === DESKTOP_WORKSPACE_KEY
+          ? DESKTOP_WORKSPACE_ROOT
+          : DESKTOP_WORKSPACE_ROOT;
     updateDesktopState({
       serviceStatus: "running",
       apiBase,
-      workspaceName: typeof data.workspaceName === "string" ? data.workspaceName : DESKTOP_WORKSPACE_NAME,
-      workspaceRoot: typeof data.rootPath === "string" ? data.rootPath : DESKTOP_WORKSPACE_ROOT,
-      authMode: typeof data.authMode === "string" ? data.authMode : "optional",
+      workspaceName: typeof workspace.workspaceName === "string" ? workspace.workspaceName : DESKTOP_WORKSPACE_NAME,
+      workspaceRoot: resolvedRoot,
+      authMode: typeof data.authMode === "string" ? data.authMode : typeof workspace.authMode === "string" ? workspace.authMode : "optional",
       lastHealthAt: new Date().toISOString(),
       lastError: null
     });
@@ -958,7 +1016,7 @@ async function createMainWindow(): Promise<void> {
       preload,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       additionalArguments: [
         `--memforge-api-base=${apiBase}`,
         `--memforge-health-url=${apiBase}/health`,
@@ -995,7 +1053,11 @@ async function createMainWindow(): Promise<void> {
     recordDesktopError("desktop.renderer_process_gone", new Error(details.reason));
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
+    } else {
+      console.warn(`Blocked unsupported external URL: ${url}`);
+    }
     return { action: "deny" };
   });
 

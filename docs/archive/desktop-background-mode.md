@@ -1,4 +1,8 @@
-# Memforge - Desktop Background + Menu Bar Plan
+# Memforge — Desktop Background Mode
+
+> Historical implementation plan.
+> Parts of this document describe completed work and older planned states rather than the current source of truth.
+> For shipped behavior, prefer `README.md`, `docs/ux.md`, `docs/workflows.md`, and the desktop/runtime code.
 
 ## Status snapshot (2026-03-19)
 

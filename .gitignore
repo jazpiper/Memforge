@@ -3,6 +3,8 @@ dist
 build
 release
 .vite
+.env
+.env.*
 .memforge-workspace
 .memforge-smoke
 .memforge-test-workspace

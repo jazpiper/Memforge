@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -69,6 +69,24 @@ const defaultCaptureSource = {
   actorLabel: "Memforge API",
   toolName: "memforge-api"
 };
+
+function formatApiBaseUrl(bindAddress: string): string {
+  if (bindAddress.startsWith("[")) {
+    return `http://${bindAddress}/api/v1`;
+  }
+
+  const colonCount = (bindAddress.match(/:/g) ?? []).length;
+  if (colonCount > 1) {
+    const lastColonIndex = bindAddress.lastIndexOf(":");
+    const host = bindAddress.slice(0, lastColonIndex);
+    const port = bindAddress.slice(lastColonIndex + 1);
+    if (host && /^\d+$/.test(port)) {
+      return `http://[${host}]:${port}/api/v1`;
+    }
+  }
+
+  return `http://${bindAddress}/api/v1`;
+}
 
 function parseRelationTypesQuery(value: unknown) {
   const items = parseCommaSeparatedValues(value)?.filter((item): item is (typeof relationTypes)[number] => relationTypeSet.has(item));
@@ -141,6 +159,49 @@ function normalizeArtifactRelativePath(value: string): string {
 function readBearerToken(request: Request): string | null {
   const header = request.header("authorization");
   return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+}
+
+function isAuthenticatedApiRequest(request: Request, apiToken: string | null): boolean {
+  return !apiToken || readBearerToken(request) === apiToken;
+}
+
+function resolveRegisteredArtifactPath(workspaceRoot: string, artifactsDir: string, artifactRelativePath: string): string {
+  const artifactPath = path.resolve(workspaceRoot, artifactRelativePath);
+  if (!isPathWithinRoot(artifactsDir, artifactPath)) {
+    throw new AppError(403, "FORBIDDEN", "Artifact path escapes workspace root.");
+  }
+
+  try {
+    const entryStats = lstatSync(artifactPath);
+    if (entryStats.isSymbolicLink()) {
+      throw new AppError(404, "NOT_FOUND", "Artifact not found.");
+    }
+
+    const resolvedArtifactRoot = realpathSync(artifactsDir);
+    const resolvedArtifactPath = realpathSync(artifactPath);
+    if (!isPathWithinRoot(resolvedArtifactRoot, resolvedArtifactPath)) {
+      throw new AppError(404, "NOT_FOUND", "Artifact not found.");
+    }
+
+    const artifactStats = statSync(resolvedArtifactPath);
+    if (!artifactStats.isFile()) {
+      throw new AppError(404, "NOT_FOUND", "Artifact not found.");
+    }
+
+    return resolvedArtifactPath;
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ELOOP")
+    ) {
+      throw new AppError(404, "NOT_FOUND", "Artifact not found.");
+    }
+    throw error;
+  }
 }
 
 function deriveCaptureTitle(body: string): string {
@@ -301,12 +362,13 @@ function buildServiceIndex(workspaceInfo: {
   enabledIntegrationModes: string[];
   authMode: string;
 }) {
+  const apiBaseUrl = formatApiBaseUrl(workspaceInfo.bindAddress);
   return {
     service: {
       name: "Memforge",
       description: "Local-first personal knowledge layer for humans and agents.",
       apiVersion: "v1",
-      baseUrl: `http://${workspaceInfo.bindAddress}/api/v1`,
+      baseUrl: apiBaseUrl,
       authMode: workspaceInfo.authMode,
       workspaceName: workspaceInfo.workspaceName,
       workspaceRoot: workspaceInfo.rootPath
@@ -348,21 +410,21 @@ function buildServiceIndex(workspaceInfo: {
     cli: {
       binary: "pnw",
       examples: [
-        "pnw health --api http://127.0.0.1:8787/api/v1",
-        "pnw search --api http://127.0.0.1:8787/api/v1 \"agent memory\"",
-        "pnw search workspace --api http://127.0.0.1:8787/api/v1 \"cleanup\"",
-        "pnw create --api http://127.0.0.1:8787/api/v1 --type note --title \"Idea\" --body \"...\"",
-        "pnw context --api http://127.0.0.1:8787/api/v1 <node-id> --mode compact --preset for-coding",
-        "pnw governance issues --api http://127.0.0.1:8787/api/v1",
-        "pnw workspace list --api http://127.0.0.1:8787/api/v1",
-        "pnw observability summary --api http://127.0.0.1:8787/api/v1 --since 24h"
+        `pnw health --api ${apiBaseUrl}`,
+        `pnw search --api ${apiBaseUrl} "agent memory"`,
+        `pnw search workspace --api ${apiBaseUrl} "cleanup"`,
+        `pnw create --api ${apiBaseUrl} --type note --title "Idea" --body "..."`,
+        `pnw context --api ${apiBaseUrl} <node-id> --mode compact --preset for-coding`,
+        `pnw governance issues --api ${apiBaseUrl}`,
+        `pnw workspace list --api ${apiBaseUrl}`,
+        `pnw observability summary --api ${apiBaseUrl} --since 24h`
       ]
     },
     mcp: {
       transport: "stdio",
       command: "node dist/server/app/mcp/index.js",
       env: {
-        MEMFORGE_API_URL: `http://${workspaceInfo.bindAddress}/api/v1`,
+        MEMFORGE_API_URL: apiBaseUrl,
         MEMFORGE_API_TOKEN: workspaceInfo.authMode === "bearer" ? "<set the active bearer token here>" : null
       },
       docs: "docs/mcp.md"
@@ -1463,10 +1525,7 @@ export function createMemforgeApp(params: {
       return;
     }
 
-    const origin = request.header("origin");
-    const allowUnauthenticatedEventStream =
-      request.method === "GET" && request.path === "/events" && Boolean(origin && isAllowedBrowserOrigin(origin));
-    if (request.path === "/health" || request.path === "/workspace" || request.path === "/bootstrap" || allowUnauthenticatedEventStream) {
+    if (request.path === "/health" || request.path === "/bootstrap") {
       next();
       return;
     }
@@ -1482,6 +1541,18 @@ export function createMemforgeApp(params: {
 
   app.get("/api/v1/health", (_request, response) => {
     const workspaceInfo = currentWorkspaceInfo();
+    const authenticated = isAuthenticatedApiRequest(_request, params.apiToken);
+    if (!authenticated && params.apiToken) {
+      response.json(
+        envelope(response.locals.requestId, {
+          status: "ok",
+          workspaceLoaded: true,
+          authMode: workspaceInfo.authMode
+        })
+      );
+      return;
+    }
+
     response.json(
       envelope(response.locals.requestId, {
         status: "ok",
@@ -1504,8 +1575,25 @@ export function createMemforgeApp(params: {
     response.json(envelope(response.locals.requestId, currentWorkspaceInfo()));
   });
 
-  app.get("/api/v1/bootstrap", (_request, response) => {
+  app.get("/api/v1/bootstrap", (request, response) => {
     const workspaceInfo = currentWorkspaceInfo();
+    const authenticated = isAuthenticatedApiRequest(request, params.apiToken);
+    if (!authenticated && params.apiToken) {
+      response.json(
+        envelope(response.locals.requestId, {
+          workspace: {
+            workspaceName: workspaceInfo.workspaceName,
+            bindAddress: workspaceInfo.bindAddress,
+            authMode: workspaceInfo.authMode,
+            enabledIntegrationModes: workspaceInfo.enabledIntegrationModes,
+            workspaceKey: currentRepository().getWorkspaceKey()
+          },
+          authMode: workspaceInfo.authMode
+        })
+      );
+      return;
+    }
+
     response.json(
       envelope(response.locals.requestId, {
         workspace: workspaceInfo,
@@ -1566,6 +1654,11 @@ export function createMemforgeApp(params: {
   });
 
   app.get("/api/v1/events", (request, response) => {
+    if (params.apiToken && !isAuthenticatedApiRequest(request, params.apiToken)) {
+      response.status(401).json(errorEnvelope(response.locals.requestId, new AppError(401, "UNAUTHORIZED", "Missing or invalid bearer token.")));
+      return;
+    }
+
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
@@ -2608,21 +2701,20 @@ export function createMemforgeApp(params: {
     }
 
     const session = currentSession();
-    const workspaceRoot = session.workspaceRoot;
     const artifactRelativePath = normalizeArtifactRelativePath(request.path);
-    const artifactPath = path.resolve(workspaceRoot, artifactRelativePath);
-    if (!isPathWithinRoot(session.paths.artifactsDir, artifactPath)) {
-      next(new AppError(403, "FORBIDDEN", "Artifact path escapes workspace root."));
-      return;
-    }
     if (!currentRepository().hasArtifactAtPath(artifactRelativePath)) {
       next(new AppError(404, "NOT_FOUND", "Artifact not found."));
       return;
     }
-    if (!existsSync(artifactPath)) {
-      next(new AppError(404, "NOT_FOUND", "Artifact not found."));
+
+    let artifactPath: string;
+    try {
+      artifactPath = resolveRegisteredArtifactPath(session.workspaceRoot, session.paths.artifactsDir, artifactRelativePath);
+    } catch (error) {
+      next(error);
       return;
     }
+
     response.type(mime.lookup(artifactPath) || "application/octet-stream");
     response.sendFile(artifactPath);
   });

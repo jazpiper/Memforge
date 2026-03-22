@@ -796,7 +796,7 @@ If the system is a memory layer, users must trust they can preserve and move it.
 - scout-optimized retrieval primitives
 - summary-first context handoff
 
-For a scaled relation direction beyond v1 review-driven links, see `docs/relation-layer-v2.md`.
+For a scaled relation direction beyond v1 review-driven links, see `docs/archive/relation-evolution.md`.
 
 ---
 
@@ -823,7 +823,7 @@ These do not need to block the first build, but they will matter soon:
 - should tags be first-class entities later?
 - when should full revision history be added?
 - when should quantitative relation scoring be introduced, if ever?
-  Current design direction: keep canonical relations minimal and move scoring into a separate inferred relation layer. See `docs/relation-layer-v2.md`.
+  Current design direction: keep canonical relations minimal and move scoring into a separate inferred relation layer. See `docs/archive/relation-evolution.md`.
 - how should duplicate detection work?
 - should some node classes be immutable records, e.g. decisions?
 - how should per-tool permissions be configured in UI?

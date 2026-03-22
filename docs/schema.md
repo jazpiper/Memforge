@@ -1,5 +1,12 @@
 # Memforge — Schema
 
+## At A Glance
+
+- `nodes`, `relations`, `activities`, `artifacts`, and `provenance_events` form the durable core.
+- `governance_state`, `governance_events`, `inferred_relations`, `relation_usage_events`, and search feedback support the shipped v2 runtime.
+- The schema is append-first, provenance-aware, and designed for local evolution rather than heavy up-front abstraction.
+- Historical review-era storage may still exist in upgraded workspaces, but it is not part of the current product surface unless explicitly called out.
+
 ## 1. Schema goal
 
 This schema defines the initial durable data model for a local-first personal knowledge layer shared by:
