@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+### Patch Changes
+
+- 48a9b31: Organize the release workflow around Changesets, add dedicated CI and publish GitHub Actions, and standardize version syncing for the full and headless npm packages.
+- e37fc9e: Tighten npm runtime and MCP release readiness by aligning the supported Node version with `node:sqlite`, preferring `RECALLX_API_TOKEN` in the CLI while keeping the legacy token alias, removing stale renderer version fallbacks, and making the installed MCP launcher resolve `node` from `PATH`.
+
 ## Unreleased
 
 ## 1.0.0
