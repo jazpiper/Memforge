@@ -1,6 +1,6 @@
 {
   "name": "recallx",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "author": {
@@ -10,7 +10,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "main": "dist/server/app/desktop/main.js",
+  "main": "dist/server/app/server/index.js",
   "bin": {
     "recallx": "./app/cli/bin/recallx.js",
     "recallx-mcp": "./app/cli/bin/recallx-mcp.js"
@@ -23,16 +23,10 @@
     "dev:server": "tsx watch app/server/index.ts",
     "dev:mcp": "tsx app/mcp/index.ts",
     "dev:renderer": "vite",
-    "dev:renderer:desktop": "RECALLX_RENDERER_PORT=5174 RECALLX_RENDERER_API_TARGET=http://127.0.0.1:8788 vite",
-    "dev:desktop:app": "RECALLX_DESKTOP_DEV_URL=http://127.0.0.1:5174 RECALLX_DESKTOP_PORT=8788 electron .",
-    "dev:desktop": "concurrently -n desktop-renderer,desktop-app -c green,magenta \"npm:dev:renderer:desktop\" \"npm:dev:desktop:app\"",
     "build": "npm run build:server && npm run build:renderer",
     "build:server": "tsc -p tsconfig.server.json",
     "build:renderer": "vite build",
-    "desktop": "npm run build && electron .",
-    "desktop:run": "RECALLX_DESKTOP_PORT=8788 electron .",
     "start:run": "RECALLX_PORT=8787 node dist/server/app/server/index.js",
-    "start:desktop": "npm run build && concurrently -n server,desktop -c blue,magenta \"npm:start:run\" \"npm:desktop:run\"",
     "mcp": "node dist/server/app/mcp/index.js",
     "prepare:full-package": "node scripts/prepare-package.mjs full",
     "prepare:headless-package": "node scripts/prepare-package.mjs headless",
@@ -73,7 +67,6 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
-    "electron": "^36.9.5",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vite": "^6.2.2",

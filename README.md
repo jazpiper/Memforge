@@ -35,6 +35,8 @@ RecallX is documented around three public ways to use it:
 2. npm package `recallx` for the full local runtime
 3. npm package `recallx-headless` for the headless runtime
 
+RecallX does not currently ship separate OS-native installers or package formats such as `.dmg`, `.msi`, `.deb`, or `AppImage`.
+
 ## 1. Git Public Repo
 
 Use the public repo when you want the full source-run surface:
@@ -99,8 +101,6 @@ The full npm package includes:
 - `recallx`
 - `recallx serve` and subcommands
 - `recallx-mcp`
-
-The full npm package does not include:
 
 `recallx mcp install` writes a stable launcher to `~/.recallx/bin/recallx-mcp`, which is the recommended command path for Codex and other editor MCP configs.
 

@@ -91,7 +91,7 @@ Install dependencies normally:
 npm install
 ```
 
-`sqlite-vec` ships platform-specific optional packages for supported environments. When an optional package is available, RecallX attempts to load the extension automatically at startup.
+`sqlite-vec` may provide optional native packages for the current Node environment. When one is available, RecallX attempts to load the extension automatically at startup.
 
 No separate database process is required.
 
