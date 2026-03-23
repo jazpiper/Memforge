@@ -263,8 +263,14 @@ export default function App() {
     globalThis.crypto?.randomUUID?.() ?? `recallx-renderer-${Date.now()}`
   );
 
-  async function refreshSnapshotState() {
-    const snapshotResult = await getSnapshot();
+  async function refreshSnapshotState(workspaceOverride?: WorkspaceSeed['workspace']) {
+    const snapshotResult = await getSnapshot(
+      workspaceOverride
+        ? {
+            workspace: workspaceOverride,
+          }
+        : undefined,
+    );
     setSnapshot(snapshotResult);
     setLoadError(null);
     return snapshotResult;
@@ -274,12 +280,11 @@ export default function App() {
     workspaceOverride?: WorkspaceSeed['workspace'];
     catalogOverride?: { current: WorkspaceSeed['workspace']; items: WorkspaceCatalogItem[] };
   }) {
-    const [workspaceResult, snapshotResult, catalog] = await Promise.all([
-      options?.workspaceOverride ? Promise.resolve(options.workspaceOverride) : getWorkspace(),
-      refreshSnapshotState(),
+    const [snapshotResult, catalog] = await Promise.all([
+      refreshSnapshotState(options?.workspaceOverride),
       options?.catalogOverride ? Promise.resolve(options.catalogOverride) : getWorkspaceCatalog(),
     ]);
-    setWorkspace(options?.catalogOverride?.current ?? workspaceResult);
+    setWorkspace(options?.catalogOverride?.current ?? options?.workspaceOverride ?? snapshotResult.workspace);
     setWorkspaceCatalog(catalog.items);
     setWorkspaceRootInput(catalog.current.rootPath);
     setLoadError(null);

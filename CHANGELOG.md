@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+### Patch Changes
+
+- Reduce observability request overhead, add span hierarchy across MCP and API telemetry, and allow short-form project nodes to stay durable so project capture routing continues to work.
+
 ## 1.0.1
 
 ### Patch Changes
