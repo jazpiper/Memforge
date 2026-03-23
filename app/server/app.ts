@@ -61,7 +61,6 @@ import type { WorkspaceSessionManager } from "./workspace-session.js";
 
 const relationTypeSet = new Set<string>(relationTypes);
 const allowedLoopbackHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-const isDesktopManagedApi = process.env.ELECTRON_RUN_AS_NODE === "1";
 const updateNodeRequestSchema = updateNodeSchema.extend({
   source: sourceSchema
 });
@@ -635,7 +634,7 @@ function buildServiceIndex(workspaceInfo: {
       {
         method: "GET",
         path: "/api/v1/observability/errors?since=24h&surface=mcp",
-        purpose: "Inspect recent telemetry errors for the API, MCP bridge, or desktop shell."
+        purpose: "Inspect recent telemetry errors for the API or MCP bridge."
       },
       {
         method: "POST",
@@ -732,7 +731,7 @@ export function createRecallXApp(params: {
     ]);
 
     return {
-      enabled: isDesktopManagedApi ? parseBooleanSetting(settings["observability.enabled"], false) : true,
+      enabled: true,
       workspaceRoot: currentWorkspaceRoot(),
       workspaceName: currentWorkspaceInfo().workspaceName,
       retentionDays: Math.max(1, parseNumberSetting(settings["observability.retentionDays"], 14)),
@@ -1749,7 +1748,7 @@ export function createRecallXApp(params: {
 
   app.get("/api/v1/observability/errors", handleAsyncRoute(async (request, response) => {
     const surface = readRequestParam(request.query.surface);
-    const normalizedSurface = surface === "api" || surface === "mcp" || surface === "desktop" ? surface : "all";
+    const normalizedSurface = surface === "api" || surface === "mcp" ? surface : "all";
     const errors = await observability.listErrors({
       since: readRequestParam(request.query.since),
       surface: normalizedSurface,

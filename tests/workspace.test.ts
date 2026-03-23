@@ -73,7 +73,7 @@ describe("resolveWorkspaceRoot", () => {
     expect(existsSync(path.join(root, "workspace.db"))).toBe(true);
   });
 
-  it("can ignore the legacy repo-local root for desktop-style launches", () => {
+  it("can ignore the legacy repo-local root when legacy project roots are disabled", () => {
     const homeRoot = createTempRoot();
     const projectRoot = createTempRoot();
     const legacyRoot = path.join(projectRoot, ".recallx-workspace");
@@ -81,14 +81,14 @@ describe("resolveWorkspaceRoot", () => {
     writeFileSync(path.join(legacyRoot, "workspace.db"), "legacy");
     process.env.HOME = homeRoot;
     delete process.env.RECALLX_WORKSPACE_ROOT;
-    process.env.RECALLX_WORKSPACE_NAME = "Desktop Workspace";
+    process.env.RECALLX_WORKSPACE_NAME = "Managed Workspace";
     process.chdir(projectRoot);
 
     const root = resolveWorkspaceRoot({
       allowLegacyProjectRoot: false
     });
 
-    expect(root).toBe(path.join(recallxHomeDir(), "Desktop Workspace"));
+    expect(root).toBe(path.join(recallxHomeDir(), "Managed Workspace"));
     expect(existsSync(path.join(root, "workspace.db"))).toBe(false);
   });
 });

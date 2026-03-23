@@ -390,7 +390,7 @@ export interface ContextBundle {
   }>;
 }
 
-export type TelemetrySurface = "api" | "mcp" | "desktop";
+export type TelemetrySurface = "api" | "mcp";
 export type TelemetryOutcome = "success" | "error";
 export type TelemetryErrorKind =
   | "app_error"

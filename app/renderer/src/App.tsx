@@ -201,44 +201,6 @@ function resolveInitialView(): NavView {
   }
 }
 
-type DesktopIntegrationInfo = {
-  apiBase: string;
-  healthUrl: string;
-  workspaceUrl: string;
-  workspaceHome: string | null;
-  commandShimPath: string | null;
-  executablePath: string;
-  mcpLauncherPath: string | null;
-  mcpCommand: string | null;
-  workspaceRoot: string | null;
-  workspaceDbPath: string | null;
-  artifactsPath: string | null;
-  isPackaged: boolean;
-  appVersion?: string;
-};
-
-type DesktopActionPayload = {
-  type: 'quick-capture' | 'open-search' | 'open-settings' | 'open-server-status' | 'open-workspace-status';
-};
-
-type DesktopRuntimeState = {
-  serviceStatus: 'starting' | 'running' | 'stopped' | 'error';
-  apiBase: string | null;
-  workspaceName: string;
-  workspaceRoot: string;
-  authMode: string;
-  lastHealthAt: string | null;
-  lastError: string | null;
-  appVersion: string;
-  workspaceHome: string;
-  commandShimPath: string;
-  mcpLauncherPath: string;
-  mcpCommand: string;
-  keepRunningInBackground: boolean;
-  launchAtLoginEnabled: boolean;
-  isPackaged: boolean;
-};
-
 type GuideSection = {
   id: string;
   group: string;
@@ -255,27 +217,6 @@ type GuideSection = {
     description: string;
   }>;
 };
-
-function getDesktopIntegrationInfo(): DesktopIntegrationInfo | null {
-  const globalInfo = (
-    window as Window & {
-      __RECALLX_DESKTOP_INFO__?: DesktopIntegrationInfo;
-    }
-  ).__RECALLX_DESKTOP_INFO__;
-
-  return globalInfo ?? null;
-}
-
-function getDesktopActionBridge() {
-  return (
-    window as Window & {
-      __RECALLX_DESKTOP_ACTIONS__?: {
-        getRuntimeState: () => Promise<DesktopRuntimeState>;
-        onAction: (callback: (payload: DesktopActionPayload) => void) => (() => void) | void;
-      };
-    }
-  ).__RECALLX_DESKTOP_ACTIONS__ ?? null;
-}
 
 function emptyDetailPanel(): DetailPanel {
   return {
@@ -393,89 +334,6 @@ export default function App() {
       mounted = false;
     };
   }, []);
-
-  useEffect(() => {
-    const bridge = getDesktopActionBridge();
-    if (!bridge) {
-      return;
-    }
-
-    const focusAfterPaint = (selector: string) => {
-      window.setTimeout(() => {
-        const target = document.querySelector<HTMLElement>(selector);
-        target?.focus();
-      }, 60);
-    };
-
-    const unsubscribe =
-      bridge.onAction((payload) => {
-        if (payload.type === 'open-search') {
-          setView('recent');
-          focusAfterPaint('#notes-search-input');
-          return;
-        }
-
-        if (payload.type === 'open-settings') {
-          setView('settings');
-          focusAfterPaint('#workspace-settings-card');
-          return;
-        }
-
-        if (payload.type === 'open-server-status') {
-          setView('settings');
-          focusAfterPaint('#server-status-card');
-          return;
-        }
-
-        if (payload.type === 'open-workspace-status') {
-          setView('settings');
-          focusAfterPaint('#workspace-status-card');
-          return;
-        }
-
-        if (payload.type === 'quick-capture') {
-          setView('recent');
-          setCaptureType('note');
-          setCaptureTitle('');
-          setCaptureBody('');
-          setCaptureError(null);
-          focusAfterPaint('#capture-title-input');
-        }
-      }) ?? undefined;
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const bridge = getDesktopActionBridge();
-    if (!bridge) {
-      return;
-    }
-    const runtimeBridge = bridge;
-
-    let cancelled = false;
-
-    async function loadDesktopRuntimeState() {
-      try {
-        const nextState = await runtimeBridge.getRuntimeState();
-        if (!cancelled) {
-          setDesktopRuntimeState(nextState);
-        }
-      } catch {
-        if (!cancelled) {
-          setDesktopRuntimeState(null);
-        }
-      }
-    }
-
-    void loadDesktopRuntimeState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [view]);
 
   useEffect(() => {
     if (isLoading || authRequired || view !== 'recent') {
@@ -602,9 +460,6 @@ export default function App() {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [isGraphLoading, setIsGraphLoading] = useState(false);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState(false);
-  const [desktopRuntimeState, setDesktopRuntimeState] = useState<DesktopRuntimeState | null>(null);
-  const desktopInfo = getDesktopIntegrationInfo();
-
   useEffect(() => {
     if (!projectNodes.length) {
       setProjectGraphProjectId(null);
@@ -814,34 +669,13 @@ export default function App() {
     governanceIssues.find((item) => item.entityId === selectedGovernanceId) ?? governanceIssues[0];
 
   const workspaceName = workspace?.name ?? 'RecallX';
-  const apiBase = desktopInfo?.apiBase ?? formatApiBase(workspace?.apiBind ?? '127.0.0.1:8787');
-  const workspaceRoot = workspace?.rootPath ?? desktopInfo?.workspaceRoot ?? '';
-  const workspaceDbPath = desktopInfo?.workspaceDbPath ?? (workspaceRoot ? `${workspaceRoot}/workspace.db` : '');
-  const artifactsPath = desktopInfo?.artifactsPath ?? (workspaceRoot ? `${workspaceRoot}/artifacts` : '');
-  const mcpLauncherPath = desktopInfo?.mcpLauncherPath ?? '';
+  const apiBase = formatApiBase(workspace?.apiBind ?? '127.0.0.1:8787');
+  const workspaceRoot = workspace?.rootPath ?? '';
+  const workspaceDbPath = workspaceRoot ? `${workspaceRoot}/workspace.db` : '';
+  const artifactsPath = workspaceRoot ? `${workspaceRoot}/artifacts` : '';
   const defaultMcpCommand = `node dist/server/app/mcp/index.js --api ${apiBase}`;
-  const mcpCommand = desktopInfo?.mcpCommand ?? defaultMcpCommand;
-  const runtimeServiceStatus = desktopRuntimeState?.serviceStatus ?? (desktopInfo ? 'running' : 'stopped');
-  const runtimeLastHealthAt = desktopRuntimeState?.lastHealthAt ?? null;
-  const runtimeLastError = desktopRuntimeState?.lastError ?? null;
-  const runtimeWorkspaceHome = desktopRuntimeState?.workspaceHome ?? desktopInfo?.workspaceHome ?? '';
-  const runtimeCommandShimPath = desktopRuntimeState?.commandShimPath ?? desktopInfo?.commandShimPath ?? '';
-  const runtimeMcpLauncherPath = desktopRuntimeState?.mcpLauncherPath ?? mcpLauncherPath;
-  const runtimeMcpCommand = desktopRuntimeState?.mcpCommand ?? mcpCommand;
-  const runtimeVersion = desktopRuntimeState?.appVersion ?? desktopInfo?.appVersion ?? '';
-  const runtimeLaunchAtLogin = desktopRuntimeState?.launchAtLoginEnabled ?? false;
-  const runtimeKeepRunning = desktopRuntimeState?.keepRunningInBackground ?? Boolean(desktopInfo?.isPackaged);
-  const runtimeIsPackaged = desktopRuntimeState?.isPackaged ?? Boolean(desktopInfo?.isPackaged);
-  const genericMcpConfig = mcpLauncherPath
-    ? `{
-  "mcpServers": {
-    "recallx": {
-      "command": "${mcpLauncherPath}",
-      "args": []
-    }
-  }
-}`
-    : `{
+  const mcpCommand = defaultMcpCommand;
+  const genericMcpConfig = `{
   "mcpServers": {
     "recallx": {
       "command": "node",
@@ -851,8 +685,8 @@ export default function App() {
 }`;
   const apiAuthHeader = workspace?.authMode === 'bearer' ? ' -H "Authorization: Bearer $RECALLX_API_TOKEN"' : '';
   const apiExample = `curl${apiAuthHeader} ${apiBase}
-curl${apiAuthHeader} ${desktopInfo?.healthUrl ?? `${apiBase}/health`}
-curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
+curl${apiAuthHeader} ${apiBase}/health
+curl${apiAuthHeader} ${apiBase}/workspace`;
   const guideSections: GuideSection[] = [
     {
       id: 'overview',
@@ -2056,23 +1890,23 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
             <section id="server-status-card" tabIndex={-1} className="card page-card">
               <div className="page-copy">
                 <span className="eyebrow">Server status</span>
-                <h3>Managed API and runtime health</h3>
+                <h3>API and runtime health</h3>
               </div>
               <div className="info-grid three">
                 <article className="info-block">
                   <span className="info-label">Status</span>
-                  <strong>{runtimeServiceStatus}</strong>
-                  <p>{runtimeLastError ? runtimeLastError : 'The desktop-managed API is available for renderer, CLI, and MCP access.'}</p>
+                  <strong>{workspace ? 'running' : 'starting'}</strong>
+                  <p>The local API is available for renderer, CLI, and MCP access.</p>
                 </article>
                 <article className="info-block">
                   <span className="info-label">API base</span>
                   <strong>{apiBase}</strong>
-                  <p>Loopback base URL used by the desktop shell and HTTP tooling.</p>
+                  <p>Loopback base URL used by the local UI and HTTP tooling.</p>
                 </article>
                 <article className="info-block">
                   <span className="info-label">Auth mode</span>
-                  <strong>{desktopRuntimeState?.authMode ?? workspace?.authMode ?? 'optional'}</strong>
-                  <p>{runtimeLastHealthAt ? `Last checked ${formatTime(runtimeLastHealthAt)}.` : 'Desktop runtime state is loaded on demand when this view opens.'}</p>
+                  <strong>{workspace?.authMode ?? 'optional'}</strong>
+                  <p>Auth mode is read from the active workspace bootstrap state.</p>
                 </article>
               </div>
             </section>
@@ -2100,54 +1934,24 @@ curl${apiAuthHeader} ${desktopInfo?.workspaceUrl ?? `${apiBase}/workspace`}`;
               </div>
             </section>
           </div>
-          <div className="two-column-grid">
-            <section id="desktop-launcher-card" tabIndex={-1} className="card page-card">
-              <div className="page-copy">
-                <span className="eyebrow">Launchers</span>
-                <h3>Stable commands and MCP paths</h3>
-              </div>
-              <div className="info-grid three">
-                <article className="info-block">
-                  <span className="info-label">MCP launcher</span>
-                  <strong>{runtimeMcpLauncherPath || 'Unavailable'}</strong>
-                  <p>Stable launcher path for Codex and other editor MCP configs.</p>
-                </article>
-                <article className="info-block">
-                  <span className="info-label">Desktop command</span>
-                  <strong>{runtimeCommandShimPath || 'Unavailable'}</strong>
-                  <p>PATH-friendly launcher written by the desktop app for local shell usage.</p>
-                </article>
-                <article className="info-block">
-                  <span className="info-label">MCP command</span>
-                  <strong>{runtimeMcpCommand}</strong>
-                  <p>Direct command for testing the MCP server outside editor integration.</p>
-                </article>
-              </div>
-            </section>
-            <section className="card page-card">
-              <div className="page-copy">
-                <span className="eyebrow">Desktop behavior</span>
-                <h3>What the desktop runtime should expect</h3>
-              </div>
-              <div className="info-grid three">
-                <article className="info-block">
-                  <span className="info-label">Version</span>
-                  <strong>{runtimeVersion || 'Unavailable'}</strong>
-                  <p>{runtimeIsPackaged ? 'Desktop runtime is active.' : 'Renderer is currently running in development/browser mode.'}</p>
-                </article>
-                <article className="info-block">
-                  <span className="info-label">Background mode</span>
-                  <strong>{runtimeKeepRunning ? 'Enabled' : 'Disabled'}</strong>
-                  <p>Closing the window can keep RecallX available in the tray/menu bar for fast reopen and MCP access.</p>
-                </article>
-                <article className="info-block">
-                  <span className="info-label">Launch at login</span>
-                  <strong>{runtimeLaunchAtLogin ? 'Enabled' : 'Disabled'}</strong>
-                  <p>{runtimeWorkspaceHome ? `Desktop support files live under ${runtimeWorkspaceHome}.` : 'Desktop support files are created on first desktop run.'}</p>
-                </article>
-              </div>
-            </section>
-          </div>
+          <section id="mcp-status-card" tabIndex={-1} className="card page-card">
+            <div className="page-copy">
+              <span className="eyebrow">Launchers</span>
+              <h3>CLI and MCP entrypoints</h3>
+            </div>
+            <div className="info-grid two">
+              <article className="info-block">
+                <span className="info-label">CLI version</span>
+                <strong>{workspace?.name ? 'active workspace loaded' : 'Unavailable'}</strong>
+                <p>Use `recallx update` to check npm updates for installed runtimes.</p>
+              </article>
+              <article className="info-block">
+                <span className="info-label">MCP command</span>
+                <strong>{mcpCommand}</strong>
+                <p>Direct command for testing the MCP server outside editor integration.</p>
+              </article>
+            </div>
+          </section>
         </section>
       );
     }
